@@ -523,7 +523,7 @@ func (m *model) live() string {
 		b.WriteString(item(m.r.gutter(toolIcon(t.name), m.r.st.toolRun, head)))
 	}
 	if m.running && m.partial == nil && len(m.tools) == 0 {
-		b.WriteString(item(m.r.st.toolRun.Render(m.spin.View()) + m.r.st.dim.Render(" working…")))
+		b.WriteString(item(m.r.st.toolRun.Render(m.spin.View()) + m.r.st.dim.Render("  working…")))
 	}
 	return b.String()
 }
