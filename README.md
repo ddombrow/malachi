@@ -6,7 +6,7 @@ events, and sessions, and reads tau session files.
 
 ```text
 cmd/malachi   CLI: interactive TUI or print mode (-p)
-tui/          inline Bubble Tea frontend (scrollback + live area)
+tui/          full-screen Bubble Tea frontend
 coding/       tools (read, write, edit, bash), system prompt, config, sessions
 ai/           providers over raw net/http + SSE (openai-compatible today)
 agent/        portable brain: messages, events, loop, harness, session tree
@@ -26,13 +26,15 @@ bin/malachi -p "..." -mode json  # Pi event stream, one JSON object per line
 bin/malachi -list-models         # models the provider serves right now
 ```
 
-In the TUI, each item in scrollback gets an icon (💬 reply, 💭 thinking,
-📖 read, 📝 edit, 📄 write, 💻 bash, ❌ error). Set `"icons": "dots"` in settings for
-a Claude Code-style ⏺ instead. Completed output goes to normal terminal scrollback; only the
-streaming message, running tools, input, and status bar are redrawn.
-Type while the agent works to steer it, press `esc` to cancel, and use `/help`
-for commands (`/model`, `/thinking`, `/new`, `/resume`, `/last`). `/model`
-with no argument fetches the provider's live model list.
+The TUI is full-screen: a scrollable transcript above a pinned input and status
+bar. Each item gets an icon (💬 reply, 💭 thinking, 📖 read, 📝 edit, 📄 write,
+💻 bash, ❌ error); set `"icons": "dots"` in settings for a Claude Code-style ⏺.
+The view follows new output unless you scroll up (mouse wheel, PgUp/PgDn,
+Shift+↑/↓, Ctrl+Home/End). Hold Shift (Option in iTerm2/Terminal) while
+dragging to select text. Type while the agent works to steer it, press `esc`
+to cancel, and use `/help` for commands (`/model`, `/thinking`, `/new`,
+`/resume`, `/last`). `/model` with no argument fetches the provider's live
+model list.
 
 ## Configuration
 

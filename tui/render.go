@@ -36,7 +36,7 @@ func newStyles(isDark bool) styles {
 	}
 }
 
-// renderer turns transcript items into scrollback text.
+// renderer turns transcript items into styled text.
 type renderer struct {
 	st     styles
 	md     *glamour.TermRenderer
@@ -74,7 +74,7 @@ func (r *renderer) markdown(text string) string {
 		return text
 	}
 	// Glamour pads every line to the wrap width; trailing blanks make
-	// copying from scrollback ugly, so strip them (ANSI-aware). Also drop
+	// copying text ugly, so strip them (ANSI-aware). Also drop
 	// its left margin so the text sits right after the icon gutter.
 	lines := strings.Split(strings.Trim(out, "\n"), "\n")
 	for i, l := range lines {
@@ -94,7 +94,8 @@ func (r *renderer) markdown(text string) string {
 // trailingBlank matches trailing spaces interleaved with SGR sequences.
 var trailingBlank = regexp.MustCompile(`(?:\x1b\[[0-9;]*m| )+$`)
 
-// Every scrollback item starts with a blank line so items read as blocks.
+// Every transcript item starts on a new line; the transcript adds the blank
+// line between items.
 func item(s string) string { return "\n" + s }
 
 // summary is coding.SummarizeToolCall with paths shown relative to the
@@ -295,7 +296,7 @@ func (r *renderer) banner(s *coding.Session, resumed int) string {
 
 // perLine styles each line separately; rendering a multi-line block in one
 // call pads every line to the widest one, leaving trailing blanks in
-// scrollback.
+// the transcript.
 func perLine(style lipgloss.Style, text string) string {
 	lines := strings.Split(text, "\n")
 	for i, l := range lines {

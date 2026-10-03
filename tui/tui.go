@@ -1,10 +1,10 @@
 // Package tui is malachi's interactive terminal frontend.
 //
-// It runs inline rather than full-screen: completed messages and tool results
-// are printed once into the terminal's normal scrollback (tea.Println), and
-// Bubble Tea only redraws the live area at the bottom — the streaming
-// message, running tools, the input box, and a status bar. That keeps native
-// scrollback, search, and copy, and long sessions never re-render history.
+// It runs full-screen (alternate screen): a scrollable transcript viewport
+// fills the terminal above a pinned input box and status bar. Completed items
+// are kept as render functions in a transcript, so everything re-wraps on
+// resize; the in-progress message and running tools are appended live below
+// them. The view follows new output unless the user has scrolled up.
 package tui
 
 import (
@@ -17,6 +17,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -67,6 +68,8 @@ type model struct {
 	r      *renderer
 	input  textarea.Model
 	spin   spinner.Model
+	vp     viewport.Model
+	tr     transcript
 
 	width, height int
 	isDark        bool
@@ -115,6 +118,7 @@ func newModel(s *coding.Session, initialPrompt string) *model {
 		bridge:   newBridge(s),
 		input:    ta,
 		spin:     spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		vp:       viewport.New(),
 		width:    80,
 		height:   24,
 		isDark:   true,
@@ -123,15 +127,31 @@ func newModel(s *coding.Session, initialPrompt string) *model {
 	}
 	m.r = newRenderer(m.width, m.isDark, m.s.Settings().Icons, m.s.Cwd())
 	m.applyInputStyles()
+	m.vp.MouseWheelEnabled = true
+	m.vp.MouseWheelDelta = 3
+	m.showSession(s)
 	return m
 }
 
+// showSession starts the transcript with the banner and any resumed history.
+func (m *model) showSession(s *coding.Session) {
+	history := s.Harness.Messages()
+	m.tr.reset()
+	m.tr.add(func(r *renderer) string { return r.banner(s, len(history)) })
+	if len(history) > 0 {
+		// One block: history() pairs tool results with their calls.
+		m.tr.add(func(r *renderer) string { return strings.Join(r.history(history), "") })
+	}
+}
+
+// print appends a block to the transcript.
+func (m *model) print(f func(r *renderer) string) tea.Cmd {
+	m.tr.add(f)
+	return nil
+}
+
 func (m *model) Init() tea.Cmd {
-	history := m.s.Harness.Messages()
 	cmds := []tea.Cmd{tea.RequestBackgroundColor, m.bridge.next(), m.spin.Tick}
-	print := []string{m.r.banner(m.s, len(history))}
-	print = append(print, m.r.history(history)...)
-	cmds = append(cmds, tea.Println(strings.Join(print, "\n")))
 	if m.initial != "" {
 		text := m.initial
 		m.initial = ""
@@ -151,85 +171,130 @@ func (m *model) applyInputStyles() {
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	cmd := m.update(msg)
+	m.refresh()
+	return m, cmd
+}
+
+// refresh lays out the viewport and fills it with the transcript plus the
+// live area, keeping the view pinned to the bottom if it already was.
+func (m *model) refresh() {
+	follow := m.vp.AtBottom() || m.vp.TotalLineCount() == 0
+	m.vp.SetWidth(m.width)
+	m.vp.SetHeight(max(1, m.height-m.input.Height()-2))
+	content := m.tr.text(m.r)
+	if live := m.live(); live != "" {
+		content += "\n" + live
+	}
+	m.vp.SetContent(strings.TrimLeft(content, "\n"))
+	if follow {
+		m.vp.GotoBottom()
+	}
+}
+
+func (m *model) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.r = newRenderer(m.width, m.isDark, m.s.Settings().Icons, m.s.Cwd())
 		m.applyInputStyles()
-		return m, nil
+		return nil
 
 	case tea.BackgroundColorMsg:
 		m.isDark = msg.IsDark()
 		m.r = newRenderer(m.width, m.isDark, m.s.Settings().Icons, m.s.Cwd())
 		m.applyInputStyles()
-		return m, nil
+		return nil
 
 	case agentEventMsg:
 		cmd := m.handleEvent(msg.e)
-		return m, tea.Batch(cmd, m.bridge.next())
+		return tea.Batch(cmd, m.bridge.next())
 
 	case runDoneMsg:
 		m.running, m.cancelRun = false, nil
 		m.partial, m.tools = nil, nil
 		var cmds []tea.Cmd
 		if msg.err != nil {
-			cmds = append(cmds, tea.Println(m.r.st.errorText.Render("✗ "+msg.err.Error())))
+			cmds = append(cmds, m.printErr(msg.err))
 		}
 		if err := m.s.PersistError(); err != nil {
-			cmds = append(cmds, tea.Println(m.r.st.errorText.Render("✗ "+err.Error())))
+			cmds = append(cmds, m.printErr(err))
 		}
 		if m.quitting {
 			cmds = append(cmds, tea.Quit)
 		}
-		return m, tea.Sequence(cmds...)
+		return tea.Sequence(cmds...)
 
 	case submitMsg:
-		return m, m.submit(msg.text)
+		return m.submit(msg.text)
 
 	case printMsg:
-		return m, tea.Println(msg.text)
+		return m.print(msg.render)
+
+	case tea.MouseWheelMsg:
+		var cmd tea.Cmd
+		m.vp, cmd = m.vp.Update(msg)
+		return cmd
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
-		return m, cmd
+		return cmd
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
 			if m.input.Value() != "" {
 				m.input.Reset()
-				return m, nil
+				return nil
 			}
 			if m.running {
 				m.quitting = true
 				m.s.Harness.Cancel()
-				return m, nil
+				return nil
 			}
-			return m, tea.Quit
+			return tea.Quit
 		case "ctrl+d":
 			if m.input.Value() == "" && !m.running {
-				return m, tea.Quit
+				return tea.Quit
 			}
 		case "esc":
 			if m.running {
 				m.s.Harness.Cancel()
 				m.s.Harness.ClearQueues()
-				return m, nil
+				return nil
 			}
+		case "pgup":
+			m.vp.PageUp()
+			return nil
+		case "pgdown":
+			m.vp.PageDown()
+			return nil
+		case "shift+up":
+			m.vp.ScrollUp(3)
+			return nil
+		case "shift+down":
+			m.vp.ScrollDown(3)
+			return nil
+		case "ctrl+home":
+			m.vp.GotoTop()
+			return nil
+		case "ctrl+end":
+			m.vp.GotoBottom()
+			return nil
 		case "enter":
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" {
-				return m, nil
+				return nil
 			}
 			m.input.Reset()
-			return m, m.submit(text)
+			return m.submit(text)
 		}
 	}
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
-	return m, cmd
+	return cmd
 }
 
 // submit handles a line of input: a slash command, a steering message while
@@ -240,7 +305,7 @@ func (m *model) submit(text string) tea.Cmd {
 	}
 	if m.running {
 		m.s.Harness.Steer(agent.NewUserText(text))
-		return tea.Println(m.r.st.dim.Render("  (queued — will be sent after the current step)"))
+		return m.printDim("queued — will be sent after the current step")
 	}
 	return m.startRun(text)
 }
@@ -271,7 +336,8 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 	case *agent.MessageEndEvent:
 		switch msg := ev.Message.(type) {
 		case *agent.UserMessage:
-			return tea.Println(m.r.userMessage(msg.Content.String()))
+			text := msg.Content.String()
+			return m.print(func(r *renderer) string { return r.userMessage(text) })
 		case *agent.AssistantMessage:
 			m.partial = nil
 			m.usage = m.usage.Add(msg.Usage)
@@ -281,15 +347,15 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 			for _, c := range msg.ToolCalls() {
 				m.toolArgs[c.ID] = c.Arguments
 			}
-			if s := m.r.assistantMessage(msg); s != "" {
-				return tea.Println(s)
-			}
+			return m.print(func(r *renderer) string { return r.assistantMessage(msg) })
 		case *agent.ToolResultMessage:
 			// Synthetic interruption results (no execution events) still
-			// deserve a line in scrollback.
+			// deserve a line in the transcript.
 			if msg.IsError && msg.Text() == agent.InterruptedToolResult {
-				summary := m.r.summary(msg.ToolName, m.toolArgs[msg.ToolCallID])
-				return tea.Println(item(m.r.gutter(iconInterrupted, m.r.st.dim, m.r.st.dim.Render(summary+" · interrupted"))))
+				args := m.toolArgs[msg.ToolCallID]
+				return m.print(func(r *renderer) string {
+					return item(r.gutter(iconInterrupted, r.st.dim, r.st.dim.Render(r.summary(msg.ToolName, args)+" · interrupted")))
+				})
 			}
 		}
 	case *agent.ToolExecutionStartEvent:
@@ -315,50 +381,52 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		}
 		args := m.toolArgs[ev.ToolCallID]
 		m.last = &lastTool{name: ev.ToolName, args: args, result: ev.Result, isError: ev.IsError}
-		return tea.Println(m.r.toolResult(ev.ToolName, args, ev.Result, ev.IsError))
+		return m.print(func(r *renderer) string { return r.toolResult(ev.ToolName, args, ev.Result, ev.IsError) })
 	}
 	return nil
 }
 
 func (m *model) View() tea.View {
+	v := tea.NewView("")
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	if m.quitting && !m.running {
-		return tea.NewView("")
+		return v
 	}
-	var b strings.Builder
-	maxLive := max(3, m.height-m.input.Height()-6)
+	rule := m.r.st.dim.Render(strings.Repeat("─", max(1, m.width)))
+	v.Content = m.vp.View() + "\n" + rule + "\n" + m.input.View() + "\n" + m.statusLine()
+	return v
+}
 
+// live renders the in-progress parts of the current turn: the streaming
+// message, tools that are running, or a spinner while waiting.
+func (m *model) live() string {
+	var b strings.Builder
 	if m.partial != nil {
-		var blocks []string
 		if th := strings.TrimSpace(m.partial.ThinkingText()); th != "" && m.partial.Text() == "" {
 			lines := lastN(wrapLines(th, m.width-m.r.gutterWidth(iconThinking)-1), 3)
-			blocks = append(blocks, m.r.gutter(iconThinking, m.r.st.thinking, m.r.st.thinking.Render(strings.Join(lines, "\n"))))
+			b.WriteString(item(m.r.gutter(iconThinking, m.r.st.thinking, m.r.st.thinking.Render(strings.Join(lines, "\n")))))
 		}
 		if text := strings.TrimLeft(m.partial.Text(), "\n"); text != "" {
-			lines := lastN(wrapLines(text, m.width-m.r.gutterWidth(iconReply)-1), maxLive)
-			blocks = append(blocks, m.r.gutter(iconReply, lipgloss.NewStyle(), strings.Join(lines, "\n")))
+			lines := wrapLines(text, m.width-m.r.gutterWidth(iconReply)-1)
+			b.WriteString(item(m.r.gutter(iconReply, lipgloss.NewStyle(), strings.Join(lines, "\n"))))
 		}
 		for _, c := range m.partial.ToolCalls() {
-			blocks = append(blocks, m.r.gutter(toolIcon(c.Name), m.r.st.toolRun, m.r.st.dim.Render("preparing "+c.Name+"…")))
-		}
-		for _, blk := range blocks {
-			b.WriteString("\n" + blk + "\n")
+			b.WriteString(item(m.r.gutter(toolIcon(c.Name), m.r.st.toolRun, m.r.st.dim.Render("preparing "+c.Name+"…"))))
 		}
 	}
 	for _, t := range m.tools {
 		elapsed := time.Since(t.started).Truncate(time.Second)
 		head := t.summary + " " + m.r.st.toolRun.Render(m.spin.View()) + m.r.st.dim.Render(" "+elapsed.String())
 		if out := strings.TrimSpace(t.output); out != "" {
-			head += "\n" + m.r.preview(m.r.st.dim, strings.Join(lastN(strings.Split(out, "\n"), 4), "\n"))
+			head += "\n" + m.r.preview(m.r.st.dim, strings.Join(lastN(strings.Split(out, "\n"), 8), "\n"))
 		}
-		b.WriteString("\n" + m.r.gutter(toolIcon(t.name), m.r.st.toolRun, head) + "\n")
+		b.WriteString(item(m.r.gutter(toolIcon(t.name), m.r.st.toolRun, head)))
 	}
 	if m.running && m.partial == nil && len(m.tools) == 0 {
-		b.WriteString("\n" + m.r.st.toolRun.Render(m.spin.View()) + m.r.st.dim.Render(" working…") + "\n")
+		b.WriteString(item(m.r.st.toolRun.Render(m.spin.View()) + m.r.st.dim.Render(" working…")))
 	}
-
-	b.WriteString("\n" + m.input.View() + "\n")
-	b.WriteString(m.statusLine())
-	return tea.NewView(b.String())
+	return b.String()
 }
 
 func (m *model) statusLine() string {
@@ -383,8 +451,13 @@ func (m *model) statusLine() string {
 	if m.running {
 		right = "esc to cancel"
 	}
+	if !m.vp.AtBottom() {
+		right = "↓ more · ctrl+end"
+	}
 	left := strings.Join(parts, " · ")
-	pad := max(1, m.width-len([]rune(left))-len(right)-1)
+	// The right-hand hint is the actionable part; trim the stats first.
+	left = truncateWidth(left, m.width-lipgloss.Width(right)-2)
+	pad := max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right)-1)
 	return m.r.st.status.Render(left + strings.Repeat(" ", pad) + right)
 }
 

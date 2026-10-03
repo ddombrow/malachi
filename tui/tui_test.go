@@ -27,28 +27,19 @@ func newTestModel(t *testing.T) *model {
 	return m
 }
 
-// printed runs a command tree and collects everything sent to scrollback.
-func printed(cmd tea.Cmd) string {
-	if cmd == nil {
-		return ""
-	}
-	msg := cmd()
-	switch v := msg.(type) {
-	case tea.BatchMsg:
-		var out []string
-		for _, c := range v {
-			out = append(out, printed(c))
-		}
-		return strings.Join(out, "\n")
-	}
-	return fmt.Sprintf("%+v", msg)
+// shown returns the plain text of the transcript after running fn, which
+// is how tests observe what the user would see in the viewport.
+func shown(m *model, fn func() tea.Cmd) string {
+	before := len(ansi.Strip(m.tr.text(m.r)))
+	fn()
+	return ansi.Strip(m.tr.text(m.r))[before:]
 }
 
 func TestStreamingTextIsLiveThenPrinted(t *testing.T) {
 	m := newTestModel(t)
 	partial := agent.NewAssistantMessage("m")
 	partial.Content = []agent.Content{&agent.TextContent{Text: "Hello wor"}}
-	m.handleEvent(&agent.MessageUpdateEvent{Message: partial, AssistantMessageEvent: &agent.TextDelta{Delta: "wor", Partial: partial}})
+	m.Update(agentEventMsg{&agent.MessageUpdateEvent{Message: partial, AssistantMessageEvent: &agent.TextDelta{Delta: "wor", Partial: partial}}})
 	if v := m.View().Content; !strings.Contains(v, "Hello wor") {
 		t.Fatalf("live area missing partial text:\n%s", v)
 	}
@@ -56,11 +47,11 @@ func TestStreamingTextIsLiveThenPrinted(t *testing.T) {
 	final := partial.Clone()
 	final.Content = []agent.Content{&agent.TextContent{Text: "Hello world"}}
 	final.Usage = agent.Usage{Input: 10, Output: 5, TotalTokens: 15}
-	out := printed(m.handleEvent(&agent.MessageEndEvent{Message: final}))
+	out := shown(m, func() tea.Cmd { return m.handleEvent(&agent.MessageEndEvent{Message: final}) })
 	if !strings.Contains(out, "world") {
 		t.Fatalf("final text not printed: %s", out)
 	}
-	if strings.Contains(m.View().Content, "Hello wor") {
+	if strings.Contains(m.live(), "Hello") {
 		t.Fatal("completed message must leave the live area")
 	}
 	if !strings.Contains(m.statusLine(), "↑10 ↓5") {
@@ -71,17 +62,19 @@ func TestStreamingTextIsLiveThenPrinted(t *testing.T) {
 func TestToolLifecycle(t *testing.T) {
 	m := newTestModel(t)
 	args := map[string]any{"command": "go test ./..."}
-	m.handleEvent(&agent.ToolExecutionStartEvent{ToolCallID: "c", ToolName: "bash", Args: args})
-	m.handleEvent(&agent.ToolExecutionUpdateEvent{ToolCallID: "c", ToolName: "bash", PartialResult: agent.TextResult("ok pkg/a")})
+	m.Update(agentEventMsg{&agent.ToolExecutionStartEvent{ToolCallID: "c", ToolName: "bash", Args: args}})
+	m.Update(agentEventMsg{&agent.ToolExecutionUpdateEvent{ToolCallID: "c", ToolName: "bash", PartialResult: agent.TextResult("ok pkg/a")}})
 	v := m.View().Content
 	if !strings.Contains(v, "$ go test ./...") || !strings.Contains(v, "ok pkg/a") {
 		t.Fatalf("running tool not shown:\n%s", v)
 	}
-	out := printed(m.handleEvent(&agent.ToolExecutionEndEvent{ToolCallID: "c", ToolName: "bash", Result: agent.TextResult("ok pkg/a\nok pkg/b")}))
+	out := shown(m, func() tea.Cmd {
+		return m.handleEvent(&agent.ToolExecutionEndEvent{ToolCallID: "c", ToolName: "bash", Result: agent.TextResult("ok pkg/a\nok pkg/b")})
+	})
 	if !strings.Contains(out, "💻") || !strings.Contains(out, "ok pkg/b") {
 		t.Fatalf("result not printed: %s", out)
 	}
-	if strings.Contains(m.View().Content, "$ go test") || m.last == nil {
+	if strings.Contains(m.live(), "$ go test") || m.last == nil {
 		t.Fatal("finished tool must leave the live area and be kept for /last")
 	}
 }
@@ -98,13 +91,13 @@ func TestEditResultShowsDiff(t *testing.T) {
 
 func TestSlashCommands(t *testing.T) {
 	m := newTestModel(t)
-	if out := printed(m.command("/help")); !strings.Contains(out, "/resume") {
+	if out := shown(m, func() tea.Cmd { return m.command("/help") }); !strings.Contains(out, "/resume") {
 		t.Fatalf("help: %s", out)
 	}
-	if out := printed(m.command("/bogus")); !strings.Contains(out, "unknown command") {
+	if out := shown(m, func() tea.Cmd { return m.command("/bogus") }); !strings.Contains(out, "unknown command") {
 		t.Fatalf("unknown: %s", out)
 	}
-	if out := printed(m.command("/thinking high")); !strings.Contains(out, "high") || m.s.ThinkingLevel() != "high" {
+	if out := shown(m, func() tea.Cmd { return m.command("/thinking high") }); !strings.Contains(out, "high") || m.s.ThinkingLevel() != "high" {
 		t.Fatalf("thinking: %s", out)
 	}
 }
@@ -202,6 +195,60 @@ func TestSummaryShortensPaths(t *testing.T) {
 	r := newRenderer(80, true, "emoji", "/work/proj")
 	if got := r.summary("read", map[string]any{"path": "/work/proj/src/a.go"}); got != "read src/a.go" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestViewportFollowsUnlessScrolledUp(t *testing.T) {
+	m := newTestModel(t)
+	for i := 0; i < 60; i++ {
+		m.Update(printMsg{func(r *renderer) string { return item(fmt.Sprintf("line %d", i)) }})
+	}
+	if !m.vp.AtBottom() || !strings.Contains(m.View().Content, "line 59") {
+		t.Fatal("should follow new output")
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	m.Update(printMsg{func(r *renderer) string { return item("line 60") }})
+	if m.vp.AtBottom() || strings.Contains(m.View().Content, "line 60") {
+		t.Fatal("scrolled-up view must stay put")
+	}
+	if !strings.Contains(m.statusLine(), "ctrl+end") {
+		t.Fatal("status should hint at more output below")
+	}
+	m.usage = agent.Usage{Input: 123456, Output: 98765, CacheRead: 55555, TotalTokens: 1}
+	m.context = 777777
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 30})
+	if st := ansi.Strip(m.statusLine()); !strings.HasSuffix(st, "ctrl+end") || ansi.StringWidth(st) > 60 {
+		t.Fatalf("hint must survive a narrow status line: %q", st)
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModCtrl})
+	if !m.vp.AtBottom() {
+		t.Fatal("ctrl+end should jump to the bottom")
+	}
+}
+
+func TestResizeRewrapsTranscript(t *testing.T) {
+	m := newTestModel(t)
+	long := strings.Repeat("word ", 30)
+	m.Update(printMsg{func(r *renderer) string { return r.userMessage(long) }})
+	wide := strings.Count(ansi.Strip(m.tr.text(m.r)), "\n")
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 30})
+	narrow := strings.Count(ansi.Strip(m.tr.text(m.r)), "\n")
+	if narrow <= wide {
+		t.Fatalf("narrower terminal should wrap to more lines (%d vs %d)", narrow, wide)
+	}
+}
+
+func TestItemsAreSeparatedByBlankLines(t *testing.T) {
+	m := newTestModel(t)
+	m.Update(printMsg{func(r *renderer) string { return r.userMessage("hi") }})
+	m.Update(printMsg{func(r *renderer) string { return "" }}) // empty turns add nothing
+	m.Update(printMsg{func(r *renderer) string { return item("second") }})
+	text := ansi.Strip(m.tr.text(m.r))
+	if !strings.Contains(text, "❯ hi\n\nsecond") {
+		t.Fatalf("got %q", text)
+	}
+	if lines := strings.Split(m.View().Content, "\n"); len(lines) != m.height {
+		t.Fatalf("view must fill the screen exactly: %d lines for height %d", len(lines), m.height)
 	}
 }
 

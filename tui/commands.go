@@ -23,12 +23,19 @@ const helpText = `Commands:
   /quit               exit
 
 Keys: enter send · alt+enter newline · esc cancel run · ctrl+c clear/quit
+Scroll: mouse wheel · pgup/pgdown · shift+↑/↓ · ctrl+home/ctrl+end
+Select text: hold shift (option in iTerm2/Terminal) while dragging.
 While the agent runs, enter queues a steering message.`
 
-func (m *model) printDim(s string) tea.Cmd { return tea.Println(perLine(m.r.st.dim, s)) }
+func (m *model) printDim(s string) tea.Cmd {
+	return m.print(func(r *renderer) string { return item(perLine(r.st.dim, s)) })
+}
 
 func (m *model) printErr(err error) tea.Cmd {
-	return tea.Println(m.r.st.errorText.Render("✗ " + err.Error()))
+	msg := err.Error()
+	return m.print(func(r *renderer) string {
+		return item(r.gutter(iconError, r.st.errorText, r.st.errorText.Render(msg)))
+	})
 }
 
 func (m *model) command(line string) tea.Cmd {
@@ -53,14 +60,16 @@ func (m *model) command(line string) tea.Cmd {
 		if m.last == nil {
 			return m.printDim("no tool has run yet")
 		}
-		out := m.last.result.Text()
-		if d, ok := m.last.result.Details.(map[string]any); ok {
-			if patch, _ := d["patch"].(string); patch != "" {
-				out = m.r.diff(patch, 1<<30)
+		last := m.last
+		return m.print(func(r *renderer) string {
+			out := last.result.Text()
+			if d, ok := last.result.Details.(map[string]any); ok {
+				if patch, _ := d["patch"].(string); patch != "" {
+					out = r.diff(patch, 1<<30)
+				}
 			}
-		}
-		head := m.r.summary(m.last.name, m.last.args)
-		return tea.Println(m.r.st.accent.Render("── "+head+" ──") + "\n" + out)
+			return item(r.st.accent.Render("── "+r.summary(last.name, last.args)+" ──") + "\n" + out)
+		})
 	case "model":
 		return m.modelCommand(arg)
 	case "thinking":
@@ -83,7 +92,7 @@ func (m *model) command(line string) tea.Cmd {
 func (m *model) modelCommand(arg string) tea.Cmd {
 	if arg == "" {
 		// Fetch off the UI goroutine; the result is printed when it arrives.
-		s, r := m.s, m.r
+		s := m.s
 		return func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
@@ -93,10 +102,14 @@ func (m *model) modelCommand(arg string) tea.Cmd {
 			if err != nil {
 				fmt.Fprintf(&b, "(could not fetch live model list: %v; showing built-in list)\n", err)
 			}
-			if len(ids) > 0 {
-				fmt.Fprintf(&b, "%s models (%d):\n%s", s.Provider().Name, len(ids), columns(ids, r.width-4))
-			}
-			return printMsg{perLine(r.st.dim, strings.TrimRight(b.String(), "\n"))}
+			text := strings.TrimRight(b.String(), "\n")
+			return printMsg{func(r *renderer) string {
+				t := text
+				if len(ids) > 0 {
+					t += fmt.Sprintf("\n%s models (%d):\n%s", s.Provider().Name, len(ids), columns(ids, r.width-4))
+				}
+				return item(perLine(r.st.dim, t))
+			}}
 		}
 	}
 	if m.running {
@@ -157,15 +170,14 @@ func (m *model) reopen(resume string) tea.Cmd {
 	m.usage, m.context, m.last = agent.Usage{}, 0, nil
 	m.toolArgs = map[string]map[string]any{}
 
-	history := next.Harness.Messages()
-	lines := []string{"", m.r.banner(next, len(history))}
-	lines = append(lines, m.r.history(history)...)
-	return tea.Batch(tea.Println(strings.Join(lines, "\n")), m.bridge.next())
+	m.showSession(next)
+	m.vp.GotoBottom()
+	return m.bridge.next()
 }
 
-// printMsg asks the UI loop to print text to scrollback; background commands
-// return it instead of calling tea.Println themselves.
-type printMsg struct{ text string }
+// printMsg asks the UI loop to append a block to the transcript; background
+// commands return it because only the UI goroutine may touch the model.
+type printMsg struct{ render func(r *renderer) string }
 
 // columns lays out ids in aligned columns within width.
 func columns(ids []string, width int) string {

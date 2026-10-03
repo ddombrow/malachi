@@ -6,7 +6,7 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// Icon kinds: one per kind of scrollback item.
+// Icon kinds: one per kind of transcript item.
 const (
 	iconUser        = "user"
 	iconReply       = "reply"
