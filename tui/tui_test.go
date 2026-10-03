@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ddombrow/malachi/agent"
@@ -71,7 +72,7 @@ func TestToolLifecycle(t *testing.T) {
 	out := shown(m, func() tea.Cmd {
 		return m.handleEvent(&agent.ToolExecutionEndEvent{ToolCallID: "c", ToolName: "bash", Result: agent.TextResult("ok pkg/a\nok pkg/b")})
 	})
-	if !strings.Contains(out, "💻") || !strings.Contains(out, "ok pkg/b") {
+	if !strings.Contains(out, m.r.icons[iconBash]) || !strings.Contains(out, "ok pkg/b") {
 		t.Fatalf("result not printed: %s", out)
 	}
 	if strings.Contains(m.live(), "$ go test") || m.last == nil {
@@ -125,11 +126,11 @@ func TestBashStatusMarks(t *testing.T) {
 		details map[string]any
 		want    []string
 	}{
-		{map[string]any{"exit_code": 0}, []string{"💻"}},
-		{map[string]any{"exit_code": float64(0)}, []string{"💻"}}, // resumed from JSON
-		{map[string]any{"exit_code": 2}, []string{"💻", "✗ exit 2"}},
-		{map[string]any{"cancelled": true, "exit_code": -1}, []string{"🛑", "cancelled"}},
-		{map[string]any{"timed_out": true, "exit_code": -1}, []string{"⌛", "timed out"}},
+		{map[string]any{"exit_code": 0}, []string{m.r.icons[iconBash]}},
+		{map[string]any{"exit_code": float64(0)}, []string{m.r.icons[iconBash]}}, // resumed from JSON
+		{map[string]any{"exit_code": 2}, []string{m.r.icons[iconBash], "✗ exit 2"}},
+		{map[string]any{"cancelled": true, "exit_code": -1}, []string{m.r.icons[iconCancelled], "cancelled"}},
+		{map[string]any{"timed_out": true, "exit_code": -1}, []string{m.r.icons[iconTimeout], "timed out"}},
 	} {
 		res := agent.TextResult("x")
 		res.Details = tc.details
@@ -148,18 +149,18 @@ func TestBashStatusMarks(t *testing.T) {
 
 func TestIconsPerItemKind(t *testing.T) {
 	m := newTestModel(t)
-	for tool, icon := range map[string]string{"read": "📖", "edit": "📝", "write": "📄", "bash": "💻", "grep": "🔧"} {
-		if out := m.r.toolResult(tool, map[string]any{}, agent.TextResult(""), false); !strings.Contains(out, icon) {
-			t.Errorf("%s: want %s in %q", tool, icon, out)
+	for tool, kind := range map[string]string{"read": iconRead, "edit": iconEdit, "write": iconWrite, "bash": iconBash, "grep": iconTool} {
+		if out := m.r.toolResult(tool, map[string]any{}, agent.TextResult(""), false); !strings.Contains(out, m.r.icons[kind]) {
+			t.Errorf("%s: want %s in %q", tool, kind, out)
 		}
 	}
-	if out := m.r.toolResult("read", map[string]any{"path": "x"}, agent.TextResult("File not found"), true); !strings.Contains(out, "❌") {
+	if out := m.r.toolResult("read", map[string]any{"path": "x"}, agent.TextResult("File not found"), true); !strings.Contains(out, m.r.icons[iconError]) {
 		t.Errorf("error icon missing: %q", out)
 	}
 	a := agent.NewAssistantMessage("m")
 	a.Content = []agent.Content{&agent.ThinkingContent{Thinking: "hmm"}, &agent.TextContent{Text: "Done."}}
 	out := m.r.assistantMessage(a)
-	if !strings.Contains(out, "💭") || !strings.Contains(out, "💬") {
+	if !strings.Contains(out, m.r.icons[iconThinking]) || !strings.Contains(out, m.r.icons[iconReply]) {
 		t.Errorf("reply icons missing: %q", out)
 	}
 }
@@ -171,11 +172,13 @@ func TestGutterAlignsMarkdown(t *testing.T) {
 	a.Content = []agent.Content{&agent.TextContent{Text: "First paragraph.\n\n- one\n- two"}}
 	out := ansi.Strip(m.r.assistantMessage(a))
 	lines := strings.Split(strings.TrimLeft(out, "\n"), "\n")
-	if !strings.HasPrefix(lines[0], "💬 First paragraph.") {
+	glyph := m.r.icons[iconReply]
+	indent := strings.Repeat(" ", lipgloss.Width(glyph)+1)
+	if !strings.HasPrefix(lines[0], glyph+" First paragraph.") {
 		t.Fatalf("first line: %q", lines[0])
 	}
 	for _, l := range lines[1:] {
-		if l != "" && !strings.HasPrefix(l, "   ") {
+		if l != "" && !strings.HasPrefix(l, indent) {
 			t.Errorf("continuation not indented under text: %q", l)
 		}
 		if strings.HasSuffix(l, " ") {
@@ -189,7 +192,7 @@ func TestListReplyStartsOnIconLine(t *testing.T) {
 	a := agent.NewAssistantMessage("m")
 	a.Content = []agent.Content{&agent.TextContent{Text: "- **one**\n- two"}}
 	out := strings.TrimLeft(ansi.Strip(m.r.assistantMessage(a)), "\n")
-	if !strings.HasPrefix(out, "💬 • one") {
+	if !strings.HasPrefix(out, m.r.icons[iconReply]+" • one") {
 		t.Fatalf("got %q", out)
 	}
 }
@@ -234,7 +237,7 @@ func TestViewportFollowsUnlessScrolledUp(t *testing.T) {
 	m.usage = agent.Usage{Input: 123456, Output: 98765, CacheRead: 55555, TotalTokens: 1}
 	m.context = 777777
 	m.Update(tea.WindowSizeMsg{Width: 60, Height: 30})
-	if st := ansi.Strip(m.statusLine()); !strings.HasSuffix(st, "ctrl+end") || ansi.StringWidth(st) > 60 {
+	if st := ansi.Strip(m.statusLine()); !strings.HasSuffix(st, "ctrl+end"+statusPad) || ansi.StringWidth(st) > 60 {
 		t.Fatalf("hint must survive a narrow status line: %q", st)
 	}
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModCtrl})
@@ -275,7 +278,7 @@ func TestDotsIconSet(t *testing.T) {
 	if !strings.Contains(out, "⏺ $ ls") {
 		t.Fatalf("dots: %q", out)
 	}
-	if newRenderer(80, true, "bogus", "").icons[iconReply] != "💬" {
+	if newRenderer(80, true, "bogus", "").icons[iconReply] != iconSets["emoji"][iconReply] {
 		t.Fatal("unknown icon set should fall back to emoji")
 	}
 }
@@ -340,6 +343,38 @@ func malachiTestSession(t *testing.T) *coding.Session {
 		t.Fatal(err)
 	}
 	return s
+}
+
+// The status bar separates itself with a tinted full-width row rather than a
+// blank line above it, so the input sits closer to the transcript.
+func TestStatusBarIsTinted(t *testing.T) {
+	m := newTestModel(t)
+	if m.r.st.status.GetBackground() == nil {
+		t.Fatal("status bar needs a background so it reads as its own row")
+	}
+	if w := ansi.StringWidth(ansi.Strip(m.statusLine())); w != m.width {
+		t.Fatalf("status bar must span the full width to tint it: %d != %d", w, m.width)
+	}
+}
+
+// The input's prompt must be the same glyph and indent as a user message in
+// the transcript, so the box lines up with what it is replying to.
+func TestInputPromptMatchesUserGutter(t *testing.T) {
+	m := newTestModel(t)
+	glyph := m.r.icons[iconUser]
+	if m.input.Prompt != glyph+" " {
+		t.Fatalf("prompt %q, want %q", m.input.Prompt, glyph+" ")
+	}
+	if got, want := lipgloss.Width(m.input.Prompt), m.r.gutterWidth(iconUser); got != want {
+		t.Fatalf("prompt is %d cells, user gutter is %d", got, want)
+	}
+	// The dots set keeps its own user glyph, so the prompt follows the set.
+	d := newTestModel(t)
+	d.r = newRenderer(80, true, "dots", "")
+	d.applyInputStyles()
+	if d.input.Prompt != d.r.icons[iconUser]+" " {
+		t.Fatalf("prompt did not follow the icon set: %q", d.input.Prompt)
+	}
 }
 
 func TestBridgeNextUnblocksOnClose(t *testing.T) {

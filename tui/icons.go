@@ -23,18 +23,20 @@ const (
 	iconInterrupted = "interrupted"
 )
 
-// Icon sets, chosen with "icons" in settings.json. Emoji are all
-// default-presentation (no U+FE0F variation selector) so terminals agree they
-// are two cells wide and gutters line up.
+// Icon sets, chosen with "icons" in settings.json. Icons measure two cells
+// (or two ASCII cells for ">_"), so gutters line up. The pencil carries a
+// U+FE0F variation selector, which lipgloss measures as two cells to match; a
+// terminal that ignores the selector renders it one cell wide, leaving that
+// row one column proud of the rest.
 var iconSets = map[string]map[string]string{
 	"emoji": {
 		iconUser:        "❯",
 		iconReply:       "💬",
 		iconThinking:    "💭",
-		iconRead:        "📖",
-		iconEdit:        "📝",
-		iconWrite:       "📄",
-		iconBash:        "💻",
+		iconRead:        "👀",
+		iconEdit:        "✏️",
+		iconWrite:       "📝",
+		iconBash:        ">_",
 		iconTool:        "🔧",
 		iconError:       "❌",
 		iconCancelled:   "🛑",

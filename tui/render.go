@@ -31,8 +31,12 @@ func newStyles(isDark bool) styles {
 		add:       lipgloss.NewStyle().Foreground(ld(lipgloss.Color("28"), lipgloss.Color("114"))),
 		del:       lipgloss.NewStyle().Foreground(ld(lipgloss.Color("160"), lipgloss.Color("203"))),
 		hunk:      lipgloss.NewStyle().Foreground(ld(lipgloss.Color("31"), lipgloss.Color("80"))),
-		status:    lipgloss.NewStyle().Foreground(ld(lipgloss.Color("244"), lipgloss.Color("244"))),
-		accent:    lipgloss.NewStyle().Foreground(ld(lipgloss.Color("97"), lipgloss.Color("141"))),
+		// The status bar is a full-width tinted row, so it reads as its own
+		// surface without needing a blank line above it.
+		status: lipgloss.NewStyle().
+			Foreground(ld(lipgloss.Color("240"), lipgloss.Color("250"))).
+			Background(ld(lipgloss.Color("252"), lipgloss.Color("236"))),
+		accent: lipgloss.NewStyle().Foreground(ld(lipgloss.Color("97"), lipgloss.Color("141"))),
 	}
 }
 

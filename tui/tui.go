@@ -103,6 +103,7 @@ type model struct {
 	tr     transcript
 
 	width, height int
+	chrome        int // rows the block under the transcript currently uses
 	isDark        bool
 
 	running   bool
@@ -133,14 +134,17 @@ func Run(s *coding.Session, initialPrompt string) error {
 	return err
 }
 
+// inputMaxHeight is how tall the input box may grow on a roomy terminal.
+const inputMaxHeight = 10
+
 func newModel(s *coding.Session, initialPrompt string) *model {
 	ta := textarea.New()
 	ta.Placeholder = "Ask malachi to do something…"
 	ta.ShowLineNumbers = false
-	ta.Prompt = "› "
+	ta.Prompt = "› " // replaced with the icon set's user glyph in applyInputStyles
 	ta.DynamicHeight = true
 	ta.MinHeight = 1
-	ta.MaxHeight = 10
+	ta.MaxHeight = inputMaxHeight
 	ta.CharLimit = 0
 	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "shift+enter", "ctrl+j"))
 	ta.Focus()
@@ -153,6 +157,7 @@ func newModel(s *coding.Session, initialPrompt string) *model {
 		vp:       viewport.New(),
 		width:    80,
 		height:   24,
+		chrome:   chromeRows,
 		isDark:   true,
 		toolArgs: map[string]map[string]any{},
 		initial:  initialPrompt,
@@ -205,6 +210,9 @@ func (m *model) applyInputStyles() {
 	st := textarea.DefaultStyles(m.isDark)
 	st.Focused.CursorLine = st.Focused.Text
 	st.Focused.Prompt = m.r.st.user
+	// The input's prompt is the same glyph, and the same width, as the
+	// gutter on a user message in the transcript above it.
+	m.input.Prompt = m.r.icons[iconUser] + " "
 	m.input.SetStyles(st)
 	m.input.SetWidth(max(20, m.width-1))
 }
@@ -220,7 +228,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *model) refresh() {
 	follow := m.vp.AtBottom() || m.vp.TotalLineCount() == 0
 	m.vp.SetWidth(m.width)
-	m.vp.SetHeight(max(1, m.height-m.input.Height()-2))
+	// The input box yields rows to the transcript on a short terminal, and
+	// below four spare rows the rules are dropped, so the view can never grow
+	// past the screen and scroll the transcript off the top.
+	m.chrome = chromeRows
+	if m.height < chromeRows+2 {
+		m.chrome = bareRows
+	}
+	avail := m.height - m.chrome - 1 // always leave the transcript a row
+	m.input.MaxHeight = max(1, min(inputMaxHeight, avail))
+	// Let the box hold more input than it can show, so a small terminal
+	// scrolls the input instead of refusing what is typed into it.
+	m.input.MaxContentHeight = inputMaxHeight
+	m.vp.SetHeight(max(1, m.height-m.input.Height()-m.chrome))
 	content := m.tr.text(m.r)
 	if live := m.live(); live != "" {
 		content += "\n" + live
@@ -434,6 +454,29 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 	return nil
 }
 
+// statusPad is one cell of breathing room at each end of the status bar, so
+// the text doesn't sit flush against the edges.
+const statusPad = " "
+
+// Layout of the rows under the transcript viewport: a blank pad row, then
+// the two rules that bracket the input box, then the status bar. refresh()
+// gives the viewport whatever is left, so the view fills the terminal
+// exactly at any size, dropping the rules when the terminal is too short to
+// spare the rows.
+const (
+	chromeRows = 4 // pad + rule + rule + status bar
+	bareRows   = 1 // status bar only, for very short terminals
+)
+
+// Rules that bracket the input box. Box-drawing ─ draws at mid-cell-height,
+// which reads as a line floating between the transcript and the input;
+// highRule and lowRule sit at the top and bottom of their cells instead, so
+// each hugs the edge it belongs to.
+const (
+	highRule = "‾" // overline, at the top of the cell
+	lowRule  = "▁" // lower one-eighth block, at the bottom of the cell
+)
+
 func (m *model) View() tea.View {
 	v := tea.NewView("")
 	v.AltScreen = true
@@ -441,8 +484,16 @@ func (m *model) View() tea.View {
 	if m.quitting && !m.running {
 		return v
 	}
-	rule := m.r.st.dim.Render(strings.Repeat("─", max(1, m.width)))
-	v.Content = m.vp.View() + "\n" + rule + "\n" + m.input.View() + "\n" + m.statusLine()
+	top := m.r.st.dim.Render(strings.Repeat(highRule, max(1, m.width)))
+	// The underline hugs the bottom of the input's row; the bar's own
+	// background separates it from the status text.
+	lower := m.r.st.dim.Render(strings.Repeat(lowRule, max(1, m.width)))
+	input := m.input.View()
+	body := m.vp.View() + "\n" + input
+	if m.chrome >= chromeRows {
+		body = m.vp.View() + "\n\n" + top + "\n" + input + "\n" + lower
+	}
+	v.Content = body + "\n" + m.statusLine()
 	return v
 }
 
@@ -502,10 +553,15 @@ func (m *model) statusLine() string {
 	if !m.vp.AtBottom() {
 		right = "↓ more · ctrl+end"
 	}
-	right = truncateWidth(right, m.width)
-	avail := m.width - lipgloss.Width(right)
+	lead, trail := statusPad, statusPad
+	if m.width < 2*lipgloss.Width(statusPad) {
+		trail = "" // no room for a pad on each side of a one-column bar
+	}
+	caps := lipgloss.Width(lead) + lipgloss.Width(trail)
+	right = truncateWidth(right, max(0, m.width-caps))
+	avail := m.width - caps - lipgloss.Width(right)
 	if avail <= 0 {
-		return m.r.st.status.Render(right)
+		return m.r.st.status.Render(lead + right + trail)
 	}
 	for len(parts) > 0 && lipgloss.Width(strings.Join(parts, " · "))+1 > avail {
 		parts = parts[:len(parts)-1]
@@ -514,8 +570,8 @@ func (m *model) statusLine() string {
 	if left != "" {
 		left = truncateWidth(left, avail-1)
 	}
-	pad := max(0, m.width-lipgloss.Width(left)-lipgloss.Width(right))
-	return m.r.st.status.Render(left + strings.Repeat(" ", pad) + right)
+	pad := max(0, avail-lipgloss.Width(left))
+	return m.r.st.status.Render(lead + left + strings.Repeat(" ", pad) + right + trail)
 }
 
 func tokens(n int64) string {
