@@ -16,7 +16,7 @@ agent/        portable brain: messages, events, loop, harness, session tree
 
 ```sh
 make build                       # → bin/malachi
-export OPENCODE_API_KEY=...      # default provider: OpenCode Go
+echo 'OPENCODE_API_KEY=...' >> ~/.malachi/.env   # default provider: OpenCode Go
 
 bin/malachi                      # interactive
 bin/malachi -p "summarize main.go"
@@ -31,6 +31,11 @@ Type while the agent works to steer it, press `esc` to cancel, and use `/help`
 for commands (`/model`, `/thinking`, `/new`, `/resume`, `/last`).
 
 ## Configuration
+
+API keys can be exported in your shell or kept in `~/.malachi/.env`
+(`KEY=value` lines; a non-empty shell variable takes precedence). Only that
+file is read, never a `.env` in the project directory, so a repo's own secrets
+don't leak into the agent's shell commands.
 
 `~/.malachi/settings.json` (or `$MALACHI_HOME/settings.json`) overrides or adds
 providers. Built-in providers are `opencode-go`, `openai`, `openrouter`, and `ollama`.

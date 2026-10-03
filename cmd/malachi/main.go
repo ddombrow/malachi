@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 
 	"github.com/ddombrow/malachi/agent"
@@ -41,6 +42,12 @@ func run() int {
 		flag.PrintDefaults()
 	}
 	positional := parseInterspersed(os.Args[1:])
+
+	// Secrets such as OPENCODE_API_KEY may live in ~/.malachi/.env.
+	if err := coding.LoadDotEnv(filepath.Join(coding.Home(), ".env")); err != nil {
+		fmt.Fprintln(os.Stderr, "malachi:", err)
+		return 1
+	}
 
 	s, err := coding.Open(coding.Options{
 		Cwd:           *cwd,

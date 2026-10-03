@@ -226,7 +226,8 @@ func (pc ProviderConfig) ResolveAPIKey() (string, error) {
 	if k := os.Getenv(pc.APIKeyEnv); k != "" {
 		return k, nil
 	}
-	return "", fmt.Errorf("%s is not set (needed for provider %s)", pc.APIKeyEnv, pc.Name)
+	return "", fmt.Errorf("%s is not set (needed for provider %s); export it or add it to %s",
+		pc.APIKeyEnv, pc.Name, filepath.Join(Home(), ".env"))
 }
 
 // NewProvider builds the runtime provider for pc and model.
