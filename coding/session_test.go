@@ -154,3 +154,29 @@ func TestContextFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionIDIsStableAcrossResume(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	p := fake.New(fake.Text("a"))
+	s, err := Open(testOpts(t, home, cwd, p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Prompt(context.Background(), "x")
+	p2 := fake.New(fake.Text("b"))
+	r, err := Open(Options{Cwd: cwd, Home: home, Settings: &Settings{}, Provider: p2, Continue: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Prompt(context.Background(), "y")
+	if id := p.Requests[0].SessionID; id == "" || id != p2.Requests[0].SessionID {
+		t.Fatalf("session ids: %q vs %q", id, p2.Requests[0].SessionID)
+	}
+
+	o := testOpts(t, home, cwd, fake.New(fake.Text("c")))
+	o.NoSession = true
+	e, _ := Open(o)
+	if e.Harness.Config().SessionID == "" {
+		t.Fatal("in-memory sessions need a session id too")
+	}
+}

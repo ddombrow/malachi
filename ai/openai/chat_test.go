@@ -26,6 +26,7 @@ func sseBody(chunks ...string) string {
 type captured struct {
 	payload map[string]any
 	auth    string
+	header  http.Header
 }
 
 func server(t *testing.T, status int, body string, cap *captured) *httptest.Server {
@@ -38,6 +39,7 @@ func server(t *testing.T, status int, body string, cap *captured) *httptest.Serv
 			raw, _ := io.ReadAll(r.Body)
 			_ = json.Unmarshal(raw, &cap.payload)
 			cap.auth = r.Header.Get("Authorization")
+			cap.header = r.Header.Clone()
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(status)
@@ -77,8 +79,8 @@ func TestStreamsTextReasoningAndUsage(t *testing.T) {
 	)
 	cap := &captured{}
 	srv := server(t, 200, body, cap)
-	p := New(Config{Name: "opencode-go", BaseURL: srv.URL + "/v1", APIKey: "sk-test"})
-	evs := collect(p, agent.Request{Model: "kimi-k2.7-code", System: "sys", Messages: []agent.Message{agent.NewUserText("hi")}, ThinkingLevel: "high"})
+	p := New(Config{Name: "opencode-go", BaseURL: srv.URL + "/v1", APIKey: "sk-test", SessionHeader: "x-opencode-session", UserAgent: "malachi/test"})
+	evs := collect(p, agent.Request{Model: "kimi-k2.7-code", System: "sys", Messages: []agent.Message{agent.NewUserText("hi")}, ThinkingLevel: "high", SessionID: "sess-123"})
 	m := final(t, evs)
 
 	if m.StopReason != agent.StopStop || m.Text() != "Hello" || m.ThinkingText() != "think" {
@@ -95,6 +97,9 @@ func TestStreamsTextReasoningAndUsage(t *testing.T) {
 	}
 	if cap.auth != "Bearer sk-test" || cap.payload["reasoning_effort"] != "high" || cap.payload["stream"] != true {
 		t.Fatalf("request: auth=%q payload=%v", cap.auth, cap.payload)
+	}
+	if cap.header.Get("x-opencode-session") != "sess-123" || cap.header.Get("User-Agent") != "malachi/test" {
+		t.Fatalf("headers: %v", cap.header)
 	}
 	msgs := cap.payload["messages"].([]any)
 	if msgs[0].(map[string]any)["role"] != "system" || msgs[1].(map[string]any)["content"] != "hi" {

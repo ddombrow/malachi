@@ -26,6 +26,7 @@ type ProviderConfig struct {
 	APIKey          string            `json:"apiKey,omitempty"`
 	APIKeyEnv       string            `json:"apiKeyEnv,omitempty"`
 	Headers         map[string]string `json:"headers,omitempty"`
+	SessionHeader   string            `json:"sessionHeader,omitempty"` // header carrying the session id
 	Models          []string          `json:"models,omitempty"`
 	DefaultModel    string            `json:"defaultModel,omitempty"`
 	VisionModels    []string          `json:"visionModels,omitempty"`
@@ -54,6 +55,9 @@ func BuiltinProviders() map[string]ProviderConfig {
 			API:         openai.API,
 			BaseURL:     "https://opencode.ai/zen/go/v1",
 			APIKeyEnv:   "OPENCODE_API_KEY",
+			// Required by OpenCode Go for routing and prompt caching:
+			// https://opencode.ai/docs/go/#where-can-i-use-it
+			SessionHeader: "x-opencode-session",
 			Models: []string{
 				"deepseek-v4-flash", "deepseek-v4-pro", "glm-5.1", "glm-5.2", "kimi-k2.6", "kimi-k2.7-code",
 				"mimo-v2.5", "mimo-v2.5-pro", "minimax-m2.7", "minimax-m3", "qwen3.6-plus", "qwen3.7-max", "qwen3.7-plus",
@@ -92,6 +96,13 @@ func BuiltinProviders() map[string]ProviderConfig {
 		},
 	}
 }
+
+// Version is malachi's release version, sent in the User-Agent.
+const Version = "0.1.0"
+
+// UserAgent identifies malachi to providers, as gateways like OpenCode Go
+// require a client-specific agent rather than a generic HTTP library name.
+var UserAgent = "malachi/" + Version
 
 // Home returns malachi's state directory: $MALACHI_HOME or ~/.malachi.
 func Home() string {
@@ -149,6 +160,7 @@ func mergeProvider(dst *ProviderConfig, o ProviderConfig) {
 	set(&dst.BaseURL, o.BaseURL)
 	set(&dst.APIKey, o.APIKey)
 	set(&dst.APIKeyEnv, o.APIKeyEnv)
+	set(&dst.SessionHeader, o.SessionHeader)
 	set(&dst.DefaultModel, o.DefaultModel)
 	set(&dst.ThinkingFormat, o.ThinkingFormat)
 	set(&dst.DefaultThinking, o.DefaultThinking)
@@ -243,6 +255,8 @@ func (pc ProviderConfig) NewProvider(model string) (agent.Provider, error) {
 			BaseURL:        pc.BaseURL,
 			APIKey:         key,
 			Headers:        pc.Headers,
+			SessionHeader:  pc.SessionHeader,
+			UserAgent:      UserAgent,
 			ThinkingFormat: pc.ThinkingFormat,
 			MaxTokens:      pc.MaxTokens,
 			SupportsImages: slices.Contains(pc.VisionModels, model),

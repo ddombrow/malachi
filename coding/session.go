@@ -174,7 +174,9 @@ func Open(opts Options) (*Session, error) {
 	s.provider, s.model, s.thinking = pc, model, pc.ValidThinking(level)
 
 	tools := CodingTools(cwd)
-	sessionID := ""
+	// A stable per-conversation id: the session file name, or a random id
+	// for in-memory sessions. Providers use it for routing/prompt caching.
+	sessionID := session.NewID()
 	if s.file != nil {
 		sessionID = strings.TrimSuffix(filepath.Base(s.file.Path()), ".jsonl")
 	}

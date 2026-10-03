@@ -46,10 +46,15 @@ providers. Built-in providers are `opencode-go`, `openai`, `openrouter`, and `ol
   "defaultModel": "kimi-k2.7-code",
   "thinkingLevel": "medium",
   "providers": {
-    "local": { "baseUrl": "http://localhost:8080/v1", "defaultModel": "qwen", "thinkingLevels": ["off"] }
+    "local": { "baseUrl": "http://localhost:8080/v1", "defaultModel": "qwen", "thinkingLevels": ["off"] },
+    "my-gateway": { "baseUrl": "https://gw.example/v1", "apiKeyEnv": "GW_KEY", "sessionHeader": "x-session-id" }
   }
 }
 ```
+
+Requests carry `User-Agent: malachi/<version>`. A provider's `sessionHeader`
+sends the session id (stable across `-c`/resume) on every request; OpenCode Go
+requires `x-opencode-session`, which the built-in preset sets.
 
 Project instructions come from `AGENTS.md` (or `CLAUDE.md`) in `~/.malachi`
 and in every directory from `/` down to the working directory. Sessions are

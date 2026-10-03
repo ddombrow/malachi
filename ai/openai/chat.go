@@ -40,10 +40,15 @@ const (
 
 // Config configures one OpenAI-compatible endpoint.
 type Config struct {
-	Name           string // provider name recorded on messages, e.g. "opencode-go"
-	BaseURL        string // e.g. https://opencode.ai/zen/go/v1
-	APIKey         string
-	Headers        map[string]string
+	Name    string // provider name recorded on messages, e.g. "opencode-go"
+	BaseURL string // e.g. https://opencode.ai/zen/go/v1
+	APIKey  string
+	Headers map[string]string
+	// SessionHeader, if set, carries agent.Request.SessionID on every
+	// request (e.g. "x-opencode-session"), letting the gateway route a
+	// conversation consistently and reuse its prompt cache.
+	SessionHeader  string
+	UserAgent      string // default "malachi"
 	ThinkingFormat string // default ThinkingOpenAI
 	MaxTokens      int    // 0 omits the field
 	SupportsImages bool
@@ -72,6 +77,9 @@ func New(cfg Config) *Provider {
 	if cfg.Name == "" {
 		cfg.Name = "openai-compatible"
 	}
+	if cfg.UserAgent == "" {
+		cfg.UserAgent = "malachi"
+	}
 	return &Provider{cfg: cfg}
 }
 
@@ -87,7 +95,7 @@ func (p *Provider) Stream(ctx context.Context, req agent.Request) iter.Seq[agent
 			b.Error(agent.StopError, "encode request: "+err.Error())
 			return
 		}
-		resp, err := p.post(ctx, body)
+		resp, err := p.post(ctx, body, req.SessionID)
 		if err != nil {
 			if ctx.Err() != nil {
 				b.Error(agent.StopAborted, "Operation aborted")
@@ -153,7 +161,7 @@ func isTransient(status int) bool {
 
 // post sends the request, retrying transient failures that happen before
 // any of the response body has been consumed.
-func (p *Provider) post(ctx context.Context, body []byte) (*http.Response, error) {
+func (p *Provider) post(ctx context.Context, body []byte, sessionID string) (*http.Response, error) {
 	url := strings.TrimRight(p.cfg.BaseURL, "/") + "/chat/completions"
 	for attempt := 0; ; attempt++ {
 		hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -162,6 +170,10 @@ func (p *Provider) post(ctx context.Context, body []byte) (*http.Response, error
 		}
 		hreq.Header.Set("Content-Type", "application/json")
 		hreq.Header.Set("Accept", "text/event-stream")
+		hreq.Header.Set("User-Agent", p.cfg.UserAgent)
+		if p.cfg.SessionHeader != "" && sessionID != "" {
+			hreq.Header.Set(p.cfg.SessionHeader, sessionID)
+		}
 		if p.cfg.APIKey != "" {
 			hreq.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
 		}
