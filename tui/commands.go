@@ -11,7 +11,6 @@ import (
 
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/agent/session"
-	"github.com/ddombrow/malachi/coding"
 )
 
 const helpText = `Commands:
@@ -60,7 +59,7 @@ func (m *model) command(line string) tea.Cmd {
 				out = m.r.diff(patch, 1<<30)
 			}
 		}
-		head := coding.SummarizeToolCall(m.last.name, m.last.args)
+		head := m.r.summary(m.last.name, m.last.args)
 		return tea.Println(m.r.st.accent.Render("── "+head+" ──") + "\n" + out)
 	case "model":
 		return m.modelCommand(arg)

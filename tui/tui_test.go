@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/ai/fake"
@@ -77,7 +78,7 @@ func TestToolLifecycle(t *testing.T) {
 		t.Fatalf("running tool not shown:\n%s", v)
 	}
 	out := printed(m.handleEvent(&agent.ToolExecutionEndEvent{ToolCallID: "c", ToolName: "bash", Result: agent.TextResult("ok pkg/a\nok pkg/b")}))
-	if !strings.Contains(out, "✓") || !strings.Contains(out, "ok pkg/b") {
+	if !strings.Contains(out, "💻") || !strings.Contains(out, "ok pkg/b") {
 		t.Fatalf("result not printed: %s", out)
 	}
 	if strings.Contains(m.View().Content, "$ go test") || m.last == nil {
@@ -112,18 +113,105 @@ func TestBashStatusMarks(t *testing.T) {
 	m := newTestModel(t)
 	for _, tc := range []struct {
 		details map[string]any
-		mark    string
+		want    []string
 	}{
-		{map[string]any{"exit_code": 0}, "✓"},
-		{map[string]any{"exit_code": float64(0)}, "✓"}, // resumed from JSON
-		{map[string]any{"exit_code": 2}, "✗"},
-		{map[string]any{"cancelled": true, "exit_code": -1}, "⏹"},
-		{map[string]any{"timed_out": true, "exit_code": -1}, "⏱"},
+		{map[string]any{"exit_code": 0}, []string{"💻"}},
+		{map[string]any{"exit_code": float64(0)}, []string{"💻"}}, // resumed from JSON
+		{map[string]any{"exit_code": 2}, []string{"💻", "✗ exit 2"}},
+		{map[string]any{"cancelled": true, "exit_code": -1}, []string{"🛑", "cancelled"}},
+		{map[string]any{"timed_out": true, "exit_code": -1}, []string{"⌛", "timed out"}},
 	} {
 		res := agent.TextResult("x")
 		res.Details = tc.details
-		if out := m.r.toolResult("bash", map[string]any{"command": "c"}, res, false); !strings.Contains(out, tc.mark) {
-			t.Errorf("%v: want %s in %q", tc.details, tc.mark, out)
+		out := m.r.toolResult("bash", map[string]any{"command": "c"}, res, false)
+		for _, w := range tc.want {
+			if !strings.Contains(out, w) {
+				t.Errorf("%v: want %q in %q", tc.details, w, out)
+			}
 		}
+		wantExit := strings.Contains(strings.Join(tc.want, " "), "✗ exit")
+		if wantExit != strings.Contains(out, "✗ exit") {
+			t.Errorf("%v: unexpected failure marker in %q", tc.details, out)
+		}
+	}
+}
+
+func TestIconsPerItemKind(t *testing.T) {
+	m := newTestModel(t)
+	for tool, icon := range map[string]string{"read": "📖", "edit": "📝", "write": "📄", "bash": "💻", "grep": "🔧"} {
+		if out := m.r.toolResult(tool, map[string]any{}, agent.TextResult(""), false); !strings.Contains(out, icon) {
+			t.Errorf("%s: want %s in %q", tool, icon, out)
+		}
+	}
+	if out := m.r.toolResult("read", map[string]any{"path": "x"}, agent.TextResult("File not found"), true); !strings.Contains(out, "❌") {
+		t.Errorf("error icon missing: %q", out)
+	}
+	a := agent.NewAssistantMessage("m")
+	a.Content = []agent.Content{&agent.ThinkingContent{Thinking: "hmm"}, &agent.TextContent{Text: "Done."}}
+	out := m.r.assistantMessage(a)
+	if !strings.Contains(out, "💭") || !strings.Contains(out, "💬") {
+		t.Errorf("reply icons missing: %q", out)
+	}
+}
+
+// Continuation lines must align under the first line's text, past the icon.
+func TestGutterAlignsMarkdown(t *testing.T) {
+	m := newTestModel(t)
+	a := agent.NewAssistantMessage("m")
+	a.Content = []agent.Content{&agent.TextContent{Text: "First paragraph.\n\n- one\n- two"}}
+	out := ansi.Strip(m.r.assistantMessage(a))
+	lines := strings.Split(strings.TrimLeft(out, "\n"), "\n")
+	if !strings.HasPrefix(lines[0], "💬 First paragraph.") {
+		t.Fatalf("first line: %q", lines[0])
+	}
+	for _, l := range lines[1:] {
+		if l != "" && !strings.HasPrefix(l, "   ") {
+			t.Errorf("continuation not indented under text: %q", l)
+		}
+		if strings.HasSuffix(l, " ") {
+			t.Errorf("trailing blank: %q", l)
+		}
+	}
+}
+
+func TestListReplyStartsOnIconLine(t *testing.T) {
+	m := newTestModel(t)
+	a := agent.NewAssistantMessage("m")
+	a.Content = []agent.Content{&agent.TextContent{Text: "- **one**\n- two"}}
+	out := strings.TrimLeft(ansi.Strip(m.r.assistantMessage(a)), "\n")
+	if !strings.HasPrefix(out, "💬 • one") {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestUserMessageWrapsInsideGutter(t *testing.T) {
+	r := newRenderer(30, true, "emoji", "")
+	out := strings.TrimLeft(ansi.Strip(r.userMessage("please read the readme and summarize it briefly")), "\n")
+	lines := strings.Split(out, "\n")
+	if len(lines) < 2 || !strings.HasPrefix(lines[0], "❯ please") || !strings.HasPrefix(lines[1], "  ") {
+		t.Fatalf("got %q", out)
+	}
+	for _, l := range lines {
+		if ansi.StringWidth(l) > 30 {
+			t.Errorf("line too wide: %q", l)
+		}
+	}
+}
+
+func TestSummaryShortensPaths(t *testing.T) {
+	r := newRenderer(80, true, "emoji", "/work/proj")
+	if got := r.summary("read", map[string]any{"path": "/work/proj/src/a.go"}); got != "read src/a.go" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestDotsIconSet(t *testing.T) {
+	r := newRenderer(80, true, "dots", "")
+	out := ansi.Strip(r.toolResult("bash", map[string]any{"command": "ls"}, agent.TextResult(""), false))
+	if !strings.Contains(out, "⏺ $ ls") {
+		t.Fatalf("dots: %q", out)
+	}
+	if newRenderer(80, true, "bogus", "").icons[iconReply] != "💬" {
+		t.Fatal("unknown icon set should fall back to emoji")
 	}
 }

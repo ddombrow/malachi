@@ -43,6 +43,7 @@ type Settings struct {
 	DefaultModel       string                    `json:"defaultModel,omitempty"`
 	ThinkingLevel      string                    `json:"thinkingLevel,omitempty"`
 	AppendSystemPrompt string                    `json:"appendSystemPrompt,omitempty"`
+	Icons              string                    `json:"icons,omitempty"` // TUI icon set: "emoji" (default) or "dots"
 	Providers          map[string]ProviderConfig `json:"providers,omitempty"`
 }
 

@@ -26,7 +26,9 @@ bin/malachi -p "..." -mode json  # Pi event stream, one JSON object per line
 bin/malachi -list-models         # models the provider serves right now
 ```
 
-In the TUI, completed output goes to normal terminal scrollback; only the
+In the TUI, each item in scrollback gets an icon (💬 reply, 💭 thinking,
+📖 read, 📝 edit, 📄 write, 💻 bash, ❌ error). Set `"icons": "dots"` in settings for
+a Claude Code-style ⏺ instead. Completed output goes to normal terminal scrollback; only the
 streaming message, running tools, input, and status bar are redrawn.
 Type while the agent works to steer it, press `esc` to cancel, and use `/help`
 for commands (`/model`, `/thinking`, `/new`, `/resume`, `/last`). `/model`
@@ -47,6 +49,7 @@ providers. Built-in providers are `opencode-go`, `openai`, `openrouter`, and `ol
   "defaultProvider": "opencode-go",
   "defaultModel": "kimi-k2.7-code",
   "thinkingLevel": "medium",
+  "icons": "emoji",
   "providers": {
     "local": { "baseUrl": "http://localhost:8080/v1", "defaultModel": "qwen", "thinkingLevels": ["off"] },
     "my-gateway": { "baseUrl": "https://gw.example/v1", "apiKeyEnv": "GW_KEY", "sessionHeader": "x-session-id" }

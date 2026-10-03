@@ -18,6 +18,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/coding"
@@ -47,9 +48,10 @@ func (b *bridge) next() tea.Cmd {
 }
 
 type runningTool struct {
-	id, summary string
-	output      string
-	started     time.Time
+	id, name string
+	summary  string
+	output   string
+	started  time.Time
 }
 
 type lastTool struct {
@@ -119,7 +121,7 @@ func newModel(s *coding.Session, initialPrompt string) *model {
 		toolArgs: map[string]map[string]any{},
 		initial:  initialPrompt,
 	}
-	m.r = newRenderer(m.width, m.isDark)
+	m.r = newRenderer(m.width, m.isDark, m.s.Settings().Icons, m.s.Cwd())
 	m.applyInputStyles()
 	return m
 }
@@ -152,13 +154,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.r = newRenderer(m.width, m.isDark)
+		m.r = newRenderer(m.width, m.isDark, m.s.Settings().Icons, m.s.Cwd())
 		m.applyInputStyles()
 		return m, nil
 
 	case tea.BackgroundColorMsg:
 		m.isDark = msg.IsDark()
-		m.r = newRenderer(m.width, m.isDark)
+		m.r = newRenderer(m.width, m.isDark, m.s.Settings().Icons, m.s.Cwd())
 		m.applyInputStyles()
 		return m, nil
 
@@ -286,14 +288,16 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 			// Synthetic interruption results (no execution events) still
 			// deserve a line in scrollback.
 			if msg.IsError && msg.Text() == agent.InterruptedToolResult {
-				return tea.Println(m.r.st.dim.Render("  ⏹ " + coding.SummarizeToolCall(msg.ToolName, m.toolArgs[msg.ToolCallID]) + " (interrupted)"))
+				summary := m.r.summary(msg.ToolName, m.toolArgs[msg.ToolCallID])
+				return tea.Println(item(m.r.gutter(iconInterrupted, m.r.st.dim, m.r.st.dim.Render(summary+" · interrupted"))))
 			}
 		}
 	case *agent.ToolExecutionStartEvent:
 		m.toolArgs[ev.ToolCallID] = ev.Args
 		m.tools = append(m.tools, &runningTool{
 			id:      ev.ToolCallID,
-			summary: coding.SummarizeToolCall(ev.ToolName, ev.Args),
+			name:    ev.ToolName,
+			summary: m.r.summary(ev.ToolName, ev.Args),
 			started: time.Now(),
 		})
 	case *agent.ToolExecutionUpdateEvent:
@@ -324,33 +328,32 @@ func (m *model) View() tea.View {
 	maxLive := max(3, m.height-m.input.Height()-6)
 
 	if m.partial != nil {
-		var live []string
+		var blocks []string
 		if th := strings.TrimSpace(m.partial.ThinkingText()); th != "" && m.partial.Text() == "" {
-			for _, l := range lastN(wrapLines(th, m.width-4), 3) {
-				live = append(live, m.r.st.thinking.Render("  "+l))
-			}
+			lines := lastN(wrapLines(th, m.width-m.r.gutterWidth(iconThinking)-1), 3)
+			blocks = append(blocks, m.r.gutter(iconThinking, m.r.st.thinking, m.r.st.thinking.Render(strings.Join(lines, "\n"))))
 		}
-		if text := m.partial.Text(); text != "" {
-			live = append(live, wrapLines(text, m.width-1)...)
+		if text := strings.TrimLeft(m.partial.Text(), "\n"); text != "" {
+			lines := lastN(wrapLines(text, m.width-m.r.gutterWidth(iconReply)-1), maxLive)
+			blocks = append(blocks, m.r.gutter(iconReply, lipgloss.NewStyle(), strings.Join(lines, "\n")))
 		}
 		for _, c := range m.partial.ToolCalls() {
-			live = append(live, m.r.st.toolRun.Render("  ⋯ preparing "+c.Name))
+			blocks = append(blocks, m.r.gutter(toolIcon(c.Name), m.r.st.toolRun, m.r.st.dim.Render("preparing "+c.Name+"…")))
 		}
-		if len(live) > 0 {
-			b.WriteString("\n" + strings.Join(lastN(live, maxLive), "\n") + "\n")
+		for _, blk := range blocks {
+			b.WriteString("\n" + blk + "\n")
 		}
 	}
 	for _, t := range m.tools {
 		elapsed := time.Since(t.started).Truncate(time.Second)
-		fmt.Fprintf(&b, "%s %s %s\n", m.r.st.toolRun.Render(m.spin.View()), t.summary, m.r.st.dim.Render(elapsed.String()))
+		head := t.summary + " " + m.r.st.toolRun.Render(m.spin.View()) + m.r.st.dim.Render(" "+elapsed.String())
 		if out := strings.TrimSpace(t.output); out != "" {
-			for _, l := range lastN(strings.Split(out, "\n"), 4) {
-				b.WriteString(m.r.st.dim.Render("    "+truncateWidth(l, m.width-6)) + "\n")
-			}
+			head += "\n" + m.r.preview(m.r.st.dim, strings.Join(lastN(strings.Split(out, "\n"), 4), "\n"))
 		}
+		b.WriteString("\n" + m.r.gutter(toolIcon(t.name), m.r.st.toolRun, head) + "\n")
 	}
 	if m.running && m.partial == nil && len(m.tools) == 0 {
-		b.WriteString(m.r.st.toolRun.Render(m.spin.View()) + m.r.st.dim.Render(" working…") + "\n")
+		b.WriteString("\n" + m.r.st.toolRun.Render(m.spin.View()) + m.r.st.dim.Render(" working…") + "\n")
 	}
 
 	b.WriteString("\n" + m.input.View() + "\n")

@@ -337,6 +337,9 @@ func (s *Session) Models(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
+// Settings returns the settings the session was opened with.
+func (s *Session) Settings() *Settings { return s.settings }
+
 // Cwd, ProviderName, Model, ThinkingLevel report the current selection.
 func (s *Session) Cwd() string { return s.cwd }
 

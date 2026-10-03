@@ -42,20 +42,28 @@ type renderer struct {
 	md     *glamour.TermRenderer
 	width  int
 	isDark bool
+	icons  map[string]string
+	cwd    string // for shortening paths in tool summaries
 }
 
-func newRenderer(width int, isDark bool) *renderer {
-	r := &renderer{st: newStyles(isDark), width: width, isDark: isDark}
+func newRenderer(width int, isDark bool, icons, cwd string) *renderer {
+	r := &renderer{st: newStyles(isDark), width: width, isDark: isDark, icons: iconSet(icons), cwd: cwd}
 	style := "light"
 	if isDark {
 		style = "dark"
 	}
-	wrap := max(20, width-2)
+	// Leave room for the icon gutter; glamour's own 2-space margin is
+	// stripped in markdown().
+	wrap := max(20, width-r.gutterWidth(iconReply)+glamourMargin-1)
 	if md, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style), glamour.WithWordWrap(wrap)); err == nil {
 		r.md = md
 	}
 	return r
 }
+
+// glamourMargin is the plain-space left margin glamour's standard styles
+// put on every line.
+const glamourMargin = 2
 
 func (r *renderer) markdown(text string) string {
 	if r.md == nil || strings.TrimSpace(text) == "" {
@@ -66,10 +74,19 @@ func (r *renderer) markdown(text string) string {
 		return text
 	}
 	// Glamour pads every line to the wrap width; trailing blanks make
-	// copying from scrollback ugly, so strip them (ANSI-aware).
+	// copying from scrollback ugly, so strip them (ANSI-aware). Also drop
+	// its left margin so the text sits right after the icon gutter.
 	lines := strings.Split(strings.Trim(out, "\n"), "\n")
 	for i, l := range lines {
-		lines[i] = trailingBlank.ReplaceAllString(l, "") + "\x1b[0m"
+		l = strings.TrimPrefix(l, strings.Repeat(" ", glamourMargin))
+		l = trailingBlank.ReplaceAllString(l, "")
+		if l != "" {
+			l += "\x1b[0m"
+		}
+		lines[i] = l
+	}
+	for len(lines) > 0 && lines[0] == "" {
+		lines = lines[1:]
 	}
 	return strings.Join(lines, "\n")
 }
@@ -77,16 +94,28 @@ func (r *renderer) markdown(text string) string {
 // trailingBlank matches trailing spaces interleaved with SGR sequences.
 var trailingBlank = regexp.MustCompile(`(?:\x1b\[[0-9;]*m| )+$`)
 
-func (r *renderer) userMessage(text string) string {
-	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	for i, l := range lines {
-		prefix := "  "
-		if i == 0 {
-			prefix = "› "
-		}
-		lines[i] = r.st.user.Render(prefix + l)
+// Every scrollback item starts with a blank line so items read as blocks.
+func item(s string) string { return "\n" + s }
+
+// summary is coding.SummarizeToolCall with paths shown relative to the
+// working directory (or ~) to keep tool lines short.
+func (r *renderer) summary(name string, args map[string]any) string {
+	s := coding.SummarizeToolCall(name, args)
+	if r.cwd != "" {
+		s = strings.ReplaceAll(s, r.cwd+string(filepath.Separator), "")
 	}
-	return "\n" + strings.Join(lines, "\n")
+	if home := homeDir(); home != "" {
+		s = strings.ReplaceAll(s, home+string(filepath.Separator), "~"+string(filepath.Separator))
+	}
+	return s
+}
+
+func (r *renderer) userMessage(text string) string {
+	lines := wordWrap(strings.TrimRight(text, "\n"), r.width-r.gutterWidth(iconUser)-1)
+	for i, l := range lines {
+		lines[i] = r.st.user.Render(l)
+	}
+	return item(r.gutter(iconUser, r.st.user, strings.Join(lines, "\n")))
 }
 
 // thinkingBlock shows at most a few lines of reasoning, dimmed.
@@ -95,7 +124,7 @@ func (r *renderer) thinkingBlock(text string) string {
 	if text == "" {
 		return ""
 	}
-	lines := wrapLines(text, r.width-4)
+	lines := wrapLines(text, r.width-r.gutterWidth(iconThinking)-1)
 	const keep = 3
 	more := ""
 	if len(lines) > keep {
@@ -103,9 +132,12 @@ func (r *renderer) thinkingBlock(text string) string {
 		lines = lines[:keep]
 	}
 	for i, l := range lines {
-		lines[i] = r.st.thinking.Render("  " + l)
+		lines[i] = r.st.thinking.Render(l)
 	}
-	return strings.Join(lines, "\n") + r.st.dim.Render(more)
+	if more != "" {
+		lines[len(lines)-1] += r.st.dim.Render(more)
+	}
+	return r.gutter(iconThinking, r.st.thinking, strings.Join(lines, "\n"))
 }
 
 // assistantMessage renders a completed assistant message (without its tool
@@ -113,61 +145,63 @@ func (r *renderer) thinkingBlock(text string) string {
 func (r *renderer) assistantMessage(m *agent.AssistantMessage) string {
 	var parts []string
 	if t := r.thinkingBlock(m.ThinkingText()); t != "" {
-		parts = append(parts, t)
+		parts = append(parts, item(t))
 	}
 	if text := m.Text(); strings.TrimSpace(text) != "" {
-		parts = append(parts, r.markdown(text))
+		parts = append(parts, item(r.gutter(iconReply, lipgloss.NewStyle(), r.markdown(text))))
 	}
 	switch m.StopReason {
 	case agent.StopError:
-		parts = append(parts, r.st.errorText.Render("✗ "+m.ErrorMessage))
+		parts = append(parts, item(r.gutter(iconError, r.st.errorText, r.st.errorText.Render(m.ErrorMessage))))
 	case agent.StopAborted:
-		parts = append(parts, r.st.dim.Render("⏹ cancelled"))
+		parts = append(parts, item(r.gutter(iconCancelled, r.st.dim, r.st.dim.Render("cancelled"))))
 	case agent.StopLength:
-		parts = append(parts, r.st.dim.Render("(response hit the output token limit)"))
+		parts = append(parts, item(r.st.dim.Render("(response hit the output token limit)")))
 	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return "\n" + strings.Join(parts, "\n")
+	return strings.Join(parts, "")
 }
 
-// toolResult renders a finished tool call: a status line plus a short,
-// tool-specific preview of the output.
+// toolResult renders a finished tool call: an icon and summary line plus a
+// short, tool-specific preview of the output. Failure shows as a red
+// summary with a reason, since emoji icons cannot be recolored.
 func (r *renderer) toolResult(name string, args map[string]any, res agent.ToolResult, isError bool) string {
-	summary := coding.SummarizeToolCall(name, args)
+	summary := r.summary(name, args)
 	if isError {
-		head := r.st.toolErr.Render("✗ " + summary)
-		return head + "\n" + r.indent(r.st.errorText, firstLines(res.Text(), 4))
+		body := r.st.toolErr.Render(summary) + "\n" + r.preview(r.st.errorText, firstLines(res.Text(), 4))
+		return item(r.gutter(iconError, r.st.toolErr, body))
 	}
 	details, _ := res.Details.(map[string]any)
-	head := r.st.toolOK.Render("✓ ") + summary
+	kind, iconStyle, head := toolIcon(name), r.st.toolOK, summary
 	switch {
 	case details["cancelled"] == true:
-		head = r.st.toolErr.Render("⏹ ") + summary
+		kind, iconStyle, head = iconCancelled, r.st.toolErr, r.st.toolErr.Render(summary)+r.st.dim.Render(" · cancelled")
 	case details["timed_out"] == true:
-		head = r.st.toolErr.Render("⏱ ") + summary
+		kind, iconStyle, head = iconTimeout, r.st.toolErr, r.st.toolErr.Render(summary)+r.st.dim.Render(" · timed out")
 	case name == "bash" && nonZero(details["exit_code"]):
-		head = r.st.toolErr.Render("✗ ") + summary
+		iconStyle = r.st.toolErr
+		head = r.st.toolErr.Render(summary) + r.st.toolErr.Render(fmt.Sprintf(" ✗ exit %v", details["exit_code"]))
 	}
+
+	var body string
 	switch name {
 	case "edit":
 		if patch, _ := details["patch"].(string); patch != "" {
-			return head + "\n" + r.diff(patch, 30)
+			body = r.diff(patch, 30)
 		}
 	case "read", "write":
-		return head
 	case "bash":
-		out := strings.TrimSpace(res.Text())
-		if out == "" || out == "(no output)" {
-			return head
+		if out := strings.TrimSpace(res.Text()); out != "" && out != "(no output)" {
+			body = r.preview(r.st.dim, lastLines(out, 6))
 		}
-		return head + "\n" + r.indent(r.st.dim, lastLines(out, 6))
+	default:
+		if out := strings.TrimSpace(res.Text()); out != "" {
+			body = r.preview(r.st.dim, firstLines(out, 4))
+		}
 	}
-	if out := strings.TrimSpace(res.Text()); out != "" {
-		return head + "\n" + r.indent(r.st.dim, firstLines(out, 4))
+	if body != "" {
+		head += "\n" + body
 	}
-	return head
+	return item(r.gutter(kind, iconStyle, head))
 }
 
 func (r *renderer) diff(patch string, maxLines int) string {
@@ -185,28 +219,31 @@ func (r *renderer) diff(patch string, maxLines int) string {
 		out = out[:maxLines]
 	}
 	for i, l := range out {
+		l = truncateWidth(l, r.width-4)
 		switch {
 		case strings.HasPrefix(l, "@@"):
-			out[i] = r.st.hunk.Render("    " + l)
+			out[i] = r.st.hunk.Render(l)
 		case strings.HasPrefix(l, "+"):
-			out[i] = r.st.add.Render("    " + l)
+			out[i] = r.st.add.Render(l)
 		case strings.HasPrefix(l, "-"):
-			out[i] = r.st.del.Render("    " + l)
+			out[i] = r.st.del.Render(l)
 		default:
-			out[i] = r.st.dim.Render("    " + l)
+			out[i] = r.st.dim.Render(l)
 		}
 	}
 	s := strings.Join(out, "\n")
 	if more > 0 {
-		s += "\n" + r.st.dim.Render(fmt.Sprintf("    … %d more diff lines (/last to see all)", more))
+		s += "\n" + r.st.dim.Render(fmt.Sprintf("… %d more diff lines (/last to see all)", more))
 	}
 	return s
 }
 
-func (r *renderer) indent(style lipgloss.Style, text string) string {
+// preview styles tool output lines for display under a tool's summary
+// (the gutter supplies the indentation).
+func (r *renderer) preview(style lipgloss.Style, text string) string {
 	lines := strings.Split(text, "\n")
 	for i, l := range lines {
-		lines[i] = style.Render("    " + truncateWidth(l, r.width-6))
+		lines[i] = style.Render(truncateWidth(l, r.width-4))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -234,10 +271,10 @@ func (r *renderer) history(msgs []agent.Message) []string {
 			res := agent.ToolResult{Content: v.Content, Details: v.Details}
 			out = append(out, r.toolResult(v.ToolName, args, res, v.IsError))
 		case *agent.CompactionSummaryMessage:
-			out = append(out, r.st.dim.Render("── earlier conversation compacted ──"))
+			out = append(out, item(r.gutter(iconCompacted, r.st.dim, r.st.dim.Render("earlier conversation compacted"))))
 		default:
 			if t := agent.MessageText(m); t != "" {
-				out = append(out, r.st.dim.Render(firstLines(t, 3)))
+				out = append(out, item(r.st.dim.Render(firstLines(t, 3))))
 			}
 		}
 	}
@@ -246,7 +283,8 @@ func (r *renderer) history(msgs []agent.Message) []string {
 
 func (r *renderer) banner(s *coding.Session, resumed int) string {
 	title := r.st.accent.Bold(true).Render("malachi")
-	info := r.st.dim.Render(fmt.Sprintf(" %s/%s · %s", s.Provider().Name, s.Model(), shortenHome(s.Cwd())))
+	info := fmt.Sprintf(" %s/%s · %s", s.Provider().Name, s.Model(), shortenHome(s.Cwd()))
+	info = r.st.dim.Render(truncateLeft(info, r.width-lipgloss.Width("malachi")-1))
 	help := r.st.dim.Render("enter send · alt+enter newline · esc cancel · /help commands · ctrl+c quit")
 	b := title + info + "\n" + help
 	if resumed > 0 {
@@ -305,6 +343,49 @@ func truncateWidth(s string, w int) string {
 		runes = runes[:len(runes)-1]
 	}
 	return string(runes) + "…"
+}
+
+// truncateLeft keeps the end of s (the informative part of a path) within w.
+func truncateLeft(s string, w int) string {
+	if w <= 1 || lipgloss.Width(s) <= w {
+		return s
+	}
+	runes := []rune(s)
+	for len(runes) > 0 && lipgloss.Width(string(runes)) > w-1 {
+		runes = runes[1:]
+	}
+	return "…" + string(runes)
+}
+
+// wordWrap wraps text at spaces to width, hard-breaking words that are
+// longer than a line.
+func wordWrap(s string, width int) []string {
+	width = max(width, 10)
+	var out []string
+	for _, para := range strings.Split(s, "\n") {
+		line := ""
+		for _, word := range strings.Fields(para) {
+			for lipgloss.Width(word) > width {
+				if line != "" {
+					out = append(out, line)
+					line = ""
+				}
+				out = append(out, string([]rune(word)[:width]))
+				word = string([]rune(word)[width:])
+			}
+			switch {
+			case line == "":
+				line = word
+			case lipgloss.Width(line)+1+lipgloss.Width(word) <= width:
+				line += " " + word
+			default:
+				out = append(out, line)
+				line = word
+			}
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 // wrapLines hard-wraps text to width for the live area.
