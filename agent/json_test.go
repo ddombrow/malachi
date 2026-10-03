@@ -76,3 +76,31 @@ func TestNilSlicesMarshalAsEmpty(t *testing.T) {
 	b, _ = json.Marshal(&ToolCall{ID: "c", Name: "n"})
 	assertSameJSON(t, []byte(`{"type":"toolCall","id":"c","name":"n","arguments":{}}`), b)
 }
+
+func TestGoldenAssistantEventsRoundTrip(t *testing.T) {
+	for _, line := range readLines(t, "testdata/provider_events.jsonl") {
+		e, err := DecodeAssistantEvent(line)
+		if err != nil {
+			t.Fatalf("decode %s: %v", line, err)
+		}
+		out, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertSameJSON(t, line, out)
+	}
+}
+
+func TestGoldenAgentEventsRoundTrip(t *testing.T) {
+	for _, line := range readLines(t, "testdata/events.jsonl") {
+		e, err := DecodeEvent(line)
+		if err != nil {
+			t.Fatalf("decode %s: %v", line, err)
+		}
+		out, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertSameJSON(t, line, out)
+	}
+}
