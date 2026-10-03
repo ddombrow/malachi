@@ -32,4 +32,5 @@ cmd/       entrypoints.
 - Cancellation is `context.Context`.
 - Use the fake provider (`ai/fake`) for deterministic loop/harness tests.
 - Provider HTTP is hand-written `net/http`; do not add provider SDKs.
-- Run `make test lint` before committing. Keep commits atomic.
+- Run `go tool task lint test` before committing. Keep commits atomic.
+- Build with `go tool task build`; add new dev workflows as tasks in `Taskfile.yml`.

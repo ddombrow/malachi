@@ -37,6 +37,7 @@ func run() int {
 		mode       = flag.String("mode", "text", "print mode output: text or json (one Pi-compatible event per line)")
 		cwd        = flag.String("cwd", "", "working directory (default: current directory)")
 		listModels = flag.Bool("list-models", false, "list the models the provider currently serves and exit")
+		version    = flag.Bool("version", false, "print the version and exit")
 	)
 	flag.BoolVar(cont, "continue", false, "same as -c")
 	flag.Usage = func() {
@@ -44,6 +45,10 @@ func run() int {
 		flag.PrintDefaults()
 	}
 	positional := parseInterspersed(os.Args[1:])
+	if *version {
+		fmt.Println("malachi", coding.Version)
+		return 0
+	}
 
 	// Secrets such as OPENCODE_API_KEY may live in ~/.malachi/.env.
 	if err := coding.LoadDotEnv(filepath.Join(coding.Home(), ".env")); err != nil {

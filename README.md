@@ -15,7 +15,7 @@ agent/        portable brain: messages, events, loop, harness, session tree
 ## Usage
 
 ```sh
-make build                       # → bin/malachi
+go tool task build               # → bin/malachi (task is pinned in go.mod)
 echo 'OPENCODE_API_KEY=...' >> ~/.malachi/.env   # default provider: OpenCode Go
 
 bin/malachi                      # interactive
@@ -67,6 +67,9 @@ append-only JSONL under `~/.malachi/sessions/<project>/`.
 
 ## Development
 
-`make test lint`. Loop and harness tests use the scripted provider in
+Tasks live in `Taskfile.yml` and run through the pinned tool, so no global
+install is needed: `go tool task` lists them; `go tool task build`, `lint`,
+and `test` are the usual loop. Builds are stamped with `git describe`
+(`bin/malachi -version`). Loop and harness tests use the scripted provider in
 `ai/fake`. Golden fixtures in `agent/testdata` and
 `agent/session/testdata` were generated from tau's own models.

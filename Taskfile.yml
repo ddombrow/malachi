@@ -1,0 +1,32 @@
+# Run with: go tool task <name>   (task is pinned in go.mod)
+version: '3'
+
+vars:
+  BIN: bin/malachi
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  LDFLAGS: -X github.com/ddombrow/malachi/coding.Version={{.VERSION}}
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - '{{.TASK_EXE}} --list'
+    silent: true
+
+  build:
+    desc: Build bin/malachi, stamped with the git version
+    cmds:
+      - go build -trimpath -ldflags '{{.LDFLAGS}}' -o {{.BIN}} ./cmd/malachi
+
+  test:
+    desc: Run the test suite with the race detector
+    cmds:
+      - go test -race ./...
+
+  lint:
+    desc: Check formatting and run go vet
+    cmds:
+      - cmd: test -z "$(gofmt -l .)" || (echo "gofmt needed:"; gofmt -l .; exit 1)
+        silent: true
+      - go vet ./...

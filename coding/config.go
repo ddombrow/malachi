@@ -99,8 +99,11 @@ func BuiltinProviders() map[string]ProviderConfig {
 	}
 }
 
-// Version is malachi's release version, sent in the User-Agent.
-const Version = "0.1.0"
+// Version is malachi's version, sent in the User-Agent. Release builds set
+// it from git (see Taskfile.yml):
+//
+//	-ldflags "-X github.com/ddombrow/malachi/coding.Version=..."
+var Version = "dev"
 
 // UserAgent identifies malachi to providers, as gateways like OpenCode Go
 // require a client-specific agent rather than a generic HTTP library name.
