@@ -215,3 +215,18 @@ func TestMessageConversion(t *testing.T) {
 		t.Fatalf("summary: %v", u)
 	}
 }
+
+func TestListModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" || r.Header.Get("Authorization") != "Bearer k" || r.Header.Get("User-Agent") != "malachi" {
+			w.WriteHeader(403)
+			return
+		}
+		_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"zeta"},{"id":"alpha"},{"id":""}]}`)
+	}))
+	defer srv.Close()
+	ids, err := New(Config{BaseURL: srv.URL + "/v1", APIKey: "k"}).ListModels(context.Background())
+	if err != nil || strings.Join(ids, ",") != "alpha,zeta" {
+		t.Fatalf("ids=%v err=%v", ids, err)
+	}
+}

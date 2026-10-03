@@ -55,6 +55,7 @@ type Session struct {
 	header     []*session.Entry
 	persistErr error
 	unsub      func()
+	liveModels map[string][]string // provider name -> fetched model ids
 }
 
 // SessionsDir returns the directory holding cwd's sessions, named like tau's
@@ -310,6 +311,30 @@ func (s *Session) SetThinkingLevel(level string) error {
 	s.mu.Unlock()
 	s.recordSetting(session.NewThinkingLevelChange(level))
 	return nil
+}
+
+// Models returns the current provider's model ids, fetched live from the
+// endpoint once per session and cached. If the fetch fails, the preset list
+// is returned along with the error so callers can mention it.
+func (s *Session) Models(ctx context.Context) ([]string, error) {
+	s.mu.Lock()
+	pc := s.provider
+	cached, ok := s.liveModels[pc.Name]
+	s.mu.Unlock()
+	if ok {
+		return cached, nil
+	}
+	ids, err := pc.FetchModels(ctx)
+	if err != nil || len(ids) == 0 {
+		return pc.Models, err
+	}
+	s.mu.Lock()
+	if s.liveModels == nil {
+		s.liveModels = map[string][]string{}
+	}
+	s.liveModels[pc.Name] = ids
+	s.mu.Unlock()
+	return ids, nil
 }
 
 // Cwd, ProviderName, Model, ThinkingLevel report the current selection.

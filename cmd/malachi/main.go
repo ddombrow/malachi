@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/coding"
@@ -27,14 +28,15 @@ func main() {
 
 func run() int {
 	var (
-		printMode = flag.Bool("p", false, "print mode: run the prompt non-interactively and exit")
-		model     = flag.String("model", "", `model as "provider/model" or "model" (default from settings, else opencode-go/kimi-k2.7-code)`)
-		thinking  = flag.String("thinking", "", "thinking level: off, minimal, low, medium, high, xhigh")
-		cont      = flag.Bool("c", false, "continue the most recent session in this directory")
-		resume    = flag.String("resume", "", "resume a session by file path or name prefix")
-		noSession = flag.Bool("no-session", false, "do not save the session to disk")
-		mode      = flag.String("mode", "text", "print mode output: text or json (one Pi-compatible event per line)")
-		cwd       = flag.String("cwd", "", "working directory (default: current directory)")
+		printMode  = flag.Bool("p", false, "print mode: run the prompt non-interactively and exit")
+		model      = flag.String("model", "", `model as "provider/model" or "model" (default from settings, else opencode-go/kimi-k2.7-code)`)
+		thinking   = flag.String("thinking", "", "thinking level: off, minimal, low, medium, high, xhigh")
+		cont       = flag.Bool("c", false, "continue the most recent session in this directory")
+		resume     = flag.String("resume", "", "resume a session by file path or name prefix")
+		noSession  = flag.Bool("no-session", false, "do not save the session to disk")
+		mode       = flag.String("mode", "text", "print mode output: text or json (one Pi-compatible event per line)")
+		cwd        = flag.String("cwd", "", "working directory (default: current directory)")
+		listModels = flag.Bool("list-models", false, "list the models the provider currently serves and exit")
 	)
 	flag.BoolVar(cont, "continue", false, "same as -c")
 	flag.Usage = func() {
@@ -62,6 +64,19 @@ func run() int {
 		return 1
 	}
 	defer s.Close()
+
+	if *listModels {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		ids, err := s.Models(ctx)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "malachi: live model list unavailable, showing built-in list:", err)
+		}
+		for _, id := range ids {
+			fmt.Println(id)
+		}
+		return 0
+	}
 
 	prompt := strings.Join(positional, " ")
 	if *printMode {

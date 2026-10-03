@@ -1,6 +1,7 @@
 package coding
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -263,6 +264,25 @@ func (pc ProviderConfig) NewProvider(model string) (agent.Provider, error) {
 		}), nil
 	}
 	return nil, fmt.Errorf("provider %s: unsupported api %q", pc.Name, pc.API)
+}
+
+// FetchModels lists the models the endpoint currently serves.
+func (pc ProviderConfig) FetchModels(ctx context.Context) ([]string, error) {
+	key, err := pc.ResolveAPIKey()
+	if err != nil {
+		return nil, err
+	}
+	switch pc.API {
+	case "", openai.API:
+		return openai.New(openai.Config{
+			Name:      pc.Name,
+			BaseURL:   pc.BaseURL,
+			APIKey:    key,
+			Headers:   pc.Headers,
+			UserAgent: UserAgent,
+		}).ListModels(ctx)
+	}
+	return nil, fmt.Errorf("provider %s: listing models is not supported for api %q", pc.Name, pc.API)
 }
 
 // ValidThinking normalizes a requested level against what the provider

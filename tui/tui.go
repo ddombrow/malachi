@@ -184,6 +184,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case submitMsg:
 		return m, m.submit(msg.text)
 
+	case printMsg:
+		return m, tea.Println(msg.text)
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)

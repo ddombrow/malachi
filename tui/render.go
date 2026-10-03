@@ -255,6 +255,17 @@ func (r *renderer) banner(s *coding.Session, resumed int) string {
 	return b
 }
 
+// perLine styles each line separately; rendering a multi-line block in one
+// call pads every line to the widest one, leaving trailing blanks in
+// scrollback.
+func perLine(style lipgloss.Style, text string) string {
+	lines := strings.Split(text, "\n")
+	for i, l := range lines {
+		lines[i] = style.Render(l)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // nonZero reports whether v is a number other than zero. Details decoded
 // from a session file hold float64; fresh ones hold int.
 func nonZero(v any) bool {

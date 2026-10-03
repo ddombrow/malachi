@@ -23,12 +23,14 @@ bin/malachi -p "summarize main.go"
 bin/malachi -c                   # continue the latest session in this directory
 bin/malachi --model glm-5.2 --thinking high
 bin/malachi -p "..." -mode json  # Pi event stream, one JSON object per line
+bin/malachi -list-models         # models the provider serves right now
 ```
 
 In the TUI, completed output goes to normal terminal scrollback; only the
 streaming message, running tools, input, and status bar are redrawn.
 Type while the agent works to steer it, press `esc` to cancel, and use `/help`
-for commands (`/model`, `/thinking`, `/new`, `/resume`, `/last`).
+for commands (`/model`, `/thinking`, `/new`, `/resume`, `/last`). `/model`
+with no argument fetches the provider's live model list.
 
 ## Configuration
 

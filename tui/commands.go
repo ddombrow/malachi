@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -24,7 +26,7 @@ const helpText = `Commands:
 Keys: enter send · alt+enter newline · esc cancel run · ctrl+c clear/quit
 While the agent runs, enter queues a steering message.`
 
-func (m *model) printDim(s string) tea.Cmd { return tea.Println(m.r.st.dim.Render(s)) }
+func (m *model) printDim(s string) tea.Cmd { return tea.Println(perLine(m.r.st.dim, s)) }
 
 func (m *model) printErr(err error) tea.Cmd {
 	return tea.Println(m.r.st.errorText.Render("✗ " + err.Error()))
@@ -81,13 +83,22 @@ func (m *model) command(line string) tea.Cmd {
 
 func (m *model) modelCommand(arg string) tea.Cmd {
 	if arg == "" {
-		pc := m.s.Provider()
-		var b strings.Builder
-		fmt.Fprintf(&b, "current: %s/%s\n", pc.Name, m.s.Model())
-		if len(pc.Models) > 0 {
-			fmt.Fprintf(&b, "%s models: %s", pc.Name, strings.Join(pc.Models, ", "))
+		// Fetch off the UI goroutine; the result is printed when it arrives.
+		s, r := m.s, m.r
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			ids, err := s.Models(ctx)
+			var b strings.Builder
+			fmt.Fprintf(&b, "current: %s/%s\n", s.Provider().Name, s.Model())
+			if err != nil {
+				fmt.Fprintf(&b, "(could not fetch live model list: %v; showing built-in list)\n", err)
+			}
+			if len(ids) > 0 {
+				fmt.Fprintf(&b, "%s models (%d):\n%s", s.Provider().Name, len(ids), columns(ids, r.width-4))
+			}
+			return printMsg{perLine(r.st.dim, strings.TrimRight(b.String(), "\n"))}
 		}
-		return m.printDim(strings.TrimRight(b.String(), "\n"))
 	}
 	if m.running {
 		return m.printErr(fmt.Errorf("wait for the current run to finish (or esc) before switching models"))
@@ -151,4 +162,27 @@ func (m *model) reopen(resume string) tea.Cmd {
 	lines := []string{"", m.r.banner(next, len(history))}
 	lines = append(lines, m.r.history(history)...)
 	return tea.Batch(tea.Println(strings.Join(lines, "\n")), m.bridge.next())
+}
+
+// printMsg asks the UI loop to print text to scrollback; background commands
+// return it instead of calling tea.Println themselves.
+type printMsg struct{ text string }
+
+// columns lays out ids in aligned columns within width.
+func columns(ids []string, width int) string {
+	colW := 0
+	for _, id := range ids {
+		colW = max(colW, len(id)+2)
+	}
+	perRow := max(1, width/max(colW, 1))
+	var b strings.Builder
+	for i, id := range ids {
+		b.WriteString("  " + id)
+		if (i+1)%perRow == 0 || i == len(ids)-1 {
+			b.WriteByte('\n')
+		} else {
+			b.WriteString(strings.Repeat(" ", colW-len(id)))
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
