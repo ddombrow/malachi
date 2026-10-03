@@ -359,12 +359,19 @@ func (s *Session) Close() {
 // Reopen replaces this session's state with a fresh or resumed one, keeping
 // the current model unless the resumed session says otherwise. It is used by
 // /new and /resume in interactive frontends.
+//
+// The receiver keeps working if Reopen fails; on success it is closed and
+// must no longer be used.
 func (s *Session) Reopen(resume string) (*Session, error) {
-	s.Close()
 	opts := Options{Cwd: s.cwd, Home: s.home, Settings: s.settings, Resume: resume}
 	if resume == "" {
 		opts.Model = s.Provider().Name + "/" + s.Model()
 		opts.ThinkingLevel = s.ThinkingLevel()
 	}
-	return Open(opts)
+	next, err := Open(opts)
+	if err != nil {
+		return nil, err
+	}
+	s.Close()
+	return next, nil
 }
