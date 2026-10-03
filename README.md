@@ -15,7 +15,9 @@ agent/        portable brain: messages, events, loop, harness, session tree
 ## Usage
 
 ```sh
-go tool task build               # → bin/malachi (task is pinned in go.mod)
+go tool task install                      # build, install to ~/.local/bin as `malachi`
+go tool task uninstall                    # remove it again
+go tool task install PREFIX=/usr/local    # elsewhere (may need sudo)
 echo 'OPENCODE_API_KEY=...' >> ~/.malachi/.env   # default provider: OpenCode Go
 
 bin/malachi                      # interactive
@@ -71,7 +73,10 @@ append-only JSONL under `~/.malachi/sessions/<project>/`.
 
 Tasks live in `Taskfile.yml` and run through the pinned tool, so no global
 install is needed: `go tool task` lists them; `go tool task build`, `lint`,
-and `test` are the usual loop. Builds are stamped with `git describe`
+and `test` are the usual loop. `go tool task install` puts the binary in
+`~/.local/bin` (per-user XDG; override with `PREFIX`, e.g. `PREFIX=/opt/homebrew`
+for a Homebrew prefix), and `uninstall` removes it, leaving the directory alone
+if anything else is in it. Builds are stamped with `git describe`
 (`bin/malachi -version`). Loop and harness tests use the scripted provider in
 `ai/fake`. Golden fixtures in `agent/testdata` and
 `agent/session/testdata` were generated from tau's own models.

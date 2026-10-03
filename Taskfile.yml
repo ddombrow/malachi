@@ -3,6 +3,10 @@ version: '3'
 
 vars:
   BIN: bin/malachi
+  # Per-user install location (XDG). Override for a system-wide install:
+  #   go tool task install PREFIX=/usr/local   (may need sudo)
+  PREFIX: '{{.HOME}}/.local'
+  BINDIR: '{{.PREFIX}}/bin'
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
   LDFLAGS: -X github.com/ddombrow/malachi/coding.Version={{.VERSION}}
@@ -18,6 +22,27 @@ tasks:
     desc: Build bin/malachi, stamped with the git version
     cmds:
       - go build -trimpath -ldflags '{{.LDFLAGS}}' -o {{.BIN}} ./cmd/malachi
+
+  install:
+    desc: Install the binary into {{.BINDIR}} (override with PREFIX)
+    deps: [build]
+    cmds:
+      - mkdir -p {{.BINDIR}}
+      - install -m 0755 {{.BIN}} {{.BINDIR}}/malachi
+      - '{{.BINDIR}}/malachi -version'
+      - |
+        case ":$PATH:" in
+          *":{{.BINDIR}}:"*) ;;
+          *) echo "note: {{.BINDIR}} is not in your PATH; add it to run malachi by name" ;;
+        esac
+    silent: true
+
+  uninstall:
+    desc: Remove the installed binary from {{.BINDIR}}
+    cmds:
+      - rm -f {{.BINDIR}}/malachi
+      # Only remove the directory if we emptied it.
+      - rmdir {{.BINDIR}} 2>/dev/null || true
 
   test:
     desc: Run the test suite with the race detector
