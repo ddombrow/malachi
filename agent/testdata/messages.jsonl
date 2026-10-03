@@ -1,0 +1,10 @@
+{"role":"user","content":"hello there","timestamp":1759400000000}
+{"role":"user","content":[{"type":"text","text":"look"},{"type":"image","data":"aGk=","mimeType":"image/png"}],"timestamp":1759400000000}
+{"role":"assistant","content":[{"type":"thinking","thinking":"hmm","thinkingSignature":"sig","redacted":false},{"type":"text","text":"I'll read it."},{"type":"toolCall","id":"call_1","name":"read","arguments":{"path":"a.go","limit":10}}],"api":"openai-completions","provider":"opencode-go","model":"kimi-k2.7-code","responseId":"resp_1","usage":{"input":100,"output":20,"cacheRead":5,"cacheWrite":0,"reasoning":7,"totalTokens":125,"cost":{"input":0.1,"output":0.2,"cacheRead":0.0,"cacheWrite":0.0,"total":0.3}},"timing":{"timeToFirstOutputMs":120,"totalDurationMs":900},"stopReason":"toolUse","timestamp":1759400000000}
+{"role":"assistant","content":[],"api":"unknown","provider":"unknown","model":"m","diagnostics":[{"type":"http","timestamp":1759400000000,"error":{"name":"HTTPError","message":"503","code":503},"details":{"status":503}}],"usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0.0,"output":0.0,"cacheRead":0.0,"cacheWrite":0.0,"total":0.0}},"stopReason":"error","errorMessage":"boom","timestamp":1759400000000}
+{"role":"toolResult","toolCallId":"call_1","toolName":"read","content":[{"type":"text","text":"package main"}],"details":{"path":"a.go"},"isError":false,"timestamp":1759400000000}
+{"role":"toolResult","toolCallId":"call_2","toolName":"bash","content":[],"addedToolNames":["x"],"isError":true,"timestamp":1759400000000}
+{"role":"bashExecution","command":"ls","output":"a\nb","exitCode":0,"cancelled":false,"truncated":false,"timestamp":1759400000000,"excludeFromContext":false}
+{"role":"custom","customType":"note","content":"hi","display":true,"details":{"a":[1,2]},"timestamp":1759400000000}
+{"role":"branchSummary","summary":"did stuff","fromId":"e1","timestamp":1759400000000}
+{"role":"compactionSummary","summary":"older","tokensBefore":5000,"timestamp":1759400000000}

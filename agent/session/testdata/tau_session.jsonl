@@ -1,0 +1,12 @@
+{"id":"e0","timestamp":1759400000.5,"type":"session_info","created_at":1759400000.5,"cwd":"/tmp/x","title":"demo"}
+{"id":"e1","parent_id":"e0","timestamp":1759400000.5,"type":"model_change","model":"kimi-k2.7-code","provider":"opencode-go"}
+{"id":"e2","parent_id":"e1","timestamp":1759400000.5,"type":"thinking_level_change","thinking_level":"medium"}
+{"id":"e3","parent_id":"e2","timestamp":1759400000.5,"type":"message","message":{"role":"user","content":"hello there","timestamp":1759400000000}}
+{"id":"e4","parent_id":"e3","timestamp":1759400000.5,"type":"message","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hmm","thinkingSignature":"sig","redacted":false},{"type":"text","text":"I'll read it."},{"type":"toolCall","id":"call_1","name":"read","arguments":{"path":"a.go","limit":10}}],"api":"openai-completions","provider":"opencode-go","model":"kimi-k2.7-code","responseId":"resp_1","usage":{"input":100,"output":20,"cacheRead":5,"cacheWrite":0,"reasoning":7,"totalTokens":125,"cost":{"input":0.1,"output":0.2,"cacheRead":0.0,"cacheWrite":0.0,"total":0.3}},"timing":{"timeToFirstOutputMs":120,"totalDurationMs":900},"stopReason":"toolUse","timestamp":1759400000000}}
+{"id":"e5","parent_id":"e4","timestamp":1759400000.5,"type":"message","message":{"role":"toolResult","toolCallId":"call_1","toolName":"read","content":[{"type":"text","text":"package main"}],"details":{"path":"a.go"},"isError":false,"timestamp":1759400000000}}
+{"id":"e6","parent_id":"e5","timestamp":1759400000.5,"type":"label","target_id":"e3","label":"start"}
+{"id":"e7","parent_id":"e6","timestamp":1759400000.5,"type":"custom","namespace":"ext","data":{"k":"v"}}
+{"id":"e8","parent_id":"e7","timestamp":1759400000.5,"type":"custom_message","custom_type":"note","content":"hey","display":true}
+{"id":"e9","parent_id":"e8","timestamp":1759400000.5,"type":"compaction","summary":"sum","first_kept_entry_id":"e5","tokens_before":900}
+{"id":"e10","parent_id":"e3","timestamp":1759400000.5,"type":"branch_summary","summary":"branch","branch_root_id":"e3"}
+{"id":"e11","parent_id":"e10","timestamp":1759400000.5,"type":"leaf","entry_id":"e9"}
