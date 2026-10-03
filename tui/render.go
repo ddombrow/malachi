@@ -336,8 +336,14 @@ func lastLines(s string, n int) string {
 }
 
 func truncateWidth(s string, w int) string {
-	if w <= 1 || lipgloss.Width(s) <= w {
+	if w <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= w {
 		return s
+	}
+	if w == 1 {
+		return "…"
 	}
 	runes := []rune(s)
 	for len(runes) > 0 && lipgloss.Width(string(runes)) > w-1 {
@@ -389,19 +395,27 @@ func wordWrap(s string, width int) []string {
 	return out
 }
 
-// wrapLines hard-wraps text to width for the live area.
+// wrapLines hard-wraps text to width for the live area, counting display
+// cells so CJK and emoji don't overflow.
 func wrapLines(s string, width int) []string {
 	if width < 10 {
 		width = 10
 	}
 	var out []string
 	for _, line := range strings.Split(s, "\n") {
-		runes := []rune(line)
-		for len(runes) > width {
-			out = append(out, string(runes[:width]))
-			runes = runes[width:]
+		var cur strings.Builder
+		curW := 0
+		for _, r := range line {
+			w := lipgloss.Width(string(r))
+			if curW > 0 && curW+w > width {
+				out = append(out, cur.String())
+				cur.Reset()
+				curW = 0
+			}
+			cur.WriteRune(r)
+			curW += w
 		}
-		out = append(out, string(runes))
+		out = append(out, cur.String())
 	}
 	return out
 }

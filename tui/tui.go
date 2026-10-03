@@ -27,25 +27,56 @@ import (
 
 // Messages delivered to the Bubble Tea loop.
 type (
-	agentEventMsg struct{ e agent.Event }
-	runDoneMsg    struct{ err error }
+	agentEventMsg   struct{ e agent.Event }
+	runDoneMsg      struct{ err error }
+	bridgeClosedMsg struct{}
 )
 
 // bridge forwards harness events into the UI. Events are delivered through a
 // channel read by a tea.Cmd, so the harness goroutine never touches UI state.
 type bridge struct {
 	ch    chan tea.Msg
+	done  chan struct{}
 	unsub func()
 }
 
 func newBridge(s *coding.Session) *bridge {
-	b := &bridge{ch: make(chan tea.Msg, 4096)}
-	b.unsub = s.Harness.Subscribe(func(e agent.Event) { b.ch <- agentEventMsg{e} })
+	b := &bridge{ch: make(chan tea.Msg, 4096), done: make(chan struct{})}
+	b.unsub = s.Harness.Subscribe(func(e agent.Event) {
+		select {
+		case b.ch <- agentEventMsg{e}:
+		case <-b.done:
+		}
+	})
 	return b
 }
 
+func (b *bridge) close() {
+	if b.unsub != nil {
+		b.unsub()
+		b.unsub = nil
+	}
+	select {
+	case <-b.done:
+	default:
+		close(b.done)
+	}
+}
+
 func (b *bridge) next() tea.Cmd {
-	return func() tea.Msg { return <-b.ch }
+	return func() tea.Msg {
+		select {
+		case <-b.done:
+			return bridgeClosedMsg{}
+		case msg := <-b.ch:
+			select {
+			case <-b.done:
+				return bridgeClosedMsg{}
+			default:
+				return msg
+			}
+		}
+	}
 }
 
 type runningTool struct {
@@ -77,6 +108,7 @@ type model struct {
 	running   bool
 	cancelRun context.CancelFunc
 	partial   *agent.AssistantMessage
+	lastReply string
 	tools     []*runningTool
 	toolArgs  map[string]map[string]any
 	last      *lastTool
@@ -91,7 +123,7 @@ func Run(s *coding.Session, initialPrompt string) error {
 	m := newModel(s, initialPrompt)
 	p := tea.NewProgram(m)
 	_, err := p.Run()
-	m.bridge.unsub()
+	m.bridge.close()
 	if m.cancelRun != nil {
 		m.cancelRun()
 	}
@@ -137,6 +169,13 @@ func newModel(s *coding.Session, initialPrompt string) *model {
 func (m *model) showSession(s *coding.Session) {
 	history := s.Harness.Messages()
 	m.tr.reset()
+	m.lastReply = ""
+	for i := len(history) - 1; i >= 0; i-- {
+		if a, ok := history[i].(*agent.AssistantMessage); ok && strings.TrimSpace(a.Text()) != "" {
+			m.lastReply = a.Text()
+			break
+		}
+	}
 	m.tr.add(func(r *renderer) string { return r.banner(s, len(history)) })
 	if len(history) > 0 {
 		// One block: history() pairs tool results with their calls.
@@ -151,7 +190,7 @@ func (m *model) print(f func(r *renderer) string) tea.Cmd {
 }
 
 func (m *model) Init() tea.Cmd {
-	cmds := []tea.Cmd{tea.RequestBackgroundColor, m.bridge.next(), m.spin.Tick}
+	cmds := []tea.Cmd{tea.RequestBackgroundColor, m.bridge.next()}
 	if m.initial != "" {
 		text := m.initial
 		m.initial = ""
@@ -239,7 +278,13 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
+		if !m.running {
+			return nil
+		}
 		return cmd
+
+	case bridgeClosedMsg:
+		return nil
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
@@ -340,6 +385,9 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 			return m.print(func(r *renderer) string { return r.userMessage(text) })
 		case *agent.AssistantMessage:
 			m.partial = nil
+			if strings.TrimSpace(msg.Text()) != "" {
+				m.lastReply = msg.Text()
+			}
 			m.usage = m.usage.Add(msg.Usage)
 			if t := msg.Usage.Input + msg.Usage.CacheRead + msg.Usage.CacheWrite + msg.Usage.Output; t > 0 {
 				m.context = t
@@ -454,10 +502,19 @@ func (m *model) statusLine() string {
 	if !m.vp.AtBottom() {
 		right = "↓ more · ctrl+end"
 	}
+	right = truncateWidth(right, m.width)
+	avail := m.width - lipgloss.Width(right)
+	if avail <= 0 {
+		return m.r.st.status.Render(right)
+	}
+	for len(parts) > 0 && lipgloss.Width(strings.Join(parts, " · "))+1 > avail {
+		parts = parts[:len(parts)-1]
+	}
 	left := strings.Join(parts, " · ")
-	// The right-hand hint is the actionable part; trim the stats first.
-	left = truncateWidth(left, m.width-lipgloss.Width(right)-2)
-	pad := max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right)-1)
+	if left != "" {
+		left = truncateWidth(left, avail-1)
+	}
+	pad := max(0, m.width-lipgloss.Width(left)-lipgloss.Width(right))
 	return m.r.st.status.Render(left + strings.Repeat(" ", pad) + right)
 }
 

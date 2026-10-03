@@ -18,6 +18,7 @@ const helpText = `Commands:
   /thinking [level]   show or set the reasoning level
   /new                start a fresh session
   /resume [n|name]    list recent sessions, or resume one
+  /copy               copy the latest assistant response
   /last               print the full output of the last tool call
   /session            show the session file path
   /quit               exit
@@ -56,6 +57,11 @@ func (m *model) command(line string) tea.Cmd {
 			return m.printDim("in-memory session (--no-session)")
 		}
 		return m.printDim(m.s.Path())
+	case "copy":
+		if strings.TrimSpace(m.lastReply) == "" {
+			return m.printDim("no assistant response to copy yet")
+		}
+		return tea.Batch(tea.SetClipboard(m.lastReply), m.printDim("copied latest assistant response"))
 	case "last":
 		if m.last == nil {
 			return m.printDim("no tool has run yet")
@@ -164,7 +170,7 @@ func (m *model) reopen(resume string) tea.Cmd {
 	if err != nil {
 		return m.printErr(err)
 	}
-	m.bridge.unsub()
+	m.bridge.close()
 	m.s = next
 	m.bridge = newBridge(next)
 	m.usage, m.context, m.last = agent.Usage{}, 0, nil

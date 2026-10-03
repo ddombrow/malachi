@@ -102,6 +102,23 @@ func TestSlashCommands(t *testing.T) {
 	}
 }
 
+func TestCopyLatestAssistantResponse(t *testing.T) {
+	m := newTestModel(t)
+	if out := shown(m, func() tea.Cmd { return m.command("/copy") }); !strings.Contains(out, "no assistant response") {
+		t.Fatalf("copy without a response: %s", out)
+	}
+
+	a := agent.NewAssistantMessage("m")
+	a.Content = []agent.Content{&agent.TextContent{Text: "A **copyable** answer."}}
+	m.Update(agentEventMsg{&agent.MessageEndEvent{Message: a}})
+	if m.lastReply != "A **copyable** answer." {
+		t.Fatalf("stored reply = %q", m.lastReply)
+	}
+	if out := shown(m, func() tea.Cmd { return m.command("/copy") }); !strings.Contains(out, "copied latest assistant response") {
+		t.Fatalf("copy feedback: %s", out)
+	}
+}
+
 func TestBashStatusMarks(t *testing.T) {
 	m := newTestModel(t)
 	for _, tc := range []struct {
@@ -260,5 +277,49 @@ func TestDotsIconSet(t *testing.T) {
 	}
 	if newRenderer(80, true, "bogus", "").icons[iconReply] != "💬" {
 		t.Fatal("unknown icon set should fall back to emoji")
+	}
+}
+
+func TestSpinnerStopsWhenIdle(t *testing.T) {
+	m := newTestModel(t)
+	_, cmd := m.Update(m.spin.Tick())
+	if cmd != nil {
+		t.Fatal("idle session must not re-arm spinner")
+	}
+	m.running = true
+	_, cmd = m.Update(m.spin.Tick())
+	if cmd == nil {
+		t.Fatal("running session must keep the spinner ticking")
+	}
+}
+
+func TestWrapLinesUsesCells(t *testing.T) {
+	lines := wrapLines(strings.Repeat("漢", 12), 20)
+	if got := strings.Join(lines, ""); got != strings.Repeat("漢", 12) {
+		t.Fatalf("lost text: %q", got)
+	}
+	for _, l := range lines {
+		if w := ansi.StringWidth(l); w > 20 {
+			t.Fatalf("line %q is %d cells", l, w)
+		}
+	}
+}
+
+func TestStatusLineFitsNarrowTerminal(t *testing.T) {
+	m := newTestModel(t)
+	m.usage = agent.Usage{Input: 123456, Output: 98765, CacheRead: 55555, TotalTokens: 1}
+	m.context = 777777
+	m.Update(tea.WindowSizeMsg{Width: 8, Height: 30})
+	if st := ansi.Strip(m.statusLine()); ansi.StringWidth(st) > 8 {
+		t.Fatalf("status too wide: %q (%d)", st, ansi.StringWidth(st))
+	}
+}
+
+func TestBridgeNextUnblocksOnClose(t *testing.T) {
+	m := newTestModel(t)
+	cmd := m.bridge.next()
+	m.bridge.close()
+	if _, ok := cmd().(bridgeClosedMsg); !ok {
+		t.Fatal("next() must return after close")
 	}
 }
