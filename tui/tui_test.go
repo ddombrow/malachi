@@ -315,6 +315,33 @@ func TestStatusLineFitsNarrowTerminal(t *testing.T) {
 	}
 }
 
+func TestBannerFitsNarrowTerminal(t *testing.T) {
+	s := malachiTestSession(t)
+	for _, w := range []int{7, 8, 10, 14, 30, 80} {
+		r := newRenderer(w, true, "emoji", "")
+		for _, resumed := range []int{0, 3} {
+			for _, l := range strings.Split(ansi.Strip(r.banner(s, resumed)), "\n") {
+				if got := ansi.StringWidth(l); got > w {
+					t.Errorf("width=%d resumed=%d: line %q is %d cells", w, resumed, l, got)
+				}
+			}
+		}
+	}
+}
+
+// malachiTestSession returns a throwaway session for renderer tests.
+func malachiTestSession(t *testing.T) *coding.Session {
+	t.Helper()
+	s, err := coding.Open(coding.Options{
+		Cwd: t.TempDir(), Home: t.TempDir(), Settings: &coding.Settings{},
+		Provider: fake.New(fake.Text("hi")), NoSession: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 func TestBridgeNextUnblocksOnClose(t *testing.T) {
 	m := newTestModel(t)
 	cmd := m.bridge.next()

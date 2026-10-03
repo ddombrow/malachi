@@ -283,13 +283,17 @@ func (r *renderer) history(msgs []agent.Message) []string {
 }
 
 func (r *renderer) banner(s *coding.Session, resumed int) string {
-	title := r.st.accent.Bold(true).Render("malachi")
+	const name = "malachi"
+	title := r.st.accent.Bold(true).Render(name)
+	// Every line is truncated to the terminal before styling: truncation is
+	// cell-based and must not have to reason about SGR sequences.
 	info := fmt.Sprintf(" %s/%s · %s", s.Provider().Name, s.Model(), shortenHome(s.Cwd()))
-	info = r.st.dim.Render(truncateLeft(info, r.width-lipgloss.Width("malachi")-1))
-	help := r.st.dim.Render("enter send · alt+enter newline · esc cancel · /help commands · ctrl+c quit")
-	b := title + info + "\n" + help
+	info = truncateLeft(info, r.width-lipgloss.Width(name)-1)
+	help := "enter send · alt+enter newline · esc cancel · /help commands · ctrl+c quit"
+	b := title + r.st.dim.Render(info) + "\n" + r.st.dim.Render(truncateWidth(help, r.width))
 	if resumed > 0 {
-		b += "\n" + r.st.dim.Render(fmt.Sprintf("resumed %s (%d messages)", filepath.Base(s.Path()), resumed))
+		line := fmt.Sprintf("resumed %s (%d messages)", filepath.Base(s.Path()), resumed)
+		b += "\n" + r.st.dim.Render(truncateWidth(line, r.width))
 	}
 	return b
 }
@@ -354,8 +358,14 @@ func truncateWidth(s string, w int) string {
 
 // truncateLeft keeps the end of s (the informative part of a path) within w.
 func truncateLeft(s string, w int) string {
-	if w <= 1 || lipgloss.Width(s) <= w {
+	if w <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= w {
 		return s
+	}
+	if w == 1 {
+		return "…"
 	}
 	runes := []rune(s)
 	for len(runes) > 0 && lipgloss.Width(string(runes)) > w-1 {
