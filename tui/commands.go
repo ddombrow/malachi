@@ -194,7 +194,8 @@ func columns(ids []string, width int) string {
 	perRow := max(1, width/max(colW, 1))
 	var b strings.Builder
 	for i, id := range ids {
-		b.WriteString("  " + id)
+		b.WriteString("  ")
+		b.WriteString(id)
 		if (i+1)%perRow == 0 || i == len(ids)-1 {
 			b.WriteByte('\n')
 		} else {
