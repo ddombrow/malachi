@@ -64,10 +64,13 @@ type TrustState struct {
 	Decision TrustDecision
 	// Path is the canonical directory the decision applies to.
 	Path string
-	// Source is where the decision came from: "run", "saved", "always",
-	// "never", or "default".
-	Source    string
-	Resources ProjectResources
+	// Source is where the decision came from: "run", "saved", "inherited",
+	// "always", "never", or "default".
+	Source string
+	// InheritedFrom is the ancestor directory a saved decision was made
+	// against, empty unless Source is "inherited".
+	InheritedFrom string
+	Resources     ProjectResources
 	// Pending is set when instructions are being withheld only because nobody
 	// has answered yet. It is the difference between "this project has not
 	// been vouched for" and "you said no to this project".
@@ -115,6 +118,23 @@ func LoadTrustStore(home string) (*TrustStore, error) {
 		}
 	}
 	return store, nil
+}
+
+// nearest returns the decision saved for path or the closest ancestor that has
+// one, along with the directory it was saved against. Decisions are inherited
+// so one answer about a repository covers its package directories; the nearest
+// decision wins, so a package can override a parent without disturbing its
+// siblings.
+func (s *TrustStore) nearest(path string) (string, trustEntry, bool) {
+	for dir := canonicalPath(path); ; dir = filepath.Dir(dir) {
+		if entry, ok := s.Entries[dir]; ok {
+			return dir, entry, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", trustEntry{}, false
+		}
+	}
 }
 
 // SaveTrust writes a decision for one directory. The file is rewritten whole,
@@ -264,8 +284,13 @@ func ResolveTrust(home, cwd string, policy TrustPolicy, override string) TrustSt
 		return state
 	}
 	if store, err := LoadTrustStore(home); err == nil {
-		if entry, found := store.Entries[state.Path]; found {
-			state.Decision, state.Source = entry.Decision, "saved"
+		if dir, entry, found := store.nearest(state.Path); found {
+			state.Decision = entry.Decision
+			if dir == state.Path {
+				state.Source = "saved"
+			} else {
+				state.Source, state.InheritedFrom = "inherited", dir
+			}
 			return state
 		}
 	}

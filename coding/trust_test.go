@@ -121,6 +121,113 @@ func TestTrustNoticeNamesFilesWithoutReadingThem(t *testing.T) {
 	}
 }
 
+func TestSavedDecisionIsInheritedBySubdirectories(t *testing.T) {
+	home := t.TempDir()
+	repo := t.TempDir()
+	pkg := filepath.Join(repo, "packages", "api")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, pkg, "AGENTS.md", "package rules")
+
+	// One answer about the repository has to cover its package directories,
+	// or every package is a separate question about the same repository.
+	if err := SetTrust(home, repo, TrustTrusted); err != nil {
+		t.Fatal(err)
+	}
+	state := ResolveTrust(home, pkg, TrustAsk, "")
+	if !state.Trusted() {
+		t.Fatal("a decision about the repository did not reach the package")
+	}
+	if state.Source != "inherited" {
+		t.Errorf("source = %q, want inherited", state.Source)
+	}
+	if state.InheritedFrom == "" {
+		t.Error("an inherited decision should say which directory it came from")
+	}
+}
+
+func TestNearestDecisionWins(t *testing.T) {
+	home := t.TempDir()
+	repo := t.TempDir()
+	pkg := filepath.Join(repo, "packages", "api")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, pkg, "AGENTS.md", "package rules")
+	// The repository is trusted, one package underneath is not.
+	if err := SetTrust(home, repo, TrustTrusted); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetTrust(home, pkg, TrustUntrusted); err != nil {
+		t.Fatal(err)
+	}
+	if state := ResolveTrust(home, pkg, TrustAsk, ""); state.Trusted() {
+		t.Error("a nearer decision should override an inherited one")
+	}
+	// The sibling still trusts: one package's refusal is not the repository's.
+	sibling := filepath.Join(repo, "packages", "web")
+	if err := os.MkdirAll(sibling, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, sibling, "AGENTS.md", "rules")
+	if state := ResolveTrust(home, sibling, TrustAsk, ""); !state.Trusted() {
+		t.Error("a package's decision leaked to its sibling")
+	}
+}
+
+func TestDeclinedParentIsInheritedToo(t *testing.T) {
+	home := t.TempDir()
+	repo := t.TempDir()
+	sub := filepath.Join(repo, "sub")
+	_ = os.MkdirAll(sub, 0o755)
+	write(t, sub, "AGENTS.md", "rules")
+	if err := SetTrust(home, repo, TrustUntrusted); err != nil {
+		t.Fatal(err)
+	}
+	if state := ResolveTrust(home, sub, TrustAsk, ""); state.Trusted() {
+		t.Error("a refusal must be inherited as firmly as a grant")
+	}
+}
+
+func TestSessionTrustParentCoversSiblings(t *testing.T) {
+	home := t.TempDir()
+	repo := t.TempDir()
+	pkg := filepath.Join(repo, "packages", "api")
+	_ = os.MkdirAll(pkg, 0o755)
+	write(t, pkg, "AGENTS.md", "package rules")
+
+	s, err := Open(testOpts(t, home, pkg, fake.New(fake.Text("ok"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TrustParent(true); err == nil {
+		t.Fatal("expected an error: the directory has not been trusted yet")
+	}
+	if err := s.Trust(TrustTrusted, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TrustParent(true); err != nil {
+		t.Fatal(err)
+	}
+	state := s.TrustState()
+	if state.Source != "inherited" {
+		t.Errorf("source = %q, want inherited after trusting the parent", state.Source)
+	}
+	// A sibling opened fresh must inherit, without being asked again.
+	sibling := filepath.Join(repo, "packages", "web")
+	_ = os.MkdirAll(sibling, 0o755)
+	write(t, sibling, "AGENTS.md", "sibling rules")
+	opts := testOpts(t, home, sibling, fake.New(fake.Text("ok")))
+	next, err := Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.TrustState().Trusted() {
+		t.Error("a sibling package did not inherit the repository's decision")
+	}
+}
+
 func TestTrustNoticeEmptyWhenTrustedOrNothingToGate(t *testing.T) {
 	home, cwd := project(t)
 	if got := ResolveTrust(home, cwd, TrustAlways, "").TrustNotice(); got != "" {

@@ -21,6 +21,7 @@ const helpText = `Commands:
   /compact [note]    summarize the conversation with the agent
   /trim [bytes]      trim old tool output before the next request
   /trust [yes|no]    load this directory's AGENTS.md into the prompt
+  /trust parent    do the same for every directory beneath the parent
   /ctx               measured context: tokens, tool output share, compactions
   /new                start a fresh session
   /resume [n|name]    list recent sessions, or resume one
@@ -136,13 +137,18 @@ func (m *model) trustCommand(arg string) tea.Cmd {
 			note = "remembered for this directory"
 		}
 		return m.printDim(trustOutcome(m.s.TrustState()) + " (" + note + ")")
+	case "parent":
+		if err := m.s.TrustParent(true); err != nil {
+			return m.printErr(err)
+		}
+		return m.printDim(trustOutcome(m.s.TrustState()) + " (remembered for the parent directory)")
 	case "":
 		if state.Trusted() {
 			return m.printDim(trustOutcome(state))
 		}
-		return m.printDim(state.TrustNotice() + "\n\n  /trust yes to load them · /trust yes --save to remember · /trust no to decline")
+		return m.printDim(state.TrustNotice() + "\n\n  /trust yes to load them · /trust parent if this is a package in a repo · /trust yes --save to remember · /trust no to decline")
 	default:
-		return m.printErr(fmt.Errorf("usage: /trust [yes [--save] | no]"))
+		return m.printErr(fmt.Errorf("usage: /trust [yes [--save] | parent | no]"))
 	}
 }
 
@@ -155,13 +161,19 @@ func trustDecisionOf(arg string) coding.TrustDecision {
 
 // trustOutcome is one line saying what the prompt now contains.
 func trustOutcome(state coding.TrustState) string {
+	inherited := ""
+	if state.InheritedFrom != "" {
+		inherited = " (inherited from " + shortenHome(state.InheritedFrom) + ")"
+	}
 	if state.Trusted() {
 		if state.Resources.Empty() {
 			return "no project instruction files here; nothing to load"
 		}
-		return fmt.Sprintf("loading %d project instruction file(s) for %s", state.Resources.Total, state.Path)
+		return fmt.Sprintf("loading %d project instruction file(s) for %s%s",
+			state.Resources.Total, shortenHome(state.Path), inherited)
 	}
-	return fmt.Sprintf("not loading %d project instruction file(s) for %s", state.Resources.Total, state.Path)
+	return fmt.Sprintf("not loading %d project instruction file(s) for %s%s",
+		state.Resources.Total, shortenHome(state.Path), inherited)
 }
 
 // showTrustNotice announces withheld project instructions once, at startup.

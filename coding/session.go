@@ -286,6 +286,35 @@ func (s *Session) buildPrompt(tools []*agent.Tool) string {
 	})
 }
 
+// TrustParent extends a trust decision to this directory's parent, so it
+// covers every sibling beneath it. Declining is refused on purpose: a refusal
+// saved against a parent would silently withhold instructions from unrelated
+// repositories that merely share an ancestor.
+func (s *Session) TrustParent(remember bool) error {
+	s.mu.Lock()
+	decision := s.trust.Decision
+	parent := filepath.Dir(s.cwd)
+	if parent == s.cwd {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot trust the parent of %s", s.cwd)
+	}
+	if decision != TrustTrusted {
+		s.mu.Unlock()
+		return fmt.Errorf("only trust can be shared with a parent; use /trust no for this directory")
+	}
+	if remember {
+		if err := SetTrust(s.home, parent, TrustTrusted); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+	}
+	s.mu.Unlock()
+	// Resolve without a run override so the parent decision just saved is what
+	// now applies: the user asked for something that outlives the session, and
+	// the session's own decision would otherwise mask it.
+	return s.trustNow(TrustTrusted, false, "")
+}
+
 // TrustState reports why project instructions were or were not loaded.
 func (s *Session) TrustState() TrustState { return s.trust }
 
@@ -300,6 +329,23 @@ func (s *Session) Trust(decision TrustDecision, remember bool) error {
 	if decision != TrustTrusted && decision != TrustUntrusted {
 		return fmt.Errorf("unknown trust decision %q", decision)
 	}
+	override := ""
+	if !remember {
+		// A decision that is not saved lasts only as long as the session, so
+		// it is held as an override rather than left to whatever is on disk.
+		override = "yes"
+		if decision == TrustUntrusted {
+			override = "no"
+		}
+	}
+	return s.trustNow(decision, remember, override)
+}
+
+// trustNow applies a decision and rebuilds everything derived from it.
+// override is a decision scoped to this run; it is empty when the decision
+// should come from the saved store, which is what lets a newly saved parent
+// decision take effect instead of being masked by the session's own.
+func (s *Session) trustNow(decision TrustDecision, remember bool, override string) error {
 	s.mu.Lock()
 	if remember {
 		if err := SetTrust(s.home, s.cwd, decision); err != nil {
@@ -307,12 +353,7 @@ func (s *Session) Trust(decision TrustDecision, remember bool) error {
 			return err
 		}
 	}
-	if !remember {
-		s.TrustOverride = "yes"
-		if decision == TrustUntrusted {
-			s.TrustOverride = "no"
-		}
-	}
+	s.TrustOverride = override
 	s.trust = ResolveTrust(s.home, s.cwd, s.settings.TrustPolicyOrDefault(), s.TrustOverride)
 	resolved := s.trust
 	system := s.buildPrompt(s.tools)

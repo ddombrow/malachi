@@ -29,14 +29,29 @@ bin/malachi -list-models         # models the provider serves right now
 ```
 
 The TUI is full-screen: a scrollable transcript above a pinned input and status
-bar. Each item gets an icon (💬 reply, 💭 thinking, 📖 read, 📝 edit, 📄 write,
-💻 bash, ❌ error); set `"icons": "dots"` in settings for a Claude Code-style ⏺.
+bar. Each item gets an icon (❯ you, 💬 reply, 💭 thinking, 👀 read, 🔍 grep,
+🗂️ glob, ✏️ edit, 📝 write, >_ bash, ❌ error); set `"icons": "dots"` in
+settings for a Claude Code-style ⏺.
 The view follows new output unless you scroll up (mouse wheel, PgUp/PgDn,
 Shift+↑/↓, Ctrl+Home/End). Hold Shift (Option in iTerm2/Terminal) while
 dragging to select text. Type while the agent works to steer it, press `esc`
-to cancel, and use `/help` for commands (`/model`, `/thinking`, `/new`,
-`/resume`, `/last`). `/model` with no argument fetches the provider's live
-model list.
+to cancel, and use `/help` for the full command list.
+
+| Command | Effect |
+| --- | --- |
+| `/model` | Show or switch model; bare `/model` lists what the provider serves |
+| `/thinking` | Show or set the thinking level |
+| `/new`, `/resume`, `/session`, `/last` | Start, resume, or inspect sessions |
+| `/compact [note]` | Fold the conversation into a handover the model writes |
+| `/trim [bytes]` | Trim old tool output mechanically before the next request |
+| `/ctx` | Context budget: prompt tokens, tool output share, compaction count |
+| `/trust [yes\|no\|parent]` | Decide whether this directory's `AGENTS.md` is obeyed |
+| `/copy`, `/quit` | Copy the transcript, exit |
+
+`/compact` and `/trim` are different tools: `/compact` is a lossy,
+model-written summary of the conversation, `/trim` is the mechanical and
+lossless removal of tool output that has already served its purpose. Both
+happen automatically near the context window, which is also when they matter.
 
 ## Configuration
 
@@ -54,20 +69,59 @@ providers. Built-in providers are `opencode-go`, `openai`, `openrouter`, and `ol
   "defaultModel": "kimi-k2.7-code",
   "thinkingLevel": "medium",
   "icons": "emoji",
+  "projectTrust": "ask",
   "providers": {
-    "local": { "baseUrl": "http://localhost:8080/v1", "defaultModel": "qwen", "thinkingLevels": ["off"] },
+    "local": { "baseUrl": "http://localhost:8080/v1", "defaultModel": "qwen", "thinkingLevels": ["off"], "contextWindow": 128000 },
     "my-gateway": { "baseUrl": "https://gw.example/v1", "apiKeyEnv": "GW_KEY", "sessionHeader": "x-session-id" }
   }
 }
 ```
+
+`contextWindow` is a provider's context window in tokens, defaulting to
+128000. Set it to a real published figure when you have one: `/ctx` and the
+status gauge measure against it, and a window that is too large will not warn
+you before the provider rejects a request.
 
 Requests carry `User-Agent: malachi/<version>`. A provider's `sessionHeader`
 sends the session id (stable across `-c`/resume) on every request; OpenCode Go
 requires `x-opencode-session`, which the built-in preset sets.
 
 Project instructions come from `AGENTS.md` (or `CLAUDE.md`) in `~/.malachi`
-and in every directory from `/` down to the working directory. Sessions are
-append-only JSONL under `~/.malachi/sessions/<project>/`.
+and in every directory from `/` down to the working directory — but only
+where you have agreed to them. See [Project trust](#project-trust). Sessions
+are append-only JSONL under `~/.malachi/sessions/<project>/`.
+
+### Project trust
+
+An `AGENTS.md` is a file the *project* supplies, and supplying one is exactly
+what you would do if you could get someone to open a repository: its contents
+become the agent's instructions. So they are withheld until you decide.
+
+```json
+{ "projectTrust": "ask" }
+```
+
+`ask` (default) withholds and tells you which files were held back. `always`
+and `never` skip the question. Withheld files are named at startup and in
+`-p` mode; their contents are never printed.
+
+| Command | Effect |
+| --- | --- |
+| `/trust` | Explain the current state and the options |
+| `/trust yes` | Load them (this session, if you have not answered yet) |
+| `/trust yes --save` | Load them, remembered for this directory |
+| `/trust parent` | Remember trust for the parent, covering every package beneath it |
+| `/trust no` | Decline |
+
+Decisions live in `~/.malachi/trust.json` and are inherited: a decision about
+a directory applies to everything beneath it, and the nearest one wins, so one
+package can differ without disturbing its siblings. Refusing a parent is not
+offered, because that would withhold instructions from unrelated repositories
+that merely share an ancestor. `-trust yes`/`-trust no` applies to one run.
+
+Your own `~/.malachi/AGENTS.md` is never gated — those are your instructions,
+not project input. Trust governs whether instruction *files* are instructions
+or ignored; it is not a filesystem, network, or tool sandbox.
 
 Failures with nowhere else to go — panics, provider errors, and failures to
 write the session file — are appended to `~/.malachi/logs/agent.jsonl`, one
