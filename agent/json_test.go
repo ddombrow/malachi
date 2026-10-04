@@ -23,6 +23,9 @@ func readLines(t *testing.T, path string) [][]byte {
 			lines = append(lines, append([]byte(nil), sc.Bytes()...))
 		}
 	}
+	if err := sc.Err(); err != nil {
+		t.Fatal(err)
+	}
 	return lines
 }
 

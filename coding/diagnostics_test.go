@@ -31,6 +31,9 @@ func readLog(t *testing.T, path string) []map[string]any {
 		}
 		out = append(out, rec)
 	}
+	if err := sc.Err(); err != nil {
+		t.Fatal(err)
+	}
 	return out
 }
 

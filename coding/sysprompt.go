@@ -82,14 +82,17 @@ func BuildSystemPrompt(o PromptOptions) string {
 		b.WriteString("\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.")
 		b.WriteString("\n\nGuidelines:\n")
 		for _, g := range guidelines(o.Tools) {
-			b.WriteString("- " + g + "\n")
+			b.WriteString("- ")
+			b.WriteString(g)
+			b.WriteByte('\n')
 		}
 		s := strings.TrimSuffix(b.String(), "\n")
 		b.Reset()
 		b.WriteString(s)
 	}
 	if o.Append != "" {
-		b.WriteString("\n\n" + o.Append)
+		b.WriteString("\n\n")
+		b.WriteString(o.Append)
 	}
 	if len(o.ContextFiles) > 0 {
 		b.WriteString("\n\n<project_context>\n\nProject-specific instructions and guidelines:\n\n")

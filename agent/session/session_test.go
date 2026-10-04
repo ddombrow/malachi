@@ -33,6 +33,9 @@ func TestGoldenTauSessionRoundTrip(t *testing.T) {
 			t.Errorf("mismatch\nwant %s\n got %s", sc.Bytes(), out)
 		}
 	}
+	if err := sc.Err(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestLoadAndReplayTauSession(t *testing.T) {
