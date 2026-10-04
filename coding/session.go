@@ -57,6 +57,8 @@ type Session struct {
 	diag       *Diagnostics
 	unsub      func()
 	liveModels map[string][]string // provider name -> fetched model ids
+	compaction *compactionLog
+	preparer   *codingContextPreparer
 }
 
 // SessionsDir returns the directory holding cwd's sessions, named like tau's
@@ -182,6 +184,8 @@ func Open(opts Options) (*Session, error) {
 	if s.file != nil {
 		sessionID = strings.TrimSuffix(filepath.Base(s.file.Path()), ".jsonl")
 	}
+	s.compaction = &compactionLog{}
+	s.preparer = newCodingContextPreparer(cwd, s.compaction)
 	s.Harness = agent.NewHarness(agent.HarnessConfig{
 		Provider:       provider,
 		Model:          model,
@@ -189,7 +193,7 @@ func Open(opts Options) (*Session, error) {
 		Tools:          tools,
 		ThinkingLevel:  s.thinking,
 		SessionID:      sessionID,
-		PrepareRequest: codingRequestPreparer(cwd),
+		PrepareRequest: s.preparer.prepare,
 	}, state.Messages)
 
 	if s.file != nil {
@@ -288,6 +292,25 @@ func (s *Session) Prompt(ctx context.Context, text string) error {
 
 // Diagnostics is the failure log for this session's home.
 func (s *Session) Diagnostics() *Diagnostics { return s.diag }
+
+// Compaction reports the latest request-view tool-output reduction. Seq is 0
+// until compaction has fired. The saved transcript is not rewritten.
+func (s *Session) Compaction() Compaction { return s.compaction.get() }
+
+// Compact asks for the next provider request to trim tool output harder than
+// the default ceiling: everything above budget bytes is replaced by a marker
+// and the ledger is refreshed. A budget of 0 compacts as much as possible.
+// It reports whether there was anything left to compact, so a caller can say
+// so instead of silently doing nothing.
+func (s *Session) Compact(budget int) bool {
+	if budget < 0 {
+		budget = 0
+	}
+	// The preparer learns sizes as requests go by; prime it so the answer is
+	// honest even before the first request of a session.
+	s.preparer.prime(s.Harness.Messages())
+	return s.preparer.forceBudget(budget)
+}
 
 // SetModel switches provider/model for subsequent turns.
 func (s *Session) SetModel(ref string) error {

@@ -38,7 +38,7 @@ func TestCodingRequestCompactsOldResultsWithoutChangingTranscript(t *testing.T) 
 	}
 	p := fake.New(fake.Text("done"))
 	h := agent.NewHarness(agent.HarnessConfig{
-		Provider: p, Model: "fake", PrepareRequest: codingRequestPreparer(cwd),
+		Provider: p, Model: "fake", PrepareRequest: newCodingContextPreparer(cwd, nil).prepare,
 	}, history)
 
 	if err := h.Prompt(context.Background(), agent.NewUserText("continue")); err != nil {
@@ -72,7 +72,7 @@ func TestCodingRequestCompactsOldResultsWithoutChangingTranscript(t *testing.T) 
 	}
 	ledger := ""
 	for _, message := range requestMessages {
-		if user, ok := message.(*agent.UserMessage); ok && strings.Contains(user.Content.String(), "Session activity ledger") {
+		if user, ok := message.(*agent.UserMessage); ok && strings.Contains(user.Content.String(), "<untrusted_tool_ledger>") {
 			ledger = user.Content.String()
 		}
 	}
@@ -95,7 +95,7 @@ func TestCodingContextCacheReusesAppendOnlyPrefixAndInvalidatesReplacement(t *te
 		Details: map[string]any{"path": filepath.Join(cwd, "a.go")},
 	}
 	messages := []agent.Message{agent.NewUserText("start"), assistant, result}
-	cache := newCodingContextPreparer(cwd)
+	cache := newCodingContextPreparer(cwd, nil)
 	request := agent.Request{Messages: messages}
 	prepared := cache.prepare(request)
 	if prepared.Messages[1] != assistant || prepared.Messages[2] != result {
@@ -185,8 +185,8 @@ func TestCompactionPreservesErrorsAndImagesAreCounted(t *testing.T) {
 	errorMessages := []agent.Message{errorResult, &agent.ToolResultMessage{
 		ToolCallID: "recent", ToolName: "read", Content: []agent.Content{&agent.TextContent{Text: "recent"}},
 	}}
-	compactedErrors, didCompactErrors := compactToolResults(errorMessages, 1024)
-	if !didCompactErrors {
+	compactedErrors, n, _, _ := compactToolResults(errorMessages, 1024)
+	if n == 0 {
 		t.Fatal("oversized error should compact")
 	}
 	gotError := compactedErrors[0].(*agent.ToolResultMessage)
@@ -196,8 +196,8 @@ func TestCompactionPreservesErrorsAndImagesAreCounted(t *testing.T) {
 	imageMessages := []agent.Message{imageResult, &agent.ToolResultMessage{
 		ToolCallID: "recent", ToolName: "read", Content: []agent.Content{&agent.TextContent{Text: "recent"}},
 	}}
-	compactedImages, didCompactImages := compactToolResults(imageMessages, 1024)
-	if !didCompactImages {
+	compactedImages, n, _, _ := compactToolResults(imageMessages, 1024)
+	if n == 0 {
 		t.Fatal("oversized image should compact")
 	}
 	gotImage := compactedImages[0].(*agent.ToolResultMessage)
@@ -216,8 +216,8 @@ func TestCompactionRetainsOversizedMostRecentResult(t *testing.T) {
 		ToolCallID: "recent", ToolName: "read",
 		Content: []agent.Content{&agent.TextContent{Text: recentText}},
 	}
-	compacted, didCompact := compactToolResults([]agent.Message{old, recent}, toolResultContextBudget)
-	if !didCompact {
+	compacted, n, _, _ := compactToolResults([]agent.Message{old, recent}, toolResultContextBudget)
+	if n == 0 {
 		t.Fatal("older result should compact")
 	}
 	if compacted[0].(*agent.ToolResultMessage).Text() == strings.Repeat("o", 1024) {
@@ -225,6 +225,70 @@ func TestCompactionRetainsOversizedMostRecentResult(t *testing.T) {
 	}
 	if compacted[1].(*agent.ToolResultMessage).Text() != recentText {
 		t.Fatal("most recent result must stay intact even when over budget")
+	}
+}
+
+// Compaction is reported to the UI even though nothing is persisted, and a
+// forced pass applies to exactly one request.
+func TestCompactionStatsAndForcedBudget(t *testing.T) {
+	cwd := t.TempDir()
+	log := &compactionLog{}
+	p := newCodingContextPreparer(cwd, log)
+
+	small := agent.NewAssistantMessage("fake")
+	small.Content = []agent.Content{&agent.ToolCall{ID: "a", Name: "bash", Arguments: map[string]any{"command": "ls"}}}
+	small.StopReason = agent.StopToolUse
+	read := agent.NewAssistantMessage("fake")
+	read.Content = []agent.Content{&agent.ToolCall{ID: "b", Name: "read", Arguments: map[string]any{"path": "big.go"}}}
+	read.StopReason = agent.StopToolUse
+	build := agent.NewAssistantMessage("fake")
+	build.Content = []agent.Content{&agent.ToolCall{ID: "c", Name: "bash", Arguments: map[string]any{"command": "make"}}}
+	build.StopReason = agent.StopToolUse
+	toolResult := func(id, name string, n int, details map[string]any) agent.Message {
+		return &agent.ToolResultMessage{ToolCallID: id, ToolName: name,
+			Content: []agent.Content{&agent.TextContent{Text: strings.Repeat("x", n)}}, Details: details}
+	}
+	messages := []agent.Message{
+		agent.NewUserText("go"),
+		small,
+		toolResult("a", "bash", 2, map[string]any{"command": "ls", "exit_code": 0}),
+		read,
+		// Large, and old enough to be compacted.
+		toolResult("b", "read", 20_000, map[string]any{"path": filepath.Join(cwd, "big.go")}),
+		build,
+		// The most recent result is retained however large it is.
+		toolResult("c", "bash", 30_000, map[string]any{"command": "make", "exit_code": 1}),
+	}
+
+	// Under the default ceiling: nothing fires, so the UI stays silent.
+	p.prepare(agent.Request{Messages: messages})
+	if got := log.get(); got.Seq != 0 {
+		t.Fatalf("compacted below the default ceiling: %+v", got)
+	}
+
+	// Forcing it produces stats, including the ledger entry count.
+	if !p.forceBudget(0) {
+		t.Fatal("forceBudget should find output to compact")
+	}
+	p.prepare(agent.Request{Messages: messages})
+	got := log.get()
+	if got.Seq == 0 || got.Results != 1 || got.Before <= got.After || got.After <= 0 {
+		t.Fatalf("want one compacted result with before>after, got %+v", got)
+	}
+	if got.LedgerEntries != 3 {
+		t.Errorf("ledger entries = %d, want 3 (bash, read, bash)", got.LedgerEntries)
+	}
+
+	// The override lasts one request; the next pass is back to the default.
+	seq := got.Seq
+	p.prepare(agent.Request{Messages: messages})
+	if after := log.get(); after.Seq != seq {
+		t.Errorf("a second pass fired without the ceiling being exceeded: %+v", after)
+	}
+
+	// Nothing left to compact reports honestly instead of arming a no-op.
+	if p.forceBudget(1 << 20) {
+		t.Error("forceBudget claimed work above the total output size")
 	}
 }
 
@@ -239,7 +303,7 @@ func TestCodingLedgerIsBoundedAndDeterministic(t *testing.T) {
 		Details: map[string]any{"command": "go test ./...", "exit_code": 1},
 	}
 	messages := []agent.Message{assistant, result}
-	cache := newCodingContextPreparer(cwd)
+	cache := newCodingContextPreparer(cwd, nil)
 	cache.update(messages)
 	first, second := ledgerText(cache.records), ledgerText(cache.records)
 	if first == "" || first != second || len(first) > maxLedgerBytes {
