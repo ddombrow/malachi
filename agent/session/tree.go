@@ -52,13 +52,22 @@ type State struct {
 
 // Replay rebuilds conversation state from a root-to-tip path. The latest
 // compaction replaces everything before its first kept entry with a summary.
-func Replay(path []*Entry) State {
+func Replay(path []*Entry) State { return replay(path, true) }
+
+// ReplayAll rebuilds the conversation ignoring compaction entries, recovering
+// the full history a summary replaced. A summary is lossy by construction, so
+// the dropped messages have to remain reachable from disk; this is how.
+func ReplayAll(path []*Entry) State { return replay(path, false) }
+
+func replay(path []*Entry, honorCompaction bool) State {
 	var st State
 	start := 0
 	var compaction *Entry
-	for i, e := range path {
-		if e.Type == TypeCompaction {
-			compaction, start = e, i
+	if honorCompaction {
+		for i, e := range path {
+			if e.Type == TypeCompaction {
+				compaction, start = e, i
+			}
 		}
 	}
 	if compaction != nil {
@@ -80,6 +89,10 @@ func Replay(path []*Entry) State {
 
 	for i, e := range path {
 		switch e.Type {
+		case TypeCompaction:
+			// ReplayAll keeps the messages a compaction replaced, so the entry
+			// itself contributes nothing to the conversation.
+			continue
 		case TypeSessionInfo:
 			st.Title, st.Cwd = e.String("title"), e.String("cwd")
 		case TypeModelChange:

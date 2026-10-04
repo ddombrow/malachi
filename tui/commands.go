@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 const helpText = `Commands:
   /model [ref]        show models, or switch (e.g. /model glm-5.2, /model openai/gpt-5.1)
   /thinking [level]   show or set the reasoning level
+  /compact [note]    summarize the conversation with the agent
   /trim [bytes]      trim old tool output before the next request
   /ctx               measured context: tokens, tool output share, compactions
   /new                start a fresh session
@@ -93,7 +95,7 @@ func (m *model) command(line string) tea.Cmd {
 	case "trim":
 		return m.trimCommand(arg)
 	case "compact":
-		return m.printDim("the agent-written summary is not built yet — /trim does the mechanical tool-output trim")
+		return m.compactCommand(arg)
 	case "ctx":
 		return m.printDim(coding.ContextLine(m.s.Model(), m.s.ContextStats()))
 	case "new":
@@ -102,6 +104,65 @@ func (m *model) command(line string) tea.Cmd {
 		return m.resumeCommand(arg)
 	}
 	return m.printErr(fmt.Errorf("unknown command /%s (try /help)", name))
+}
+
+// compactCommand replaces the conversation prefix with a summary written by
+// the model and persists it, so a resumed session does not replay the whole
+// thing. The summary is printed into the transcript afterwards: seeing what
+// the model now believes is the point of doing this by hand rather than by
+// threshold.
+func (m *model) compactCommand(arg string) tea.Cmd {
+	if m.running {
+		return m.printErr(errors.New("compact cannot run while the agent is working"))
+	}
+	if m.phase != "" {
+		return m.printErr(errors.New("a compaction is already running"))
+	}
+	sess := m.s
+	instructions := arg
+	phases := make(chan string, 8)
+	// The run context belongs to the harness; a summarisation gets its own so esc can
+	// stop it without touching an agent run.
+	ctx, cancel := context.WithCancel(context.Background())
+	m.phaseCh, m.cancelPhase = phases, cancel
+	return tea.Batch(func() tea.Msg {
+		defer close(phases)
+		res, err := sess.Summarize(ctx, instructions, func(phase string) {
+			select {
+			case phases <- phase:
+			case <-ctx.Done():
+			}
+		})
+		if ctx.Err() != nil {
+			return compactDoneMsg{err: context.Canceled}
+		}
+		return compactDoneMsg{result: res, err: err}
+	}, waitForPhase(phases))
+}
+
+// waitForPhase re-reads the summarisation's progress channel. Each return is
+// re-armed by the handler, so one command reports every step.
+func waitForPhase(ch <-chan string) tea.Cmd {
+	return func() tea.Msg {
+		phase, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return compactPhaseMsg(phase)
+	}
+}
+
+// compactCommand writes the summary into the transcript.
+func (m *model) compactSummary(res *coding.SummarizeResult) {
+	line := fmt.Sprintf("compacted %d messages into a summary · kept %d · %s",
+		res.Replaced, res.Kept, tokens(int64(res.Usage.PromptTokens())))
+	m.tr.add(func(r *renderer) string { return r.gutter(iconCompacted, r.st.dim, r.st.dim.Render(line)) })
+	m.tr.add(func(r *renderer) string {
+		return r.gutter(iconCompacted, r.st.dim, r.markdown(strings.TrimSpace(res.Summary)))
+	})
+	for _, w := range res.Warnings {
+		m.tr.add(func(r *renderer) string { return r.gutter(iconError, r.st.toolErr, r.st.toolErr.Render(w)) })
+	}
 }
 
 // trimCommand trims tool output ahead of the next provider request. With no

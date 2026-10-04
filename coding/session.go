@@ -60,6 +60,20 @@ type Session struct {
 	compaction *compactionLog
 	preparer   *codingContextPreparer
 	ctxSampler *ctxSampler
+	// persisted maps messages to the session entries they were written as, so
+	// a compaction can record where its retained tail begins.
+	persisted []persistedMessage
+	// runtime is the provider the session actually talks to, which may have
+	// been injected rather than built from configuration. A summarisation must
+	// use the same one, or an embedded session would summarise through a
+	// different provider than it converses with.
+	runtime agent.Provider
+}
+
+// persistedMessage is one message and the entry id it was written as.
+type persistedMessage struct {
+	message agent.Message
+	entryID string
 }
 
 // SessionsDir returns the directory holding cwd's sessions, named like tau's
@@ -187,6 +201,7 @@ func Open(opts Options) (*Session, error) {
 	}
 	s.compaction = &compactionLog{}
 	s.preparer = newCodingContextPreparer(cwd, s.compaction)
+	s.runtime = provider
 	s.Harness = agent.NewHarness(agent.HarnessConfig{
 		Provider:       provider,
 		Model:          model,
@@ -251,14 +266,41 @@ func (s *Session) persist(e agent.Event) {
 	if !ok {
 		return
 	}
-	s.append(session.NewMessageEntry(me.Message))
+	entry := session.NewMessageEntry(me.Message)
+	if s.append(entry) {
+		s.rememberEntry(me.Message, entry.ID)
+	}
 }
 
-func (s *Session) append(e *session.Entry) {
+// rememberEntry records which session entry a message was written as, so a
+// compaction can name the entry its retained tail begins at. Without that,
+// replay could not find a tail that was already on disk when the compaction
+// entry was appended.
+func (s *Session) rememberEntry(m agent.Message, id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.persisted = append(s.persisted, persistedMessage{message: m, entryID: id})
+}
+
+// entryIDFor names the entry a message was persisted as, or "" if it has not
+// been written yet.
+func (s *Session) entryIDFor(m agent.Message) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.persisted {
+		if p.message == m {
+			return p.entryID
+		}
+	}
+	return ""
+}
+
+// append writes an entry, reporting whether it reached the disk.
+func (s *Session) append(e *session.Entry) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.file == nil {
-		return
+		return false
 	}
 	pending := append(s.header, e)
 	s.header = nil
@@ -268,8 +310,11 @@ func (s *Session) append(e *session.Entry) {
 			// The session file is the one place that cannot report its own
 			// failure, so send it somewhere that can.
 			s.diag.LogPersistError(s.persistErr)
+		} else if err != nil {
+			return false
 		}
 	}
+	return true
 }
 
 // recordSetting writes a settings-change entry now if the file exists,

@@ -123,6 +123,21 @@ func (d *Diagnostics) observe(e agent.Event) {
 	}
 }
 
+// LogCompaction records a summary replacing part of the conversation. The
+// summary itself is recorded only as its length: it is long, and the point is
+// that it happened and what it cost.
+func (d *Diagnostics) LogCompaction(summary string, replaced, kept int, u agent.Usage) {
+	if d == nil {
+		return
+	}
+	d.record("compaction", map[string]any{
+		"summaryBytes": len(summary),
+		"replaced":     replaced,
+		"kept":         kept,
+		"usage":        u.TotalTokens,
+	})
+}
+
 // LogContextSample records what one request cost: the provider's token count
 // beside the tool output it carried. Numbers only, no content, so a week of
 // sessions is a usable distribution rather than one session's snapshot.

@@ -9,6 +9,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -119,8 +120,14 @@ type model struct {
 	// compactionSeq is the last compaction counter rendered as a transcript
 	// marker; a newer one means a request pass replaced tool output.
 	compactionSeq uint64
-	quitting      bool
-	initial       string
+	// phase is the current /compact step, empty when idle; phaseCh carries
+	// progress from the summarisation running off the UI goroutine.
+	phase        string
+	phasePercent float64
+	phaseCh      <-chan string
+	cancelPhase  context.CancelFunc
+	quitting     bool
+	initial      string
 }
 
 // Run starts the interactive UI. initialPrompt, if non-empty, is sent first.
@@ -238,8 +245,29 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // noteCompaction appends a marker line when a request pass has replaced tool
 // output since the last time the UI looked. Compaction is otherwise invisible:
 // the transcript and the session file are left alone on purpose.
+// compactPhaseMsg reports which step of a summarisation is running.
+type compactPhaseMsg string
+
+// compactDoneMsg ends a summarisation, with the summary or the reason there is
+// none. A cancelled compaction reports err and leaves the session untouched.
+type compactDoneMsg struct {
+	result *coding.SummarizeResult
+	err    error
+}
+
+// clearPhase returns the live area to idle after a summarisation.
+func (m *model) clearPhase() {
+	m.phase, m.phasePercent, m.phaseCh, m.cancelPhase = "", 0, nil, nil
+}
+
 func (m *model) noteCompaction() {
 	c := m.s.Compaction()
+	// A summary replaced the transcript, so the previous figures no longer
+	// describe anything: drop them silently rather than reporting zeroes.
+	if c.Seq == 0 {
+		m.compactionSeq = 0
+		return
+	}
 	if c.Seq == m.compactionSeq {
 		return
 	}
@@ -335,6 +363,24 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 	case submitMsg:
 		return m.submit(msg.text)
 
+	case compactPhaseMsg:
+		// Only "summarizing" has measurable progress, and even that is an
+		// estimate; the other steps report what they are doing instead.
+		m.phase = string(msg)
+		m.phasePercent = 0
+		return waitForPhase(m.phaseCh)
+
+	case compactDoneMsg:
+		m.clearPhase()
+		if msg.err != nil {
+			if errors.Is(msg.err, context.Canceled) {
+				return nil // already reported by esc
+			}
+			return m.printErr(msg.err)
+		}
+		m.compactSummary(msg.result)
+		return nil
+
 	case printMsg:
 		return m.print(msg.render)
 
@@ -372,6 +418,14 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 				return tea.Quit
 			}
 		case "esc":
+			if m.phase != "" && m.cancelPhase != nil {
+				// The summarisation call is the user's to stop; nothing has
+				// been written yet, so cancelling leaves the session as it was.
+				m.cancelPhase()
+				m.printDim("compaction cancelled")
+				m.clearPhase()
+				return nil
+			}
 			if m.running {
 				m.s.Harness.Cancel()
 				m.s.Harness.ClearQueues()
@@ -575,6 +629,17 @@ func (m *model) live() string {
 	}
 	if m.running && m.partial == nil && len(m.tools) == 0 {
 		b.WriteString(item(m.r.st.toolRun.Render(m.spin.View()) + m.r.st.dim.Render("  working…")))
+	}
+	// Summarising is its own phase, with the step named: only the streaming
+	// step has measurable progress, so the rest say what they are doing rather
+	// than showing a bar that would be a guess.
+	if m.phase != "" {
+		label := m.r.st.dim.Render("compact · " + m.phase + "…")
+		if m.phasePercent > 0 {
+			label = m.r.st.dim.Render(fmt.Sprintf("compact · %s %s %.0f%%",
+				m.phase, renderGauge(m.phasePercent), m.phasePercent*100))
+		}
+		b.WriteString(item(m.r.st.toolRun.Render(m.spin.View()) + " " + label))
 	}
 	return b.String()
 }

@@ -544,3 +544,43 @@ func TestContextGaugeMarksAnOverWindowPrompt(t *testing.T) {
 		t.Fatalf("over the window should be marked: %q", st)
 	}
 }
+
+// A summarisation reports the step it is on, and afterwards the transcript
+// carries the summary itself: seeing what the model now believes is the point
+// of compacting by hand.
+func TestCompactShowsPhasesAndTheSummary(t *testing.T) {
+	m := newTestModel(t)
+
+	m.phase = "summarizing"
+	if live := ansi.Strip(m.live()); !strings.Contains(live, "compact · summarizing") {
+		t.Errorf("live area should name the step: %q", live)
+	}
+	// The gauge only appears for a step with real progress; none is claimed
+	// here, so none is drawn.
+	if strings.Contains(ansi.Strip(m.live()), "░") {
+		t.Errorf("an unmeasurable step should not draw a bar: %q", ansi.Strip(m.live()))
+	}
+
+	m.compactSummary(&coding.SummarizeResult{
+		Summary:      "## Goal\nFix the parser.",
+		Replaced:     180,
+		Kept:         20,
+		TokensBefore: 255_200,
+		Usage:        agent.Usage{TotalTokens: 1500},
+		Warnings:     []string{"only 1 of 6 expected sections present"},
+	})
+	out := ansi.Strip(m.tr.text(m.r))
+	for _, want := range []string{
+		"compacted 180 messages into a summary · kept 20",
+		"Fix the parser.",
+		"only 1 of 6 expected sections present",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("transcript missing %q:\n%s", want, out)
+		}
+	}
+	m.clearPhase()
+	if m.phase != "" {
+		t.Error("clearPhase should leave the live area idle")
+	}
+}

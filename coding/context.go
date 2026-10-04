@@ -43,6 +43,17 @@ type compactionLog struct {
 	Compaction
 }
 
+// reset clears the reported state, for when the transcript it described has
+// been replaced.
+func (l *compactionLog) reset() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.Compaction = Compaction{}
+}
+
 func (l *compactionLog) note(results, newResults, before, after, ledgerEntries int) {
 	if l == nil || results == 0 {
 		return
@@ -167,6 +178,18 @@ func (c *codingContextPreparer) budgetLocked() int {
 		return c.budget
 	}
 	return defaultToolResultBudget
+}
+
+// reset forgets everything measured about the old transcript. It is called
+// when the conversation is replaced wholesale, which the append-only prefix
+// cache would otherwise treat as a divergence on the next request.
+func (c *codingContextPreparer) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.prefix, c.records, c.results = nil, nil, nil
+	c.calls = map[string]*agent.ToolCall{}
+	c.trimmed = map[int]bool{}
+	c.totalSize = 0
 }
 
 // setBudget records the derived ceiling. The session recomputes it from each

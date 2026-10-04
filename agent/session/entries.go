@@ -96,6 +96,42 @@ func NewMessageEntry(m agent.Message) *Entry {
 	return e
 }
 
+// NewCompactionEntry records an agent-written summary standing in for the
+// conversation before firstKeptID, in the shape tau writes. The messages it
+// replaces stay in the file: replay skips them, not the disk.
+//
+// first_kept_entry_id is the id of the entry where the retained tail begins,
+// which is what lets replay find the tail among entries that were written
+// before this one. Without it, replay would keep only what follows this entry
+// and lose a tail that was already on disk. Pass "" only when nothing
+// retained has been persisted yet.
+func NewCompactionEntry(summary, firstKeptID string, tokensBefore int, u agent.Usage, provider, model string) *Entry {
+	e := newEntry(TypeCompaction)
+	e.Set("summary", summary)
+	if firstKeptID != "" {
+		e.Set("first_kept_entry_id", firstKeptID)
+	}
+	if tokensBefore > 0 {
+		e.Set("tokens_before", int64(tokensBefore))
+	}
+	if provider != "" {
+		e.Set("provider", provider)
+	}
+	if model != "" {
+		e.Set("model", model)
+	}
+	if u.TotalTokens > 0 || u.Input > 0 || u.CacheRead > 0 {
+		e.Set("usage", map[string]any{
+			"input":      u.Input,
+			"output":     u.Output,
+			"cacheRead":  u.CacheRead,
+			"cacheWrite": u.CacheWrite,
+			"total":      u.TotalTokens,
+		})
+	}
+	return e
+}
+
 // NewSessionInfo records session metadata; it is normally the root entry.
 func NewSessionInfo(cwd, title string) *Entry {
 	e := newEntry(TypeSessionInfo)
