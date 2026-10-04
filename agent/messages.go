@@ -89,6 +89,8 @@ type UsageCost struct {
 }
 
 type Usage struct {
+	// Input excludes cache. Adapters normalise to that split, so TotalTokens
+	// adds up regardless of how a provider reports it.
 	Input        int64     `json:"input"`
 	Output       int64     `json:"output"`
 	CacheRead    int64     `json:"cacheRead"`
@@ -98,6 +100,15 @@ type Usage struct {
 	TotalTokens  int64     `json:"totalTokens"`
 	Cost         UsageCost `json:"cost"`
 }
+
+// PromptTokens is the size of the request as sent: everything the provider
+// read for it, fresh or served from cache.
+//
+// This is the number that answers "how full is the context window". Input
+// alone undercounts, and on a normal session the cached prefix is most of the
+// conversation. Output is deliberately excluded: it is the reply, not part of
+// the next request.
+func (u Usage) PromptTokens() int64 { return u.Input + u.CacheRead + u.CacheWrite }
 
 // Add returns the field-wise sum of two usages.
 func (u Usage) Add(o Usage) Usage {

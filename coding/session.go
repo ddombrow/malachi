@@ -304,7 +304,11 @@ func (s *Session) Compaction() Compaction { return s.compaction.get() }
 
 // ContextStats reports what the provider actually charged for each request,
 // so the cost of tool output can be derived instead of guessed.
-func (s *Session) ContextStats() ContextStats { return s.ctxSampler.get() }
+func (s *Session) ContextStats() ContextStats {
+	stats := s.ctxSampler.get()
+	stats.Window = s.ContextWindow()
+	return stats
+}
 
 // observeContext records one request's measured shape.
 func (s *Session) observeContext(e agent.Event) {
@@ -332,7 +336,7 @@ func (s *Session) ContextWindow() int { return s.provider.ContextWindowTokens() 
 // toolOutputBudget derives the tool-output ceiling from the latest
 // measurement and the provider's window.
 func (s *Session) toolOutputBudget(c ContextStats) int {
-	return toolOutputBudgetBytes(s.ContextWindow(), int(c.InputTokens), int(c.ToolTokens()), c.Ratio)
+	return toolOutputBudgetBytes(s.ContextWindow(), int(c.PromptTokens), int(c.ToolTokens()), c.Ratio)
 }
 
 // Compact asks for the next provider request to trim tool output harder than

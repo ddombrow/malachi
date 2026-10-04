@@ -42,8 +42,8 @@ func TestContextSamplerMeasuresToolOutputRatio(t *testing.T) {
 	if got.Ratio < 0.24 || got.Ratio > 0.26 {
 		t.Errorf("ratio = %.3f, want ~0.25 tokens per byte", got.Ratio)
 	}
-	if got.InputTokens != 40_000 || got.PeakInput != 40_000 {
-		t.Errorf("last/peak input = %d/%d, want 40000", got.InputTokens, got.PeakInput)
+	if got.PromptTokens != 40_000 || got.PeakPrompt != 40_000 {
+		t.Errorf("last/peak input = %d/%d, want 40000", got.PromptTokens, got.PeakPrompt)
 	}
 	if tt := got.ToolTokens(); tt < 40_000 || tt > 41_000 {
 		t.Errorf("tool tokens = %d, want ~40960", tt)
@@ -62,7 +62,7 @@ func TestContextSamplerIgnoresMissingUsage(t *testing.T) {
 	sm := newCtxSampler()
 	sm.observe(assistant(1000), 500, 0)
 	sm.observe(agent.NewAssistantMessage("m"), 5000, 0)
-	if got := sm.get(); got.Samples != 1 || got.InputTokens != 1000 {
+	if got := sm.get(); got.Samples != 1 || got.PromptTokens != 1000 {
 		t.Fatalf("a usage-less message changed the measurement: %+v", got)
 	}
 }
@@ -200,7 +200,7 @@ func TestSessionDerivesCeilingFromUsage(t *testing.T) {
 	// 120 kB of tool output measured at a quarter token per byte is 30k tokens,
 	// which is all of the 30k the request was charged for, so nothing else is
 	// in the way and all 128k-16k is available.
-	stats := ContextStats{InputTokens: 30_000, ToolBytes: 120_000, Ratio: 0.25}
+	stats := ContextStats{PromptTokens: 30_000, ToolBytes: 120_000, Ratio: 0.25}
 	if got, want := s.toolOutputBudget(stats), budgetAt(112_000); got != want {
 		t.Errorf("derived budget = %d, want %d", got, want)
 	}
@@ -211,7 +211,7 @@ func TestContextLineRendersBothStates(t *testing.T) {
 		t.Errorf("unmeasured session should say so: %q", got)
 	}
 	line := ContextLine("kimi-k2.7-code", ContextStats{
-		Samples: 5, InputTokens: 40_000, PeakInput: 41_000, ToolBytes: 163_840,
+		Samples: 5, PromptTokens: 40_000, PeakPrompt: 41_000, ToolBytes: 163_840,
 		Ratio: 0.25, Ratios: 4, ToolShare: 1, Compactions: 3, LimitErrors: 0,
 	})
 	for _, want := range []string{"kimi-k2.7-code", "40.0k", "peak 41.0k", "160.0 kB", "40.0k", "0.25 tokens per byte", "3 passes", "limit errors   0"} {
@@ -220,8 +220,34 @@ func TestContextLineRendersBothStates(t *testing.T) {
 		}
 	}
 	// Without a ratio the line must not imply one was measured.
-	line = ContextLine("m", ContextStats{Samples: 1, InputTokens: 1000, ToolBytes: 500})
+	line = ContextLine("m", ContextStats{Samples: 1, PromptTokens: 1000, ToolBytes: 500})
 	if !strings.Contains(line, "not yet") {
 		t.Errorf("unmeasured ratio should be stated plainly:\n%s", line)
+	}
+}
+
+// The window can be wrong, and the only way to know is to compare what the
+// provider accepted against what the configuration claims. This is the failure
+// the user hits: a model that takes far more than the assumed window, so the
+// gauge reads full and the derived budget is nonsense.
+func TestContextLineWarnsWhenTheWindowIsWrong(t *testing.T) {
+	stats := ContextStats{
+		Samples: 3, PromptTokens: 255_200, PeakPrompt: 255_200, Window: 128_000,
+		ToolBytes: 40_000, Ratio: 0.25, Ratios: 2,
+	}
+	if !exceedsConfiguredWindow(stats) {
+		t.Fatal("a request larger than the configured window should be detected")
+	}
+	if line := ContextLine("m", stats); !strings.Contains(line, "CONFIGURED AT 128.0k BUT 255.2k WAS ACCEPTED") {
+		t.Errorf("the readout should name the mismatch:\n%s", line)
+	}
+	// At or under the configured window there is nothing to warn about.
+	stats.PromptTokens, stats.PeakPrompt = 100_000, 100_000
+	if exceedsConfiguredWindow(stats) {
+		t.Error("a request inside the window should not warn")
+	}
+	// Nothing measured yet cannot disagree with anything.
+	if exceedsConfiguredWindow(ContextStats{Window: 128_000}) {
+		t.Error("an unmeasured session should not warn")
 	}
 }

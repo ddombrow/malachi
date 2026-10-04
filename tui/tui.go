@@ -457,7 +457,7 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 				m.lastReply = msg.Text()
 			}
 			m.usage = m.usage.Add(msg.Usage)
-			if t := msg.Usage.Input + msg.Usage.CacheRead + msg.Usage.CacheWrite + msg.Usage.Output; t > 0 {
+			if t := msg.Usage.PromptTokens(); t > 0 {
 				m.context = t
 			}
 			for _, c := range msg.ToolCalls() {
@@ -641,7 +641,13 @@ func (m *model) contextGauge() string {
 		return ""
 	}
 	full := min(float64(m.context)/float64(window), 1)
-	return " " + renderGauge(full) + fmt.Sprintf(" %.0f%%", full*100)
+	// A clamped bar says "full" but not "over". When the provider accepted more
+	// than the configured window, the configuration is what is wrong, so say so.
+	over := ""
+	if int(m.context) > window {
+		over = "!"
+	}
+	return " " + renderGauge(full) + fmt.Sprintf(" %.0f%%%s", full*100, over)
 }
 
 // renderGauge draws a static filled bar. bubbles/progress would animate it and

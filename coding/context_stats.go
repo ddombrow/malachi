@@ -38,25 +38,31 @@ const (
 
 // ctxSample is one request as the provider saw it and as we measured it.
 type ctxSample struct {
-	InputTokens int64
-	ToolBytes   int
-	Compacted   bool
+	PromptTokens int64
+	ToolBytes    int
+	Compacted    bool
 }
 
 // ContextStats reports the measured shape of a session's context. Every field
 // is observed; nothing here is estimated from a character count except
 // ToolShare, and only until a real ratio exists.
 type ContextStats struct {
-	Samples     int     // requests measured
-	InputTokens int64   // input tokens the provider reported for the last one
-	PeakInput   int64   // highest input tokens seen
-	ToolBytes   int     // tool-result bytes carried by the last request
-	Compacted   bool    // whether the last request was compacted
-	Compactions uint64  // passes so far
-	Ratio       float64 // measured tokens per byte of tool output; 0 until known
-	Ratios      int     // how many deltas the ratio is based on
-	ToolShare   float64 // tool output as a fraction of the last request
-	LimitErrors int     // requests rejected for exceeding the context window
+	Samples int // requests measured
+	// PromptTokens is what the provider read for the last request, cache
+	// included. Input alone undercounts, and the cached prefix is most of a
+	// normal session.
+	PromptTokens int64
+	PeakPrompt   int64   // highest prompt size seen
+	ToolBytes    int     // tool-result bytes carried by the last request
+	Compacted    bool    // whether the last request was compacted
+	Compactions  uint64  // passes so far
+	Ratio        float64 // measured tokens per byte of tool output; 0 until known
+	Ratios       int     // how many deltas the ratio is based on
+	ToolShare    float64 // tool output as a fraction of the last request
+	LimitErrors  int     // requests rejected for exceeding the context window
+	// Window is the context window the session is configured against, filled
+	// in by the session so a readout can catch it being wrong.
+	Window int
 }
 
 // ToolTokens is the tool output in the last request, converted with the
@@ -93,7 +99,7 @@ func newCtxSampler() *ctxSampler { return &ctxSampler{ring: make([]ctxSample, 0,
 // prepared, so the preparer's tool bytes belong to the request the usage
 // describes.
 func (sm *ctxSampler) observe(m *agent.AssistantMessage, toolBytes int, compactionSeq uint64) {
-	if m.Usage.Input <= 0 {
+	if m.Usage.PromptTokens() <= 0 {
 		return // providers that report no usage give us nothing to measure
 	}
 	compacted := compactionSeq > sm.lastSeq
@@ -102,18 +108,19 @@ func (sm *ctxSampler) observe(m *agent.AssistantMessage, toolBytes int, compacti
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	sm.ring = append(sm.ring, ctxSample{InputTokens: m.Usage.Input, ToolBytes: toolBytes, Compacted: compacted})
+	prompt := m.Usage.PromptTokens()
+	sm.ring = append(sm.ring, ctxSample{PromptTokens: prompt, ToolBytes: toolBytes, Compacted: compacted})
 	if len(sm.ring) > ctxSampleRing {
 		sm.ring = sm.ring[len(sm.ring)-ctxSampleRing:]
 	}
 
 	sm.stats.Samples++
-	sm.stats.InputTokens = m.Usage.Input
+	sm.stats.PromptTokens = prompt
 	sm.stats.ToolBytes = toolBytes
 	sm.stats.Compacted = compacted
 	sm.stats.Compactions = compactionSeq
-	if m.Usage.Input > sm.stats.PeakInput {
-		sm.stats.PeakInput = m.Usage.Input
+	if prompt > sm.stats.PeakPrompt {
+		sm.stats.PeakPrompt = prompt
 	}
 	if isContextLimit(m) {
 		sm.stats.LimitErrors++
@@ -122,7 +129,7 @@ func (sm *ctxSampler) observe(m *agent.AssistantMessage, toolBytes int, compacti
 	ratios := make([]float64, 0, len(sm.ring))
 	for i := 1; i < len(sm.ring); i++ {
 		dBytes := sm.ring[i].ToolBytes - sm.ring[i-1].ToolBytes
-		dTokens := sm.ring[i].InputTokens - sm.ring[i-1].InputTokens
+		dTokens := sm.ring[i].PromptTokens - sm.ring[i-1].PromptTokens
 		if dBytes < minRatioDeltaBytes || dTokens <= 0 {
 			continue
 		}
@@ -132,12 +139,11 @@ func (sm *ctxSampler) observe(m *agent.AssistantMessage, toolBytes int, compacti
 		sort.Float64s(ratios)
 		sm.stats.Ratio = ratios[len(ratios)/2] // median: one odd request should not move it
 		sm.stats.Ratios = len(ratios)
-		sm.stats.ToolShare = float64(sm.ring[len(sm.ring)-1].ToolBytes*int(sm.stats.Ratio*1000)) /
-			float64(sm.ring[len(sm.ring)-1].InputTokens*1000)
+		sm.stats.ToolShare = float64(sm.stats.ToolTokens()) / float64(sm.ring[len(sm.ring)-1].PromptTokens)
 	} else {
 		// Unmeasured: show a share from a documented guess, clearly flagged,
 		// rather than implying a precision that does not exist.
-		sm.stats.ToolShare = float64(toolBytes) / fallbackCharsPerToken / float64(m.Usage.Input)
+		sm.stats.ToolShare = float64(toolBytes) / fallbackCharsPerToken / float64(prompt)
 	}
 }
 
@@ -248,6 +254,17 @@ func toolOutputBudgetBytes(window int, inputTokens int, toolTokens int, ratio fl
 	return budget
 }
 
+// exceedsConfiguredWindow reports whether the provider accepted a request
+// larger than the configured window, which can only mean contextWindow is set
+// too low: the request succeeded. This is the only reliable way to learn a
+// model's real window, since no API reports it.
+func exceedsConfiguredWindow(c ContextStats) bool {
+	if c.Window <= 0 || c.Samples == 0 {
+		return false
+	}
+	return c.PeakPrompt > int64(c.Window)
+}
+
 // ContextLine renders the measurement for /ctx in the TUI's plain style.
 func ContextLine(model string, c ContextStats) string {
 	if c.Samples == 0 {
@@ -255,10 +272,10 @@ func ContextLine(model string, c ContextStats) string {
 	}
 	var b strings.Builder
 	peak := ""
-	if c.PeakInput > c.InputTokens {
-		peak = fmt.Sprintf(" (peak %s)", tokenCount(c.PeakInput))
+	if c.PeakPrompt > c.PromptTokens {
+		peak = fmt.Sprintf(" (peak %s)", tokenCount(c.PeakPrompt))
 	}
-	fmt.Fprintf(&b, "context: %s\n  last request   %s%s", model, tokenCount(c.InputTokens), peak)
+	fmt.Fprintf(&b, "context: %s\n  last request   %s%s", model, tokenCount(c.PromptTokens), peak)
 	fmt.Fprintf(&b, "\n  tool output    %s ≈ %s (%.0f%% of the request)",
 		byteCount(c.ToolBytes), tokenCount(c.ToolTokens()), c.ToolShare*100)
 	if c.Ratio > 0 {
@@ -278,6 +295,10 @@ func ContextLine(model string, c ContextStats) string {
 	fmt.Fprintf(&b, "\n  compaction     %s", compactions)
 	fmt.Fprintf(&b, "\n  limit errors   %d", c.LimitErrors)
 	fmt.Fprintf(&b, "\n  requests       %d measured", c.Samples)
+	if exceedsConfiguredWindow(c) {
+		fmt.Fprintf(&b, "\n  window         CONFIGURED AT %s BUT %s WAS ACCEPTED — set contextWindow",
+			tokenCount(int64(c.Window)), tokenCount(c.PeakPrompt))
+	}
 	return b.String()
 }
 

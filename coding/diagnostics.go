@@ -131,17 +131,17 @@ func (d *Diagnostics) LogContextSample(model string, c ContextStats) {
 		return
 	}
 	fields := map[string]any{
-		"inputTokens": c.InputTokens,
-		"toolBytes":   c.ToolBytes,
-		"samples":     c.Samples,
-		"compacted":   c.Compacted,
+		"promptTokens": c.PromptTokens,
+		"toolBytes":    c.ToolBytes,
+		"samples":      c.Samples,
+		"compacted":    c.Compacted,
 	}
 	if c.Ratio > 0 {
 		fields["tokensPerByte"] = c.Ratio
 		fields["toolShare"] = c.ToolShare
 	}
-	if c.PeakInput > 0 {
-		fields["peakInput"] = c.PeakInput
+	if c.PeakPrompt > 0 {
+		fields["peakPrompt"] = c.PeakPrompt
 	}
 	if c.LimitErrors > 0 {
 		fields["limitErrors"] = c.LimitErrors

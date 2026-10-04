@@ -18,7 +18,6 @@ const helpText = `Commands:
   /model [ref]        show models, or switch (e.g. /model glm-5.2, /model openai/gpt-5.1)
   /thinking [level]   show or set the reasoning level
   /trim [bytes]      trim old tool output before the next request
-  /compact [note]    summarize the conversation with the agent
   /ctx               measured context: tokens, tool output share, compactions
   /new                start a fresh session
   /resume [n|name]    list recent sessions, or resume one
@@ -93,6 +92,8 @@ func (m *model) command(line string) tea.Cmd {
 		return m.printDim("thinking level set to " + arg)
 	case "trim":
 		return m.trimCommand(arg)
+	case "compact":
+		return m.printDim("the agent-written summary is not built yet — /trim does the mechanical tool-output trim")
 	case "ctx":
 		return m.printDim(coding.ContextLine(m.s.Model(), m.s.ContextStats()))
 	case "new":

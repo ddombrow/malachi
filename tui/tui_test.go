@@ -527,3 +527,20 @@ func TestBridgeNextUnblocksOnClose(t *testing.T) {
 		t.Fatal("next() must return after close")
 	}
 }
+
+// A prompt larger than the configured window means the configuration is wrong,
+// not that the model is full, and the bar says so rather than sitting at a
+// clamped 100% with no explanation.
+func TestContextGaugeMarksAnOverWindowPrompt(t *testing.T) {
+	m := newTestModel(t)
+	window := m.s.ContextWindow()
+
+	m.context = int64(window - 1)
+	if st := ansi.Strip(m.statusLine()); !strings.Contains(st, "100%") || strings.Contains(st, "100%!") {
+		t.Fatalf("just inside the window: %q", st)
+	}
+	m.context = int64(window) * 2
+	if st := ansi.Strip(m.statusLine()); !strings.Contains(st, "▓▓▓▓▓▓▓▓ 100%!") {
+		t.Fatalf("over the window should be marked: %q", st)
+	}
+}
