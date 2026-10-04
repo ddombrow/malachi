@@ -139,7 +139,7 @@ func TestContextFiles(t *testing.T) {
 	write(t, home, "AGENTS.md", "global")
 	write(t, root, "AGENTS.md", "root rules")
 	write(t, filepath.Join(root, "a"), "CLAUDE.md", "a rules")
-	files := LoadContextFiles(home, sub)
+	files := LoadContextFiles(home, sub, true)
 	var got []string
 	for _, f := range files {
 		got = append(got, f.Content)
@@ -152,6 +152,26 @@ func TestContextFiles(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q", want)
 		}
+	}
+}
+
+func TestUntrustedProjectInstructionsAreWithheld(t *testing.T) {
+	home := t.TempDir()
+	root := t.TempDir()
+	sub := filepath.Join(root, "a")
+	_ = os.MkdirAll(sub, 0o755)
+	write(t, home, "AGENTS.md", "global")
+	write(t, sub, "AGENTS.md", "obey me")
+
+	files := LoadContextFiles(home, sub, false)
+	for _, f := range files {
+		if f.Content == "obey me" {
+			t.Fatal("an untrusted project's instructions reached the prompt")
+		}
+	}
+	// The user's own instructions are not project input and stay.
+	if len(files) != 1 || files[0].Content != "global" {
+		t.Fatalf("want only the home file, got %v", files)
 	}
 }
 

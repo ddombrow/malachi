@@ -54,6 +54,7 @@ func run() int {
 		cwd        = flag.String("cwd", "", "working directory (default: current directory)")
 		listModels = flag.Bool("list-models", false, "list the models the provider currently serves and exit")
 		version    = flag.Bool("version", false, "print the version and exit")
+		trustFlag  = flag.String("trust", "", `project trust for this run: "yes" to load this directory's instruction files, "no" to withhold them`)
 	)
 	flag.BoolVar(cont, "continue", false, "same as -c")
 	flag.Usage = func() {
@@ -79,12 +80,23 @@ func run() int {
 		Continue:      *cont,
 		Resume:        *resume,
 		NoSession:     *noSession,
+		Trust:         *trustFlag,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "malachi:", err)
 		return 1
 	}
 	defer s.Close()
+
+	if *printMode {
+		// Print mode cannot ask a question, so a withheld project file is
+		// stated here. Failing quietly would look like the agent ignoring
+		// AGENTS.md. The TUI announces it in its own banner instead.
+		if notice := s.TrustState().TrustNotice(); notice != "" {
+			fmt.Fprintln(os.Stderr, notice)
+			fmt.Fprintln(os.Stderr, "  pass -trust yes to load them, or set projectTrust in settings.json")
+		}
+	}
 
 	if *listModels {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

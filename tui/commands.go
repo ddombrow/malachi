@@ -20,6 +20,7 @@ const helpText = `Commands:
   /thinking [level]   show or set the reasoning level
   /compact [note]    summarize the conversation with the agent
   /trim [bytes]      trim old tool output before the next request
+  /trust [yes|no]    load this directory's AGENTS.md into the prompt
   /ctx               measured context: tokens, tool output share, compactions
   /new                start a fresh session
   /resume [n|name]    list recent sessions, or resume one
@@ -94,6 +95,8 @@ func (m *model) command(line string) tea.Cmd {
 		return m.printDim("thinking level set to " + arg)
 	case "trim":
 		return m.trimCommand(arg)
+	case "trust":
+		return m.trustCommand(arg)
 	case "compact":
 		return m.compactCommand(arg)
 	case "ctx":
@@ -111,6 +114,67 @@ func (m *model) command(line string) tea.Cmd {
 // thing. The summary is printed into the transcript afterwards: seeing what
 // the model now believes is the point of doing this by hand rather than by
 // threshold.
+// trustCommand decides whether this directory's instruction files are folded
+// into the system prompt. With no argument it explains the current state, so
+// the decision is never a guess about what /trust would do.
+func (m *model) trustCommand(arg string) tea.Cmd {
+	state := m.s.TrustState()
+	switch strings.ToLower(strings.TrimSpace(arg)) {
+	case "yes", "no":
+		remember := true
+		if state.Pending {
+			// Nobody has vouched for this directory yet, so a bare /trust yes
+			// is an answer to a question that was just asked: it applies to
+			// this session. Saving it is an explicit /trust yes --save.
+			remember = false
+		}
+		if err := m.s.Trust(trustDecisionOf(arg), remember); err != nil {
+			return m.printErr(err)
+		}
+		note := "for this session"
+		if remember {
+			note = "remembered for this directory"
+		}
+		return m.printDim(trustOutcome(m.s.TrustState()) + " (" + note + ")")
+	case "":
+		if state.Trusted() {
+			return m.printDim(trustOutcome(state))
+		}
+		return m.printDim(state.TrustNotice() + "\n\n  /trust yes to load them · /trust yes --save to remember · /trust no to decline")
+	default:
+		return m.printErr(fmt.Errorf("usage: /trust [yes [--save] | no]"))
+	}
+}
+
+func trustDecisionOf(arg string) coding.TrustDecision {
+	if strings.EqualFold(strings.TrimSpace(arg), "yes") {
+		return coding.TrustTrusted
+	}
+	return coding.TrustUntrusted
+}
+
+// trustOutcome is one line saying what the prompt now contains.
+func trustOutcome(state coding.TrustState) string {
+	if state.Trusted() {
+		if state.Resources.Empty() {
+			return "no project instruction files here; nothing to load"
+		}
+		return fmt.Sprintf("loading %d project instruction file(s) for %s", state.Resources.Total, state.Path)
+	}
+	return fmt.Sprintf("not loading %d project instruction file(s) for %s", state.Resources.Total, state.Path)
+}
+
+// showTrustNotice announces withheld project instructions once, at startup.
+// Silently ignoring a repository's AGENTS.md reads as a bug in the agent
+// rather than a decision the user has not made yet.
+func (m *model) showTrustNotice() {
+	if notice := m.s.TrustState().TrustNotice(); notice != "" {
+		m.tr.add(func(r *renderer) string {
+			return item(r.st.toolErr.Render(notice))
+		})
+	}
+}
+
 func (m *model) compactCommand(arg string) tea.Cmd {
 	if m.running {
 		return m.printErr(errors.New("compact cannot run while the agent is working"))

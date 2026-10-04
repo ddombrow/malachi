@@ -197,6 +197,9 @@ func newModel(s *coding.Session, initialPrompt string) *model {
 	m.vp.MouseWheelEnabled = true
 	m.vp.MouseWheelDelta = 3
 	m.showSession(s)
+	// After the banner, so a withheld project file is the first thing a new
+	// session says about itself.
+	m.showTrustNotice()
 	return m
 }
 

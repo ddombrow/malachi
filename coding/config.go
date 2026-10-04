@@ -48,8 +48,21 @@ type Settings struct {
 	DefaultModel       string                    `json:"defaultModel,omitempty"`
 	ThinkingLevel      string                    `json:"thinkingLevel,omitempty"`
 	AppendSystemPrompt string                    `json:"appendSystemPrompt,omitempty"`
-	Icons              string                    `json:"icons,omitempty"` // TUI icon set: "emoji" (default) or "dots"
+	Icons              string                    `json:"icons,omitempty"`        // TUI icon set: "emoji" (default) or "dots"
+	ProjectTrust       string                    `json:"projectTrust,omitempty"` // "ask" (default), "always", or "never"
 	Providers          map[string]ProviderConfig `json:"providers,omitempty"`
+}
+
+// TrustPolicyOrDefault is the configured policy, defaulting to asking.
+func (s *Settings) TrustPolicyOrDefault() TrustPolicy {
+	switch TrustPolicy(s.ProjectTrust) {
+	case TrustAlways:
+		return TrustAlways
+	case TrustNever:
+		return TrustNever
+	default:
+		return TrustAsk
+	}
 }
 
 var standardThinking = []string{"off", "minimal", "low", "medium", "high", "xhigh"}

@@ -34,6 +34,10 @@ type Options struct {
 	// Provider, when set, is used instead of constructing one from the
 	// resolved provider config (tests and embedding).
 	Provider agent.Provider
+	// Trust overrides project trust for this run only: "yes" to load the
+	// working directory's instruction files, "no" to withhold them. Empty
+	// defers to the saved decision and then to the configured policy.
+	Trust string
 }
 
 // Session is the coding-agent environment around a Harness: tools rooted at
@@ -60,6 +64,12 @@ type Session struct {
 	compaction *compactionLog
 	preparer   *codingContextPreparer
 	ctxSampler *ctxSampler
+	// trust records whether the working directory's instruction files were
+	// folded into the system prompt.
+	trust TrustState
+	// TrustOverride is a decision made for this run only, carried across a
+	// reopen so /new does not silently ask again.
+	TrustOverride string
 	// system and tools are kept so a request can be sized locally, without
 	// sending one, before the provider has reported any usage.
 	system string
@@ -143,6 +153,9 @@ func Open(opts Options) (*Session, error) {
 		}
 	}
 	s := &Session{cwd: cwd, home: opts.Home, settings: opts.Settings, diag: NewDiagnostics(opts.Home)}
+	// Resolved before the prompt is built: an untrusted project's instruction
+	// files must never reach the system prompt, not even briefly.
+	s.trust = ResolveTrust(opts.Home, cwd, opts.Settings.TrustPolicyOrDefault(), opts.Trust)
 
 	// Pick the session file and replay it.
 	var state session.State
@@ -268,9 +281,48 @@ func (s *Session) buildPrompt(tools []*agent.Tool) string {
 	return BuildSystemPrompt(PromptOptions{
 		Cwd:          s.cwd,
 		Tools:        tools,
-		ContextFiles: LoadContextFiles(s.home, s.cwd),
+		ContextFiles: LoadContextFiles(s.home, s.cwd, s.trust.Trusted()),
 		Append:       s.settings.AppendSystemPrompt,
 	})
+}
+
+// TrustState reports why project instructions were or were not loaded.
+func (s *Session) TrustState() TrustState { return s.trust }
+
+// Trust applies a decision about this directory's instruction files. With
+// remember set it is saved so the next session starts the same way; without
+// it the decision lasts only as long as the session does.
+//
+// The system prompt is rebuilt either way. Trust is the difference between a
+// project's instructions being part of the prompt and not, so a decision that
+// did not change the prompt would be a decision that did nothing.
+func (s *Session) Trust(decision TrustDecision, remember bool) error {
+	if decision != TrustTrusted && decision != TrustUntrusted {
+		return fmt.Errorf("unknown trust decision %q", decision)
+	}
+	s.mu.Lock()
+	if remember {
+		if err := SetTrust(s.home, s.cwd, decision); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+	}
+	if !remember {
+		s.TrustOverride = "yes"
+		if decision == TrustUntrusted {
+			s.TrustOverride = "no"
+		}
+	}
+	s.trust = ResolveTrust(s.home, s.cwd, s.settings.TrustPolicyOrDefault(), s.TrustOverride)
+	resolved := s.trust
+	system := s.buildPrompt(s.tools)
+	s.mu.Unlock()
+
+	s.Harness.Update(func(c *agent.HarnessConfig) { c.System = system })
+	// The prompt grew or shrank, so every figure derived from it is stale.
+	s.estimateContext()
+	s.diag.LogTrust(resolved)
+	return nil
 }
 
 // persist is the push-based persistence listener: each completed message is
@@ -544,6 +596,7 @@ func (s *Session) Close() {
 // must no longer be used.
 func (s *Session) Reopen(resume string) (*Session, error) {
 	opts := Options{Cwd: s.cwd, Home: s.home, Settings: s.settings, Resume: resume}
+	opts.Trust = s.TrustOverride
 	if resume == "" {
 		opts.Model = s.Provider().Name + "/" + s.Model()
 		opts.ThinkingLevel = s.ThinkingLevel()

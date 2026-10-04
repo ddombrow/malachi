@@ -22,7 +22,11 @@ var contextFileNames = []string{"AGENTS.md", "CLAUDE.md"}
 
 // LoadContextFiles returns home/AGENTS.md followed by one instruction file
 // per directory from the filesystem root down to cwd.
-func LoadContextFiles(home, cwd string) []ContextFile {
+//
+// When trusted is false, the files below the user's home directory are left
+// out: a project supplying an instruction file is a project asking for its
+// instructions to be obeyed, and that needs a decision first. See trust.go.
+func LoadContextFiles(home, cwd string, trusted bool) []ContextFile {
 	var out []ContextFile
 	seen := map[string]bool{}
 	add := func(dir string) {
@@ -41,6 +45,9 @@ func LoadContextFiles(home, cwd string) []ContextFile {
 	}
 	if home != "" {
 		add(home)
+	}
+	if !trusted {
+		return out
 	}
 	var dirs []string
 	for d := filepath.Clean(cwd); ; d = filepath.Dir(d) {

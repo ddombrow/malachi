@@ -151,6 +151,21 @@ func (d *Diagnostics) LogOverflowRecovery(replaced, kept int, u agent.Usage) {
 	})
 }
 
+// LogTrust records a project-trust decision, by path and outcome only. Which
+// directories were trusted is the thing worth being able to audit later.
+func (d *Diagnostics) LogTrust(t TrustState) {
+	if d == nil {
+		return
+	}
+	d.record("project_trust", map[string]any{
+		"path":     t.Path,
+		"decision": string(t.Decision),
+		"policy":   string(t.Policy),
+		"source":   t.Source,
+		"files":    t.Resources.Total,
+	})
+}
+
 // LogContextSample records what one request cost: the provider's token count
 // beside the tool output it carried. Numbers only, no content, so a week of
 // sessions is a usable distribution rather than one session's snapshot.
