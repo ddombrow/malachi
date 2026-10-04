@@ -27,6 +27,21 @@ func SummarizeToolCall(name string, args map[string]any) string {
 			s += fmt.Sprintf(":1-%d", lim)
 		}
 		return s
+	case "grep":
+		s := "grep " + str("pattern")
+		if g := str("glob"); g != "" {
+			s += " [" + g + "]"
+		}
+		if p := strings.TrimSpace(str("path")); p != "" {
+			s += " in " + p
+		}
+		return s
+	case "glob":
+		s := "glob " + str("pattern")
+		if p := strings.TrimSpace(str("path")); p != "" {
+			s += " in " + p
+		}
+		return s
 	case "bash":
 		cmd := strings.TrimSpace(str("command"))
 		if i := strings.IndexByte(cmd, '\n'); i >= 0 {

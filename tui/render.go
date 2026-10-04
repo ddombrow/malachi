@@ -194,6 +194,12 @@ func (r *renderer) toolResult(name string, args map[string]any, res agent.ToolRe
 			body = r.diff(patch, 30)
 		}
 	case "read", "write":
+	case "grep", "glob":
+		// Search results are the answer, so show more of them than the
+		// generic preview, which is tuned for incidental output.
+		if out := strings.TrimSpace(res.Text()); out != "" {
+			body = r.preview(r.st.dim, firstLines(out, 8))
+		}
 	case "bash":
 		if out := strings.TrimSpace(res.Text()); out != "" && out != "(no output)" {
 			body = r.preview(r.st.dim, lastLines(out, 6))

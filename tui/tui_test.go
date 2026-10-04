@@ -151,7 +151,10 @@ func TestBashStatusMarks(t *testing.T) {
 
 func TestIconsPerItemKind(t *testing.T) {
 	m := newTestModel(t)
-	for tool, kind := range map[string]string{"read": iconRead, "edit": iconEdit, "write": iconWrite, "bash": iconBash, "grep": iconTool} {
+	for tool, kind := range map[string]string{
+		"read": iconRead, "edit": iconEdit, "write": iconWrite,
+		"bash": iconBash, "grep": iconGrep, "glob": iconGlob,
+	} {
 		if out := m.r.toolResult(tool, map[string]any{}, agent.TextResult(""), false); !strings.Contains(out, m.r.icons[kind]) {
 			t.Errorf("%s: want %s in %q", tool, kind, out)
 		}
