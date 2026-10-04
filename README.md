@@ -69,6 +69,12 @@ Project instructions come from `AGENTS.md` (or `CLAUDE.md`) in `~/.malachi`
 and in every directory from `/` down to the working directory. Sessions are
 append-only JSONL under `~/.malachi/sessions/<project>/`.
 
+Failures with nowhere else to go — panics, provider errors, and failures to
+write the session file — are appended to `~/.malachi/logs/agent.jsonl`, one
+JSON object per line, tagged with the session and run. `/session` prints the
+path. Provider errors and tool errors also live in the session file itself, as
+messages.
+
 ## Development
 
 Tasks live in `Taskfile.yml` and run through the pinned tool, so no global

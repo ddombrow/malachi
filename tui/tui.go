@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -120,10 +121,17 @@ type model struct {
 }
 
 // Run starts the interactive UI. initialPrompt, if non-empty, is sent first.
-func Run(s *coding.Session, initialPrompt string) error {
+// A panic is recorded with its stack and reported as an error rather than
+// taking the process down without a trace.
+func Run(s *coding.Session, initialPrompt string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("internal error (logged to %s): %v", s.Diagnostics().LogPanic("tui.Run", r, debug.Stack()), r)
+		}
+	}()
 	m := newModel(s, initialPrompt)
 	p := tea.NewProgram(m)
-	_, err := p.Run()
+	_, err = p.Run()
 	m.bridge.close()
 	if m.cancelRun != nil {
 		m.cancelRun()

@@ -54,6 +54,7 @@ type Session struct {
 	file       *session.File // nil when NoSession
 	header     []*session.Entry
 	persistErr error
+	diag       *Diagnostics
 	unsub      func()
 	liveModels map[string][]string // provider name -> fetched model ids
 }
@@ -116,7 +117,7 @@ func Open(opts Options) (*Session, error) {
 			return nil, err
 		}
 	}
-	s := &Session{cwd: cwd, home: opts.Home, settings: opts.Settings}
+	s := &Session{cwd: cwd, home: opts.Home, settings: opts.Settings, diag: NewDiagnostics(opts.Home)}
 
 	// Pick the session file and replay it.
 	var state session.State
@@ -204,6 +205,14 @@ func Open(opts Options) (*Session, error) {
 		}
 		s.unsub = s.Harness.Subscribe(s.persist)
 	}
+	sessionPath := ""
+	if s.file != nil {
+		sessionPath = s.file.Path()
+	}
+	s.diag.Bind(sessionPath, pc.Name, model)
+	// Diagnostics follow every run, including in-memory sessions that have
+	// no file to record a failure in.
+	s.Harness.Subscribe(s.diag.observe)
 	return s, nil
 }
 
@@ -246,6 +255,9 @@ func (s *Session) append(e *session.Entry) {
 	for _, entry := range pending {
 		if err := s.file.Append(entry); err != nil && s.persistErr == nil {
 			s.persistErr = fmt.Errorf("persist session: %w", err)
+			// The session file is the one place that cannot report its own
+			// failure, so send it somewhere that can.
+			s.diag.LogPersistError(s.persistErr)
 		}
 	}
 }
@@ -269,8 +281,12 @@ func (s *Session) recordSetting(e *session.Entry) {
 
 // Prompt sends a user message and runs the agent to completion.
 func (s *Session) Prompt(ctx context.Context, text string) error {
+	s.diag.NewRun()
 	return s.Harness.Prompt(ctx, agent.NewUserText(text))
 }
+
+// Diagnostics is the failure log for this session's home.
+func (s *Session) Diagnostics() *Diagnostics { return s.diag }
 
 // SetModel switches provider/model for subsequent turns.
 func (s *Session) SetModel(ref string) error {

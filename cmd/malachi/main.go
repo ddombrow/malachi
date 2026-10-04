@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -23,7 +24,22 @@ import (
 )
 
 func main() {
-	os.Exit(run())
+	os.Exit(recoverAndRun(run))
+}
+
+// recoverAndRun turns a panic anywhere outside the TUI's own handler into a
+// logged crash and a non-zero exit, instead of a trace that scrolls away.
+func recoverAndRun(fn func() int) (code int) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		path := coding.NewDiagnostics(coding.Home()).LogPanic("main", r, debug.Stack())
+		fmt.Fprintf(os.Stderr, "malachi: internal error (logged to %s): %v\n", path, r)
+		code = 1
+	}()
+	return fn()
 }
 
 func run() int {

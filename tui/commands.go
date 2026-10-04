@@ -56,7 +56,7 @@ func (m *model) command(line string) tea.Cmd {
 		if m.s.Path() == "" {
 			return m.printDim("in-memory session (--no-session)")
 		}
-		return m.printDim(m.s.Path())
+		return m.printDim("session: " + m.s.Path() + "\nlog:     " + m.s.Diagnostics().Path())
 	case "copy":
 		if strings.TrimSpace(m.lastReply) == "" {
 			return m.printDim("no assistant response to copy yet")
