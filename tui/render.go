@@ -292,7 +292,38 @@ func (r *renderer) history(msgs []agent.Message) []string {
 	return out
 }
 
+// wordmark is the MALACHI wordmark, drawn at the top of a new session. It is
+// shown only when it fits whole: a half-drawn wordmark reads as a rendering
+// fault rather than as style.
+//
+// The backticks in "MALACHI" cannot appear in a raw string, so the art is
+// assembled around one. Edits should keep the drawing intact on both sides of
+// the splices.
+const wordmark = `              _            _     _
+  /\/\   __ _| | __ _  ___| |__ (_)
+ /    \ / _` + "`" + ` | |/ _` + "`" + ` |/ __| '_ \| |
+/ /\/\ \ (_| | | (_| | (__| | | | |
+\/    \/\__,_|_|\__,_|\___|_| |_|_|`
+
+// wordmarkWidth is the widest line of the wordmark, measured rather than
+// written down so editing the art cannot make the guard wrong.
+var wordmarkWidth = func() int {
+	w := 0
+	for _, line := range strings.Split(wordmark, "\n") {
+		w = max(w, lipgloss.Width(line))
+	}
+	return w
+}()
+
 func (r *renderer) banner(s *coding.Session, resumed int) string {
+	var b strings.Builder
+	// Only for a session that starts here. A resumed one has history worth
+	// reading, and a wordmark is decoration stacked on top of it.
+	if resumed == 0 && r.width >= wordmarkWidth+2 {
+		for _, line := range strings.Split(wordmark, "\n") {
+			b.WriteString(r.st.accent.Render(strings.TrimRight(line, " \t")) + "\n")
+		}
+	}
 	const name = "malachi"
 	title := r.st.accent.Bold(true).Render(name)
 	// Every line is truncated to the terminal before styling: truncation is
@@ -300,12 +331,12 @@ func (r *renderer) banner(s *coding.Session, resumed int) string {
 	info := fmt.Sprintf(" %s/%s · %s", s.Provider().Name, s.Model(), shortenHome(s.Cwd()))
 	info = truncateLeft(info, r.width-lipgloss.Width(name)-1)
 	help := "enter send · alt+enter newline · esc cancel · /help commands · ctrl+c quit"
-	b := title + r.st.dim.Render(info) + "\n" + r.st.dim.Render(truncateWidth(help, r.width))
+	b.WriteString(title + r.st.dim.Render(info) + "\n" + r.st.dim.Render(truncateWidth(help, r.width)))
 	if resumed > 0 {
 		line := fmt.Sprintf("resumed %s (%d messages)", filepath.Base(s.Path()), resumed)
-		b += "\n" + r.st.dim.Render(truncateWidth(line, r.width))
+		b.WriteString("\n" + r.st.dim.Render(truncateWidth(line, r.width)))
 	}
-	return b
+	return b.String()
 }
 
 // perLine styles each line separately; rendering a multi-line block in one

@@ -623,3 +623,26 @@ func TestPhaseAfterCompletionIsIgnored(t *testing.T) {
 		t.Fatalf("a phase arriving after completion came back: %q", live)
 	}
 }
+
+func TestWordmarkAppearsOnlyForNewSessions(t *testing.T) {
+	s := malachiTestSession(t)
+	wide := ansi.Strip(newRenderer(80, true, "emoji", "").banner(s, 0))
+	if !strings.Contains(wide, "/\\/\\") {
+		t.Errorf("a new session should draw the wordmark:\n%s", wide)
+	}
+	// A resumed session has history worth reading; art on top of it is noise.
+	resumed := ansi.Strip(newRenderer(80, true, "emoji", "").banner(s, 3))
+	if strings.Contains(resumed, "/\\/\\") {
+		t.Errorf("a resumed session should not draw the wordmark:\n%s", resumed)
+	}
+	// Too narrow to hold it whole means not at all, rather than half a word.
+	for _, w := range []int{7, 20, wordmarkWidth} {
+		got := ansi.Strip(newRenderer(w, true, "emoji", "").banner(s, 0))
+		if strings.Contains(got, "/\\/\\") {
+			t.Errorf("width=%d cannot hold the wordmark (%d cells) but drew it", w, wordmarkWidth)
+		}
+	}
+	if got := ansi.Strip(newRenderer(wordmarkWidth+2, true, "emoji", "").banner(s, 0)); !strings.Contains(got, "/\\/\\") {
+		t.Errorf("width=%d fits the wordmark but it was omitted", wordmarkWidth+2)
+	}
+}
