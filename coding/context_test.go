@@ -54,7 +54,7 @@ func TestCodingRequestCompactsOldResultsWithoutChangingTranscript(t *testing.T) 
 	if oldInRequest == nil || recentInRequest == nil {
 		t.Fatalf("tool results not paired in request: %#v", results)
 	}
-	if !strings.Contains(oldInRequest.Text(), "compacted read tool output") {
+	if !strings.Contains(oldInRequest.Text(), "trimmed read tool output") {
 		t.Fatalf("old result should compact: %.100q", oldInRequest.Text())
 	}
 	if oldInRequest == oldResult {
@@ -156,7 +156,7 @@ func TestCompactionDoesNotRewriteSavedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	requestResults := toolResultsByID(p.Requests[1].Messages)
-	if !strings.Contains(requestResults["r1"].Text(), "compacted read tool output") {
+	if !strings.Contains(requestResults["r1"].Text(), "trimmed read tool output") {
 		t.Fatal("provider request should compact the old result")
 	}
 	if requestResults["r2"].Text() != secondText {
@@ -191,7 +191,7 @@ func TestCompactionPreservesErrorsAndImagesAreCounted(t *testing.T) {
 		t.Fatal("oversized error should compact")
 	}
 	gotError := compactedErrors[0].(*agent.ToolResultMessage)
-	if !gotError.IsError || !strings.Contains(gotError.Text(), "compacted bash tool error") {
+	if !gotError.IsError || !strings.Contains(gotError.Text(), "trimmed bash tool error") {
 		t.Fatalf("error status lost during compaction: %+v", gotError)
 	}
 	imageMessages := []agent.Message{imageResult, &agent.ToolResultMessage{
@@ -202,7 +202,7 @@ func TestCompactionPreservesErrorsAndImagesAreCounted(t *testing.T) {
 		t.Fatal("oversized image should compact")
 	}
 	gotImage := compactedImages[0].(*agent.ToolResultMessage)
-	if !strings.Contains(gotImage.Text(), "compacted read tool output") {
+	if !strings.Contains(gotImage.Text(), "trimmed read tool output") {
 		t.Fatalf("image bytes must count toward budget: %q", gotImage.Text())
 	}
 }

@@ -292,7 +292,10 @@ func (m *model) noteCompaction() {
 	if c.NewResults == 1 {
 		word = "result"
 	}
-	line := fmt.Sprintf("compacted %d tool %s · %s → %s",
+	// Trimming is not compaction. The marker is what the model reads in place
+	// of the output; calling it compaction would describe the lossy
+	// conversation summary that /compact does, which this is not.
+	line := fmt.Sprintf("trimmed %d tool %s · %s → %s",
 		c.NewResults, word, bytesHuman(c.Before), bytesHuman(c.After))
 	if total := c.Results - c.NewResults; total > 0 {
 		line += fmt.Sprintf(" · %d already trimmed", total)
@@ -300,7 +303,7 @@ func (m *model) noteCompaction() {
 	if c.LedgerEntries > 0 {
 		line += fmt.Sprintf(" · ledger %d entries", c.LedgerEntries)
 	}
-	m.tr.add(func(r *renderer) string { return r.gutter(iconCompacted, r.st.dim, r.st.dim.Render(line)) })
+	m.tr.add(func(r *renderer) string { return r.gutter(iconTrimmed, r.st.dim, r.st.dim.Render(line)) })
 }
 
 // bytesHuman formats a byte count for the compaction marker. These are context

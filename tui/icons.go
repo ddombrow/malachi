@@ -8,20 +8,23 @@ import (
 
 // Icon kinds: one per kind of transcript item.
 const (
-	iconUser        = "user"
-	iconReply       = "reply"
-	iconThinking    = "thinking"
-	iconRead        = "read"
-	iconGrep        = "grep"
-	iconGlob        = "glob"
-	iconEdit        = "edit"
-	iconWrite       = "write"
-	iconBash        = "bash"
-	iconTool        = "tool" // any other tool
-	iconError       = "error"
-	iconCancelled   = "cancelled"
-	iconTimeout     = "timeout"
-	iconCompacted   = "compacted"
+	iconUser      = "user"
+	iconReply     = "reply"
+	iconThinking  = "thinking"
+	iconRead      = "read"
+	iconGrep      = "grep"
+	iconGlob      = "glob"
+	iconEdit      = "edit"
+	iconWrite     = "write"
+	iconBash      = "bash"
+	iconTool      = "tool" // any other tool
+	iconError     = "error"
+	iconCancelled = "cancelled"
+	iconTimeout   = "timeout"
+	iconCompacted = "compacted"
+	// iconTrimmed marks mechanical tool-output trimming, which is not
+	// compaction and now reads differently to say so.
+	iconTrimmed     = "trimmed"
 	iconInterrupted = "interrupted"
 )
 
@@ -46,6 +49,7 @@ var iconSets = map[string]map[string]string{
 		iconCancelled:   "🛑",
 		iconTimeout:     "⌛",
 		iconCompacted:   "📦",
+		iconTrimmed:     "✂️",
 		iconInterrupted: "🛑",
 	},
 	// "dots" mimics Claude Code: one glyph, colored by status.
@@ -64,6 +68,7 @@ var iconSets = map[string]map[string]string{
 		iconCancelled:   "⏺",
 		iconTimeout:     "⏺",
 		iconCompacted:   "⏺",
+		iconTrimmed:     "⏺",
 		iconInterrupted: "⏺",
 	},
 }

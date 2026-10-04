@@ -329,9 +329,12 @@ func compactToolResultsWithSizes(messages []agent.Message, results []toolResultS
 		if originalBytes == 0 {
 			continue
 		}
-		marker := fmt.Sprintf("[compacted %s tool output: %d bytes]", result.ToolName, originalBytes)
+		// This is a trim, not a compaction: nothing was summarized, the output
+		// was removed after it stopped being useful. Saying "compacted" here
+		// would describe the lossy conversation handover that /compact writes.
+		marker := fmt.Sprintf("[trimmed %s tool output: %d bytes]", result.ToolName, originalBytes)
 		if result.IsError {
-			marker = fmt.Sprintf("[compacted %s tool error output: %d bytes]", result.ToolName, originalBytes)
+			marker = fmt.Sprintf("[trimmed %s tool error output: %d bytes]", result.ToolName, originalBytes)
 		}
 		if len(marker) >= originalBytes {
 			continue

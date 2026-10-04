@@ -419,7 +419,7 @@ func TestCompactionIsVisible(t *testing.T) {
 		t.Errorf("status bar must show compaction: %q", st)
 	}
 	out := ansi.Strip(m.tr.text(m.r))
-	if !strings.Contains(out, "compacted 3 tool results") {
+	if !strings.Contains(out, "trimmed 3 tool results") {
 		t.Errorf("transcript marker missing or wrong: %q", out)
 	}
 	if !strings.Contains(out, "kB") || !strings.Contains(out, "ledger 4 entries") {
@@ -461,8 +461,8 @@ func TestTrimCommandForcesNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Update(nil)
-	if out := ansi.Strip(m.tr.text(m.r)); !strings.Contains(out, "compacted") {
-		t.Errorf("forced pass should have compacted: %q", out)
+	if out := ansi.Strip(m.tr.text(m.r)); !strings.Contains(out, "trimmed") {
+		t.Errorf("forced pass should have trimmed: %q", out)
 	}
 }
 
@@ -644,5 +644,25 @@ func TestWordmarkAppearsOnlyForNewSessions(t *testing.T) {
 	}
 	if got := ansi.Strip(newRenderer(wordmarkWidth+2, true, "emoji", "").banner(s, 0)); !strings.Contains(got, "/\\/\\") {
 		t.Errorf("width=%d fits the wordmark but it was omitted", wordmarkWidth+2)
+	}
+}
+
+func TestIconSetsAreUniformWidth(t *testing.T) {
+	// Gutters line up only because every icon in a set is the same width, and
+	// emoji ones are two cells. A new icon that measures differently would
+	// leave that row a column proud of the rest, which is easy to introduce
+	// and hard to spot.
+	want := map[string]int{"emoji": 2, "dots": 1}
+	for set, icons := range iconSets {
+		for kind, icon := range icons {
+			// iconUser is the input prompt glyph, not a gutter icon, and is
+			// deliberately one cell narrow. It has its own alignment test.
+			if kind == iconUser {
+				continue
+			}
+			if got := lipgloss.Width(icon); got != want[set] {
+				t.Errorf("%s/%s = %q is %d cells, want %d", set, kind, icon, got, want[set])
+			}
+		}
 	}
 }
