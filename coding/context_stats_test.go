@@ -26,7 +26,7 @@ func TestContextSamplerMeasuresToolOutputRatio(t *testing.T) {
 	if got := sm.get(); got.Ratio != 0 || got.Ratios != 0 {
 		t.Fatalf("ratio measured without enough signal: %+v", got)
 	}
-	if got := sm.get(); got.ToolShare <= 0 {
+	if got := sm.get(); got.ToolShare() <= 0 {
 		t.Error("share should still be shown, flagged as unmeasured")
 	}
 
@@ -48,8 +48,8 @@ func TestContextSamplerMeasuresToolOutputRatio(t *testing.T) {
 	if tt := got.ToolTokens(); tt < 40_000 || tt > 41_000 {
 		t.Errorf("tool tokens = %d, want ~40960", tt)
 	}
-	if got.ToolShare < 0.99 || got.ToolShare > 1.01 {
-		t.Errorf("tool share = %.2f, want ~1.0 (all context is tool output here)", got.ToolShare)
+	if share := got.ToolShare(); share < 0.99 || share > 1.01 {
+		t.Errorf("tool share = %.2f, want ~1.0 (all context is tool output here)", share)
 	}
 	if sm.get().Samples != 5 {
 		t.Errorf("samples = %d, want 5", sm.get().Samples)
@@ -212,7 +212,7 @@ func TestContextLineRendersBothStates(t *testing.T) {
 	}
 	line := ContextLine("kimi-k2.7-code", ContextStats{
 		Samples: 5, PromptTokens: 40_000, PeakPrompt: 41_000, ToolBytes: 163_840,
-		Ratio: 0.25, Ratios: 4, ToolShare: 1, Compactions: 3, LimitErrors: 0,
+		Ratio: 0.25, Ratios: 4, Compactions: 3, LimitErrors: 0,
 	})
 	for _, want := range []string{"kimi-k2.7-code", "40.0k", "peak 41.0k", "160.0 kB", "40.0k", "0.25 tokens per byte", "3 passes", "limit errors   0"} {
 		if !strings.Contains(line, want) {

@@ -58,7 +58,6 @@ type ContextStats struct {
 	Compactions  uint64  // passes so far
 	Ratio        float64 // measured tokens per byte of tool output; 0 until known
 	Ratios       int     // how many deltas the ratio is based on
-	ToolShare    float64 // tool output as a fraction of the last request
 	LimitErrors  int     // requests rejected for exceeding the context window
 	// Window is the context window the session is configured against, filled
 	// in by the session so a readout can catch it being wrong.
@@ -66,23 +65,23 @@ type ContextStats struct {
 }
 
 // ToolTokens is the tool output in the last request, converted with the
-// measured ratio when one exists.
+// measured ratio. Before anything has been measured it falls back to a
+// documented guess, which ContextLine flags as unmeasured.
 func (c ContextStats) ToolTokens() int64 {
 	if c.Ratio > 0 {
 		return int64(float64(c.ToolBytes) * c.Ratio)
 	}
-	if c.RatioBytes() > 0 {
-		return int64(float64(c.ToolBytes) / c.RatioBytes())
-	}
-	return 0
+	return int64(float64(c.ToolBytes) / fallbackCharsPerToken)
 }
 
-// RatioBytes is the inverse of Ratio, kept for readability at call sites.
-func (c ContextStats) RatioBytes() float64 {
-	if c.Ratio > 0 {
-		return 1 / c.Ratio
+// ToolShare is the fraction of the last request that was tool output. It is
+// derived here rather than carried as a field, so it cannot go stale against
+// the two numbers it comes from.
+func (c ContextStats) ToolShare() float64 {
+	if c.PromptTokens <= 0 {
+		return 0
 	}
-	return 0
+	return float64(c.ToolTokens()) / float64(c.PromptTokens)
 }
 
 type ctxSampler struct {
@@ -139,11 +138,6 @@ func (sm *ctxSampler) observe(m *agent.AssistantMessage, toolBytes int, compacti
 		sort.Float64s(ratios)
 		sm.stats.Ratio = ratios[len(ratios)/2] // median: one odd request should not move it
 		sm.stats.Ratios = len(ratios)
-		sm.stats.ToolShare = float64(sm.stats.ToolTokens()) / float64(sm.ring[len(sm.ring)-1].PromptTokens)
-	} else {
-		// Unmeasured: show a share from a documented guess, clearly flagged,
-		// rather than implying a precision that does not exist.
-		sm.stats.ToolShare = float64(toolBytes) / fallbackCharsPerToken / float64(prompt)
 	}
 }
 
@@ -277,7 +271,12 @@ func ContextLine(model string, c ContextStats) string {
 	}
 	fmt.Fprintf(&b, "context: %s\n  last request   %s%s", model, tokenCount(c.PromptTokens), peak)
 	fmt.Fprintf(&b, "\n  tool output    %s ≈ %s (%.0f%% of the request)",
-		byteCount(c.ToolBytes), tokenCount(c.ToolTokens()), c.ToolShare*100)
+		byteCount(c.ToolBytes), tokenCount(c.ToolTokens()), c.ToolShare()*100)
+	// What is left is the system prompt, the tool definitions, the ledger and
+	// the conversation. Nothing trims the conversation, which is why /trim can
+	// report nothing to do while the request is enormous.
+	fmt.Fprintf(&b, "\n  everything else %s (system prompt, tool definitions, ledger, conversation)",
+		tokenCount(c.PromptTokens-c.ToolTokens()))
 	if c.Ratio > 0 {
 		fmt.Fprintf(&b, "\n  measured       %.2f tokens per byte of tool output (%d deltas)",
 			c.Ratio, c.Ratios)
