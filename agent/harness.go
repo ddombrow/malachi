@@ -32,6 +32,8 @@ type HarnessConfig struct {
 	BeforeToolCall BeforeToolCall
 	AfterToolCall  AfterToolCall
 	PrepareRequest RequestPreparer
+	// RecoverOverflow rebuilds and retries a request that failed on context.
+	RecoverOverflow func(ctx context.Context, req Request, failed *AssistantMessage) (Request, []Message, bool)
 }
 
 // Listener receives every event of every run, synchronously and in order,
@@ -204,6 +206,7 @@ func (h *Harness) run(parent context.Context, prompts []Message) error {
 		BeforeToolCall:      cfg.BeforeToolCall,
 		AfterToolCall:       cfg.AfterToolCall,
 		PrepareRequest:      cfg.PrepareRequest,
+		RecoverOverflow:     cfg.RecoverOverflow,
 	}
 	Run(ctx, loopCfg, h.Messages(), prompts, h.dispatch)
 

@@ -213,13 +213,14 @@ func Open(opts Options) (*Session, error) {
 	s.runtime = provider
 	s.system, s.tools = s.buildPrompt(tools), tools
 	s.Harness = agent.NewHarness(agent.HarnessConfig{
-		Provider:       provider,
-		Model:          model,
-		System:         s.system,
-		Tools:          s.tools,
-		ThinkingLevel:  s.thinking,
-		SessionID:      sessionID,
-		PrepareRequest: s.preparer.prepare,
+		Provider:        provider,
+		Model:           model,
+		System:          s.system,
+		Tools:           s.tools,
+		ThinkingLevel:   s.thinking,
+		SessionID:       sessionID,
+		PrepareRequest:  s.preparer.prepare,
+		RecoverOverflow: s.recoverOverflow,
 	}, state.Messages)
 
 	if s.file != nil {

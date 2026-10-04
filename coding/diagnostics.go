@@ -138,6 +138,19 @@ func (d *Diagnostics) LogCompaction(summary string, replaced, kept int, u agent.
 	})
 }
 
+// LogOverflowRecovery records a compaction made to rescue a request the
+// provider rejected for exceeding the context window.
+func (d *Diagnostics) LogOverflowRecovery(replaced, kept int, u agent.Usage) {
+	if d == nil {
+		return
+	}
+	d.record("overflow_recovery", map[string]any{
+		"replaced": replaced,
+		"kept":     kept,
+		"usage":    u.TotalTokens,
+	})
+}
+
 // LogContextSample records what one request cost: the provider's token count
 // beside the tool output it carried. Numbers only, no content, so a week of
 // sessions is a usable distribution rather than one session's snapshot.

@@ -125,13 +125,16 @@ type model struct {
 	contextEstimated bool
 	// phase is the current /compact step, empty when idle; phaseCh carries
 	// progress from the summarisation running off the UI goroutine.
-	phase       string
-	compacting  bool
-	phaseStart  time.Time
-	phaseCh     <-chan string
-	cancelPhase context.CancelFunc
-	quitting    bool
-	initial     string
+	phase      string
+	compacting bool
+	// pendingPrompt is a prompt held while the session compacts itself, so a
+	// conversation that outgrows the window does not cost the user their turn.
+	pendingPrompt string
+	phaseStart    time.Time
+	phaseCh       <-chan string
+	cancelPhase   context.CancelFunc
+	quitting      bool
+	initial       string
 }
 
 // Run starts the interactive UI. initialPrompt, if non-empty, is sent first.
@@ -405,13 +408,27 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 
 	case compactDoneMsg:
 		m.clearPhase()
+		// A compaction the session started itself carries a prompt through it.
+		// That prompt is sent either way: failing to send it would mean
+		// retyping the turn because the session got long.
+		prompt := m.pendingPrompt
+		m.pendingPrompt = ""
 		if msg.err != nil {
 			if errors.Is(msg.err, context.Canceled) {
+				if prompt != "" {
+					return m.printErr(errors.New("compaction cancelled — prompt not sent"))
+				}
 				return nil // already reported by esc
+			}
+			if prompt != "" {
+				return tea.Batch(m.printErr(msg.err), m.startRun(prompt))
 			}
 			return m.printErr(msg.err)
 		}
 		m.compactSummary(msg.result)
+		if prompt != "" {
+			return tea.Batch(m.printDim("compacted automatically to fit the context window"), m.startRun(prompt))
+		}
 		return nil
 
 	case printMsg:
@@ -507,7 +524,23 @@ func (m *model) submit(text string) tea.Cmd {
 		m.s.Harness.Steer(agent.NewUserText(text))
 		return m.printDim("queued — will be sent after the current step")
 	}
+	// A conversation past the configured window is compacted before it is
+	// sent, rather than sent and rejected. The prompt waits for the summary
+	// rather than being queued, so the model sees it in the order it was typed.
+	if _, _, needed := m.s.NeedsCompaction(); needed {
+		return m.autoCompact(text)
+	}
 	return m.startRun(text)
+}
+
+// autoCompact folds the conversation because it outgrew the context window,
+// then sends the prompt that was waiting for it. The prompt is held, not
+// dropped, so the user does not retype it because the session got long.
+func (m *model) autoCompact(text string) tea.Cmd {
+	estimated, threshold, _ := m.s.NeedsCompaction()
+	m.pendingPrompt = text
+	head := fmt.Sprintf("auto · compacting %s over %s", tokens(int64(estimated)), tokens(int64(threshold)))
+	return tea.Batch(m.summarize(head, m.s.AutoCompact), waitForPhase(m.phaseCh), compactTick())
 }
 
 func (m *model) startRun(text string) tea.Cmd {

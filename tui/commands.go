@@ -118,18 +118,30 @@ func (m *model) compactCommand(arg string) tea.Cmd {
 	if m.phase != "" {
 		return m.printErr(errors.New("a compaction is already running"))
 	}
-	sess := m.s
-	instructions := arg
+	m.pendingPrompt = ""
+	return tea.Batch(
+		m.summarize("compact", func(ctx context.Context, phases func(string)) (*coding.SummarizeResult, error) {
+			return m.s.Summarize(ctx, arg, phases)
+		}),
+		waitForPhase(m.phaseCh), compactTick())
+}
+
+// summarize runs a compaction, arming the phase channel and the ticker that
+// keeps the progress line moving. head is shown until the model produces
+// bytes of its own, so the first moments of a long wait are not a blank line.
+// run is the compaction itself: the manual command and the automatic one
+// summarize differently, and both show progress the same way.
+func (m *model) summarize(head string, run func(context.Context, func(string)) (*coding.SummarizeResult, error)) tea.Cmd {
 	phases := make(chan string, 8)
 	// The run context belongs to the harness; a summarisation gets its own so esc can
 	// stop it without touching an agent run.
 	ctx, cancel := context.WithCancel(context.Background())
 	m.compacting = true
-	m.phaseStart = time.Now()
+	m.phase, m.phaseStart = head, time.Now()
 	m.phaseCh, m.cancelPhase = phases, cancel
-	return tea.Batch(func() tea.Msg {
+	return func() tea.Msg {
 		defer close(phases)
-		res, err := sess.Summarize(ctx, instructions, func(phase string) {
+		res, err := run(ctx, func(phase string) {
 			select {
 			case phases <- phase:
 			case <-ctx.Done():
@@ -139,7 +151,7 @@ func (m *model) compactCommand(arg string) tea.Cmd {
 			return compactDoneMsg{err: context.Canceled}
 		}
 		return compactDoneMsg{result: res, err: err}
-	}, waitForPhase(phases), compactTick())
+	}
 }
 
 // compactTickMsg repaints the compaction line while a summarisation runs.

@@ -32,6 +32,17 @@ type LoopConfig struct {
 	BeforeToolCall BeforeToolCall
 	AfterToolCall  AfterToolCall
 	PrepareRequest RequestPreparer
+
+	// RecoverOverflow may rebuild a request whose provider call failed because
+	// the model ran out of context, typically by compacting history first.
+	// Returning true retries the call exactly once with the returned request.
+	// history is the canonical transcript to continue from, which recovery
+	// replaces whenever it compacted; the loop keeps its own copy otherwise
+	// and would otherwise carry on from the pre-compaction one.
+	//
+	// It is called only for an errored attempt and only while the run is not
+	// already cancelled, so a cancelled run is never revived here.
+	RecoverOverflow func(ctx context.Context, req Request, failed *AssistantMessage) (retry Request, history []Message, ok bool)
 }
 
 // Run executes the provider/tool loop and reports progress through emit,
@@ -117,6 +128,19 @@ func Run(ctx context.Context, cfg LoopConfig, history []Message, prompts []Messa
 				req = cfg.PrepareRequest(req)
 			}
 			assistant := streamAssistant(ctx, cfg, req, emit)
+			// One retry, and only when recovery asks for it: it has already
+			// decided whether the failure was the context running out, so a
+			// provider error that compaction cannot fix is not retried here.
+			if cfg.RecoverOverflow != nil && assistant.StopReason == StopError && ctx.Err() == nil {
+				if retry, history, ok := cfg.RecoverOverflow(ctx, req, assistant); ok {
+					// The failed turn was emitted and persisted like any other
+					// turn, so it stays in the transcript; the history recovery
+					// returns already accounts for it.
+					messages = history
+					newMessages = append(newMessages, assistant)
+					assistant = streamAssistant(ctx, cfg, retry, emit)
+				}
+			}
 			messages = append(messages, assistant)
 			newMessages = append(newMessages, assistant)
 			if assistant.StopReason == StopError || assistant.StopReason == StopAborted {
