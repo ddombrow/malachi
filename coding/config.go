@@ -35,6 +35,11 @@ type ProviderConfig struct {
 	ThinkingLevels  []string          `json:"thinkingLevels,omitempty"`
 	DefaultThinking string            `json:"defaultThinking,omitempty"`
 	MaxTokens       int               `json:"maxTokens,omitempty"`
+	// ContextWindow is the model's context window in tokens. It is the
+	// denominator for the context gauge and the derived tool-output ceiling,
+	// so /ctx shows the resulting budget: a wrong value here shows up as a
+	// budget that does not match the model.
+	ContextWindow int `json:"contextWindow,omitempty"`
 }
 
 // Settings is ~/.malachi/settings.json.
@@ -48,6 +53,20 @@ type Settings struct {
 }
 
 var standardThinking = []string{"off", "minimal", "low", "medium", "high", "xhigh"}
+
+// defaultContextWindow is deliberately conservative: a provider that accepts
+// less than this exists, while one that accepts more just trims later than it
+// needs to.
+const defaultContextWindow = 128_000
+
+// ContextWindowTokens is the provider's context window, or the default when
+// the configuration does not say.
+func (c ProviderConfig) ContextWindowTokens() int {
+	if c.ContextWindow > 0 {
+		return c.ContextWindow
+	}
+	return defaultContextWindow
+}
 
 // BuiltinProviders are presets that work with only an API key.
 func BuiltinProviders() map[string]ProviderConfig {

@@ -213,6 +213,41 @@ func statusCode(v any) int {
 	return 0
 }
 
+// contextReserveTokens is headroom kept for the next response and for the
+// provider's own framing; tau reserves the same amount.
+const contextReserveTokens = 16_000
+
+// minToolBudgetTokens is the floor on how much tool output is always left
+// visible. Below this, trimming costs more detail than the space saves.
+const minToolBudgetTokens = 8_000
+
+// toolOutputBudgetBytes derives the ceiling on context-visible tool output from
+// what the provider actually reports, rather than from a fixed byte count.
+//
+// Everything except tool output — system prompt, tool definitions, the
+// conversation, the ledger — is already known as tokens, because the provider
+// counted it. What is left of the window after that, and after a reserve for
+// the reply, is what tool output may have. It is converted to bytes with the
+// measured ratio so the ceiling tracks the model's real density.
+//
+// It returns defaultToolResultBudget when there is nothing to measure yet: an
+// unmeasured session should keep the old behaviour rather than a guess.
+func toolOutputBudgetBytes(window int, inputTokens int, toolTokens int, ratio float64) int {
+	if window <= 0 || inputTokens <= 0 || ratio <= 0 {
+		return defaultToolResultBudget
+	}
+	other := inputTokens - toolTokens
+	free := window - contextReserveTokens - other
+	if free < minToolBudgetTokens {
+		return defaultToolResultBudget
+	}
+	budget := int(float64(free) / ratio)
+	if budget < 1 {
+		budget = 1
+	}
+	return budget
+}
+
 // ContextLine renders the measurement for /ctx in the TUI's plain style.
 func ContextLine(model string, c ContextStats) string {
 	if c.Samples == 0 {

@@ -17,7 +17,8 @@ import (
 const helpText = `Commands:
   /model [ref]        show models, or switch (e.g. /model glm-5.2, /model openai/gpt-5.1)
   /thinking [level]   show or set the reasoning level
-  /compact [bytes]   trim old tool output before the next request
+  /trim [bytes]      trim old tool output before the next request
+  /compact [note]    summarize the conversation with the agent
   /ctx               measured context: tokens, tool output share, compactions
   /new                start a fresh session
   /resume [n|name]    list recent sessions, or resume one
@@ -90,8 +91,8 @@ func (m *model) command(line string) tea.Cmd {
 			return m.printErr(err)
 		}
 		return m.printDim("thinking level set to " + arg)
-	case "compact":
-		return m.compactCommand(arg)
+	case "trim":
+		return m.trimCommand(arg)
 	case "ctx":
 		return m.printDim(coding.ContextLine(m.s.Model(), m.s.ContextStats()))
 	case "new":
@@ -102,28 +103,31 @@ func (m *model) command(line string) tea.Cmd {
 	return m.printErr(fmt.Errorf("unknown command /%s (try /help)", name))
 }
 
-// compactCommand trims tool output ahead of the next provider request. With no
-// argument it compacts as hard as it can; a byte budget compacts to that
-// ceiling instead. The transcript is never rewritten, so the marker line is
-// the only record of what the model stopped seeing.
-func (m *model) compactCommand(arg string) tea.Cmd {
+// trimCommand trims tool output ahead of the next provider request. With no
+// argument it trims as far as it can; a byte budget trims to that ceiling
+// instead. The transcript is never rewritten, so the marker line is the only
+// record of what the model stopped seeing.
+//
+// /compact is reserved for the agent-written summary, which is what the word
+// means everywhere else; this is the mechanical half of it.
+func (m *model) trimCommand(arg string) tea.Cmd {
 	budget := 0
 	if arg != "" {
 		n, err := strconv.Atoi(arg)
 		if err != nil || n < 0 {
-			return m.printErr(fmt.Errorf("usage: /compact [bytes]"))
+			return m.printErr(fmt.Errorf("usage: /trim [bytes]"))
 		}
 		budget = n
 	}
 	if !m.s.Compact(budget) {
 		c := m.s.Compaction()
-		return m.printDim(fmt.Sprintf("nothing to compact: %s of tool output, already within the limit",
+		return m.printDim(fmt.Sprintf("nothing to trim: %s of tool output, already within the limit",
 			bytesHuman(c.Before)))
 	}
 	if budget == 0 {
-		return m.printDim("compacting tool output before the next request (as far as possible)")
+		return m.printDim("trimming tool output before the next request (as far as possible)")
 	}
-	return m.printDim(fmt.Sprintf("compacting tool output above %s before the next request", bytesHuman(budget)))
+	return m.printDim(fmt.Sprintf("trimming tool output above %s before the next request", bytesHuman(budget)))
 }
 
 func (m *model) modelCommand(arg string) tea.Cmd {

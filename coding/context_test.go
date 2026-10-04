@@ -174,14 +174,14 @@ func TestCompactionDoesNotRewriteSavedSession(t *testing.T) {
 }
 
 func TestCompactionPreservesErrorsAndImagesAreCounted(t *testing.T) {
-	tooLarge := strings.Repeat("x", toolResultContextBudget+100)
+	tooLarge := strings.Repeat("x", defaultToolResultBudget+100)
 	errorResult := &agent.ToolResultMessage{
 		ToolCallID: "error", ToolName: "bash", IsError: true,
 		Content: []agent.Content{&agent.TextContent{Text: tooLarge}},
 	}
 	imageResult := &agent.ToolResultMessage{
 		ToolCallID: "image", ToolName: "read",
-		Content: []agent.Content{&agent.ImageContent{Data: strings.Repeat("A", toolResultContextBudget+100), MimeType: "image/png"}},
+		Content: []agent.Content{&agent.ImageContent{Data: strings.Repeat("A", defaultToolResultBudget+100), MimeType: "image/png"}},
 	}
 	errorMessages := []agent.Message{errorResult, &agent.ToolResultMessage{
 		ToolCallID: "recent", ToolName: "read", Content: []agent.Content{&agent.TextContent{Text: "recent"}},
@@ -212,12 +212,12 @@ func TestCompactionRetainsOversizedMostRecentResult(t *testing.T) {
 		ToolCallID: "old", ToolName: "read",
 		Content: []agent.Content{&agent.TextContent{Text: strings.Repeat("o", 1024)}},
 	}
-	recentText := strings.Repeat("r", toolResultContextBudget+100)
+	recentText := strings.Repeat("r", defaultToolResultBudget+100)
 	recent := &agent.ToolResultMessage{
 		ToolCallID: "recent", ToolName: "read",
 		Content: []agent.Content{&agent.TextContent{Text: recentText}},
 	}
-	compacted, n, _, _, _ := compactToolResults([]agent.Message{old, recent}, toolResultContextBudget)
+	compacted, n, _, _, _ := compactToolResults([]agent.Message{old, recent}, defaultToolResultBudget)
 	if n == 0 {
 		t.Fatal("older result should compact")
 	}

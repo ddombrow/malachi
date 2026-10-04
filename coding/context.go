@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	// toolResultContextBudget bounds tool-result payloads in the provider
+	// defaultToolResultBudget bounds tool-result payloads in the provider
 	// request only. It is not a model context window, and it does not shrink
-	// the saved transcript.
-	toolResultContextBudget = 64 * 1024
+	// the saved transcript. It is the ceiling until a provider has reported
+	// enough usage to derive a better one.
+	defaultToolResultBudget = 64 * 1024
 	maxLedgerRecords        = 32
 	maxLedgerBytes          = 8 * 1024
 	maxLedgerFieldBytes     = 240
@@ -91,6 +92,7 @@ type codingContextPreparer struct {
 	// marker, so a pass can report what it newly trimmed rather than what it
 	// re-applied.
 	trimmed  map[int]bool
+	budget   int  // derived ceiling in bytes, set from measured usage
 	override int  // ceiling for one request, set by forceBudget
 	force    bool // the override is pending
 }
@@ -153,15 +155,28 @@ func (c *codingContextPreparer) forceBudget(budget int) bool {
 	return true
 }
 
-// budgetLocked returns the ceiling for the next request, consuming a pending
-// override. Callers must hold c.mu.
+// budgetLocked returns the ceiling for the next request: a forced override if
+// one is pending, otherwise the derived ceiling. Callers must hold c.mu.
 func (c *codingContextPreparer) budgetLocked() int {
 	if c.force {
 		budget := c.override
 		c.force = false
 		return budget
 	}
-	return toolResultContextBudget
+	if c.budget > 0 {
+		return c.budget
+	}
+	return defaultToolResultBudget
+}
+
+// setBudget records the derived ceiling. The session recomputes it from each
+// provider response, so one writer keeps this off the request path.
+func (c *codingContextPreparer) setBudget(bytes int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if bytes > 0 {
+		c.budget = bytes
+	}
 }
 
 func (c *codingContextPreparer) update(messages []agent.Message) {

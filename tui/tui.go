@@ -506,6 +506,9 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 // the text doesn't sit flush against the edges.
 const statusPad = " "
 
+// gaugeWidth is how many cells the context gauge occupies in the status bar.
+const gaugeWidth = 8
+
 // Layout of the rows under the transcript viewport: a blank pad row, then
 // the two rules that bracket the input box, then the status bar. refresh()
 // gives the viewport whatever is left, so the view fills the terminal
@@ -588,7 +591,7 @@ func (m *model) statusLine() string {
 		}
 	}
 	if m.context > 0 {
-		parts = append(parts, "ctx "+tokens(m.context))
+		parts = append(parts, "ctx "+tokens(m.context)+m.contextGauge())
 	}
 	// Compaction trims what the provider sees without touching the transcript,
 	// so the bar is the only always-visible trace of it.
@@ -625,6 +628,34 @@ func (m *model) statusLine() string {
 	}
 	pad := max(0, avail-lipgloss.Width(left))
 	return m.r.st.status.Render(lead + left + strings.Repeat(" ", pad) + right + trail)
+}
+
+// contextGauge renders how much of the model's context window the last request
+// filled. It is empty when the provider has not said how big the window is, so
+// a provider without a configured contextWindow gets no misleading gauge. The
+// scale is linear: a bar that looks empty at 20k of a 128k window is telling
+// the truth, and the number beside it is the more precise half.
+func (m *model) contextGauge() string {
+	window := m.s.ContextWindow()
+	if window <= 0 || m.context <= 0 {
+		return ""
+	}
+	full := min(float64(m.context)/float64(window), 1)
+	return " " + renderGauge(full) + fmt.Sprintf(" %.0f%%", full*100)
+}
+
+// renderGauge draws a static filled bar. bubbles/progress would animate it and
+// bring a spring-physics dependency with it; nothing here ever animates, since
+// the gauge is re-rendered from the last request's usage on every update.
+func renderGauge(full float64) string {
+	filled := int(full*gaugeWidth + 0.5)
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > gaugeWidth {
+		filled = gaugeWidth
+	}
+	return strings.Repeat("▓", filled) + strings.Repeat("░", gaugeWidth-filled)
 }
 
 func tokens(n int64) string {

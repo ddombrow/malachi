@@ -318,7 +318,21 @@ func (s *Session) observeContext(e agent.Event) {
 	}
 	seq := s.compaction.get().Seq
 	s.ctxSampler.observe(m, s.preparer.toolBytes(), seq)
-	s.diag.LogContextSample(m.Model, s.ctxSampler.get())
+	stats := s.ctxSampler.get()
+	s.diag.LogContextSample(m.Model, stats)
+	// The ceiling follows the measurement: what the provider actually charged
+	// for, minus what was tool output, is what is left for tool output.
+	s.preparer.setBudget(s.toolOutputBudget(stats))
+}
+
+// ContextWindow is the provider's context window in tokens, defaulting
+// conservatively when the configuration does not say.
+func (s *Session) ContextWindow() int { return s.provider.ContextWindowTokens() }
+
+// toolOutputBudget derives the tool-output ceiling from the latest
+// measurement and the provider's window.
+func (s *Session) toolOutputBudget(c ContextStats) int {
+	return toolOutputBudgetBytes(s.ContextWindow(), int(c.InputTokens), int(c.ToolTokens()), c.Ratio)
 }
 
 // Compact asks for the next provider request to trim tool output harder than

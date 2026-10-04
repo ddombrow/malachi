@@ -423,15 +423,15 @@ func TestCompactionIsVisible(t *testing.T) {
 	}
 }
 
-func TestCompactCommandForcesNextRequest(t *testing.T) {
+func TestTrimCommandForcesNextRequest(t *testing.T) {
 	m := newTestModel(t)
-	// Nothing to compact yet: say so instead of arming a no-op.
-	m.command("/compact")
-	if out := ansi.Strip(m.tr.text(m.r)); !strings.Contains(out, "nothing to compact") {
+	// Nothing to trim yet: say so instead of arming a no-op.
+	m.command("/trim")
+	if out := ansi.Strip(m.tr.text(m.r)); !strings.Contains(out, "nothing to trim") {
 		t.Fatalf("want an honest nothing-to-compact line, got %q", out)
 	}
-	m.command("/compact 1024x")
-	if out := ansi.Strip(m.tr.text(m.r)); !strings.Contains(out, "usage: /compact") {
+	m.command("/trim 1024x")
+	if out := ansi.Strip(m.tr.text(m.r)); !strings.Contains(out, "usage: /trim") {
 		t.Errorf("bad argument should print usage, got %q", out)
 	}
 
@@ -448,10 +448,10 @@ func TestCompactCommandForcesNextRequest(t *testing.T) {
 		})
 	}
 	m.s.Harness.ReplaceMessages(history)
-	m.command("/compact")
+	m.command("/trim")
 	out := ansi.Strip(m.tr.text(m.r))
-	if !strings.Contains(out, "compacting tool output before the next request") {
-		t.Fatalf("want a pending-compaction line, got %q", out)
+	if !strings.Contains(out, "trimming tool output before the next request") {
+		t.Fatalf("want a pending-trim line, got %q", out)
 	}
 	if err := m.s.Prompt(context.Background(), "go on"); err != nil {
 		t.Fatal(err)
@@ -459,6 +459,63 @@ func TestCompactCommandForcesNextRequest(t *testing.T) {
 	m.Update(nil)
 	if out := ansi.Strip(m.tr.text(m.r)); !strings.Contains(out, "compacted") {
 		t.Errorf("forced pass should have compacted: %q", out)
+	}
+}
+
+func TestRenderGauge(t *testing.T) {
+	cases := []struct {
+		full  float64
+		cells string
+	}{
+		{0, "░░░░░░░░"},
+		{0.5, "▓▓▓▓░░░░"},
+		{1, "▓▓▓▓▓▓▓▓"},
+		{2, "▓▓▓▓▓▓▓▓"}, // clamped: a full window is still a full bar
+		{-1, "░░░░░░░░"},
+		{0.06, "░░░░░░░░"}, // 0.48 of a cell, rounds down
+		{0.07, "▓░░░░░░░"}, // 0.56 of a cell, rounds up
+	}
+	for _, c := range cases {
+		got := renderGauge(c.full)
+		if got != c.cells {
+			t.Errorf("renderGauge(%v) = %q, want %q", c.full, got, c.cells)
+		}
+		if n := len([]rune(got)); n != gaugeWidth {
+			t.Errorf("renderGauge(%v) is %d cells, want %d", c.full, n, gaugeWidth)
+		}
+	}
+}
+
+// The gauge tells you how close the last request came to the window, which is
+// what /compact is for. A provider that reports no usage gets no gauge rather
+// than a bar reading zero.
+func TestStatusBarShowsContextGauge(t *testing.T) {
+	m := newTestModel(t)
+	if strings.Contains(ansi.Strip(m.statusLine()), "░") {
+		t.Fatal("a session with no reported usage should show no gauge")
+	}
+
+	m.context = 64_000 // half of the default 128k window
+	st := ansi.Strip(m.statusLine())
+	if !strings.Contains(st, "ctx 64.0k") {
+		t.Fatalf("status bar lost the ctx figure: %q", st)
+	}
+	if !strings.Contains(st, "▓▓▓▓░░░░ 50%") {
+		t.Fatalf("status bar lost the gauge: %q", st)
+	}
+
+	// Over the window still reads as full rather than overflowing the bar.
+	m.context = 200_000
+	if !strings.Contains(ansi.Strip(m.statusLine()), "▓▓▓▓▓▓▓▓ 100%") {
+		t.Errorf("an over-full request should read 100%%: %q", ansi.Strip(m.statusLine()))
+	}
+
+	// It must not push the bar out of shape: the line still fits the terminal.
+	for _, w := range []int{40, 80, 120} {
+		m.width = w
+		if got := ansi.StringWidth(ansi.Strip(m.statusLine())); got != w {
+			t.Errorf("status bar is %d cells at width %d", got, w)
+		}
 	}
 }
 
