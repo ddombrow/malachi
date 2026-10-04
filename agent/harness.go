@@ -31,6 +31,7 @@ type HarnessConfig struct {
 	SessionID      string
 	BeforeToolCall BeforeToolCall
 	AfterToolCall  AfterToolCall
+	PrepareRequest RequestPreparer
 }
 
 // Listener receives every event of every run, synchronously and in order,
@@ -202,6 +203,7 @@ func (h *Harness) run(parent context.Context, prompts []Message) error {
 		GetFollowUpMessages: func() []Message { return h.drain(&h.followUp, cfg.QueueMode) },
 		BeforeToolCall:      cfg.BeforeToolCall,
 		AfterToolCall:       cfg.AfterToolCall,
+		PrepareRequest:      cfg.PrepareRequest,
 	}
 	Run(ctx, loopCfg, h.Messages(), prompts, h.dispatch)
 

@@ -183,12 +183,13 @@ func Open(opts Options) (*Session, error) {
 		sessionID = strings.TrimSuffix(filepath.Base(s.file.Path()), ".jsonl")
 	}
 	s.Harness = agent.NewHarness(agent.HarnessConfig{
-		Provider:      provider,
-		Model:         model,
-		System:        s.buildPrompt(tools),
-		Tools:         tools,
-		ThinkingLevel: s.thinking,
-		SessionID:     sessionID,
+		Provider:       provider,
+		Model:          model,
+		System:         s.buildPrompt(tools),
+		Tools:          tools,
+		ThinkingLevel:  s.thinking,
+		SessionID:      sessionID,
+		PrepareRequest: codingRequestPreparer(cwd),
 	}, state.Messages)
 
 	if s.file != nil {

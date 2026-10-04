@@ -15,6 +15,11 @@ type Request struct {
 	SessionID     string // routing / prompt-cache affinity hint; may be ignored
 }
 
+// RequestPreparer may derive a provider-specific context view before a request
+// is streamed. It receives a detached copy of the transcript; changes to the
+// request do not alter the harness history or persisted session.
+type RequestPreparer func(Request) Request
+
 // Provider streams one assistant response.
 //
 // Contract: the sequence always ends with exactly one *AssistantDone or
