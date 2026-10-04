@@ -108,7 +108,7 @@ func Run(ctx context.Context, cfg LoopConfig, history []Message, prompts []Messa
 			req := Request{
 				Model:         cfg.Model,
 				System:        cfg.System,
-				Messages:      cloneContextMessages(ProviderContext(messages)),
+				Messages:      ProviderContext(messages),
 				Tools:         cfg.Tools,
 				ThinkingLevel: cfg.ThinkingLevel,
 				SessionID:     cfg.SessionID,
@@ -225,111 +225,6 @@ func streamAssistant(ctx context.Context, cfg LoopConfig, req Request, emit func
 	}
 	emit(&MessageEndEvent{Message: final})
 	return final
-}
-
-func cloneContextMessages(messages []Message) []Message {
-	out := make([]Message, len(messages))
-	for i, message := range messages {
-		switch m := message.(type) {
-		case *UserMessage:
-			c := *m
-			c.Content = cloneUserContent(m.Content)
-			out[i] = &c
-		case *AssistantMessage:
-			c := m.Clone()
-			for _, call := range c.ToolCalls() {
-				call.Arguments = cloneContextValue(call.Arguments).(map[string]any)
-			}
-			out[i] = c
-		case *ToolResultMessage:
-			c := *m
-			c.Content = cloneContents(m.Content)
-			c.Details = cloneContextValue(m.Details)
-			c.AddedToolNames = append([]string(nil), m.AddedToolNames...)
-			out[i] = &c
-		case *BashExecutionMessage:
-			c := *m
-			if m.ExitCode != nil {
-				exitCode := *m.ExitCode
-				c.ExitCode = &exitCode
-			}
-			out[i] = &c
-		case *CustomMessage:
-			c := *m
-			c.Content = cloneUserContent(m.Content)
-			c.Details = cloneContextValue(m.Details)
-			out[i] = &c
-		case *BranchSummaryMessage:
-			c := *m
-			out[i] = &c
-		case *CompactionSummaryMessage:
-			c := *m
-			out[i] = &c
-		default:
-			out[i] = message
-		}
-	}
-	return out
-}
-
-func cloneUserContent(content UserContent) UserContent {
-	c := content
-	c.Blocks = cloneContents(content.Blocks)
-	return c
-}
-
-func cloneContents(contents []Content) []Content {
-	if contents == nil {
-		return nil
-	}
-	out := make([]Content, len(contents))
-	for i, content := range contents {
-		switch c := content.(type) {
-		case *TextContent:
-			copy := *c
-			out[i] = &copy
-		case *ThinkingContent:
-			copy := *c
-			out[i] = &copy
-		case *ImageContent:
-			copy := *c
-			out[i] = &copy
-		case *ToolCall:
-			copy := *c
-			copy.Arguments = cloneContextValue(c.Arguments).(map[string]any)
-			out[i] = &copy
-		default:
-			out[i] = content
-		}
-	}
-	return out
-}
-
-func cloneContextValue(value any) any {
-	switch v := value.(type) {
-	case map[string]any:
-		copy := make(map[string]any, len(v))
-		for key, value := range v {
-			copy[key] = cloneContextValue(value)
-		}
-		return copy
-	case []any:
-		copy := make([]any, len(v))
-		for i, value := range v {
-			copy[i] = cloneContextValue(value)
-		}
-		return copy
-	case []string:
-		return append([]string(nil), v...)
-	case map[string]string:
-		copy := make(map[string]string, len(v))
-		for key, value := range v {
-			copy[key] = value
-		}
-		return copy
-	default:
-		return value
-	}
 }
 
 func isOutputEvent(e AssistantEvent) bool {

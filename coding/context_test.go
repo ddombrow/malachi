@@ -2,6 +2,7 @@ package coding
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -55,6 +56,9 @@ func TestCodingRequestCompactsOldResultsWithoutChangingTranscript(t *testing.T) 
 	if !strings.Contains(oldInRequest.Text(), "compacted read tool output") {
 		t.Fatalf("old result should compact: %.100q", oldInRequest.Text())
 	}
+	if oldInRequest == oldResult {
+		t.Fatal("compaction should copy only the result being changed")
+	}
 	if recentInRequest.Text() != recentText {
 		t.Fatal("most recent result should remain intact")
 	}
@@ -77,6 +81,59 @@ func TestCodingRequestCompactsOldResultsWithoutChangingTranscript(t *testing.T) 
 	}
 	if !strings.Contains(ledger, `read "old.go"`) || !strings.Contains(ledger, `edit "new.go"`) {
 		t.Fatalf("ledger omitted tool facts: %q", ledger)
+	}
+}
+
+func TestCodingContextCacheReusesAppendOnlyPrefixAndInvalidatesReplacement(t *testing.T) {
+	cwd := t.TempDir()
+	call := &agent.ToolCall{ID: "first", Name: "read", Arguments: map[string]any{"path": "a.go"}}
+	assistant := agent.NewAssistantMessage("fake")
+	assistant.Content = []agent.Content{call}
+	result := &agent.ToolResultMessage{
+		ToolCallID: "first", ToolName: "read",
+		Content: []agent.Content{&agent.TextContent{Text: "one"}},
+		Details: map[string]any{"path": filepath.Join(cwd, "a.go")},
+	}
+	messages := []agent.Message{agent.NewUserText("start"), assistant, result}
+	cache := newCodingContextPreparer(cwd)
+	request := agent.Request{Messages: messages}
+	prepared := cache.prepare(request)
+	if prepared.Messages[1] != assistant || prepared.Messages[2] != result {
+		t.Fatal("unmodified history entries should be shared, not deep-copied")
+	}
+	firstTotal, firstRecords := cache.totalSize, len(cache.records)
+	cache.prepare(request)
+	if cache.totalSize != firstTotal || len(cache.results) != 1 || len(cache.records) != firstRecords {
+		t.Fatal("preparing the same prefix should reuse cached facts")
+	}
+
+	call2 := &agent.ToolCall{ID: "second", Name: "write", Arguments: map[string]any{"path": "b.go"}}
+	assistant2 := agent.NewAssistantMessage("fake")
+	assistant2.Content = []agent.Content{call2}
+	result2 := &agent.ToolResultMessage{
+		ToolCallID: "second", ToolName: "write",
+		Content: []agent.Content{&agent.TextContent{Text: "two-two"}},
+		Details: map[string]any{"path": filepath.Join(cwd, "b.go")},
+	}
+	appended := append(append([]agent.Message(nil), messages...), assistant2, result2)
+	cache.prepare(agent.Request{Messages: appended})
+	if len(cache.results) != 2 || cache.totalSize != firstTotal+len("two-two") || len(cache.records) != 2 {
+		t.Fatal("cache should process only newly appended messages")
+	}
+
+	replacementCall := &agent.ToolCall{ID: "replacement", Name: "edit", Arguments: map[string]any{"path": "c.go"}}
+	replacementAssistant := agent.NewAssistantMessage("fake")
+	replacementAssistant.Content = []agent.Content{replacementCall}
+	replacementResult := &agent.ToolResultMessage{
+		ToolCallID: "replacement", ToolName: "edit",
+		Content: []agent.Content{&agent.TextContent{Text: "replacement-result"}},
+		Details: map[string]any{"path": filepath.Join(cwd, "c.go")},
+	}
+	replaced := []agent.Message{agent.NewUserText("new history"), replacementAssistant, replacementResult}
+	cache.prepare(agent.Request{Messages: replaced})
+	if len(cache.results) != 1 || cache.totalSize != len("replacement-result") || len(cache.records) != 1 ||
+		!strings.Contains(cache.records[0], `edit "c.go"`) {
+		t.Fatal("cache should rebuild when the transcript prefix is replaced")
 	}
 }
 
@@ -182,7 +239,9 @@ func TestCodingLedgerIsBoundedAndDeterministic(t *testing.T) {
 		Details: map[string]any{"command": "go test ./...", "exit_code": 1},
 	}
 	messages := []agent.Message{assistant, result}
-	first, second := codingLedger(messages, cwd), codingLedger(messages, cwd)
+	cache := newCodingContextPreparer(cwd)
+	cache.update(messages)
+	first, second := ledgerText(cache.records), ledgerText(cache.records)
 	if first == "" || first != second || len(first) > maxLedgerBytes {
 		t.Fatalf("ledger should be deterministic and bounded: len=%d", len(first))
 	}

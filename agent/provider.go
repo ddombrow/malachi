@@ -16,8 +16,9 @@ type Request struct {
 }
 
 // RequestPreparer may derive a provider-specific context view before a request
-// is streamed. It receives a detached copy of the transcript; changes to the
-// request do not alter the harness history or persisted session.
+// is streamed. Messages is a detached slice with immutable message values
+// shared with the transcript. A preparer must copy-on-write any message it
+// changes; it must not mutate shared message values, content blocks, or tools.
 type RequestPreparer func(Request) Request
 
 // Provider streams one assistant response.
