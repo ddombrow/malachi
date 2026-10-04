@@ -251,3 +251,84 @@ func TestContextLineWarnsWhenTheWindowIsWrong(t *testing.T) {
 		t.Error("an unmeasured session should not warn")
 	}
 }
+
+// Resuming a long session must not leave the context blank until the first
+// reply: the size is knowable locally, and the gauge that exists to warn about
+// it is the thing that was missing.
+func TestResumedSessionIsSizedBeforeAnyRequest(t *testing.T) {
+	s := summarizeFixture(t, fake.Text("unused"))
+	s.estimateContext()
+
+	stats := s.ContextStats()
+	if stats.Samples != 0 {
+		t.Fatalf("no request has been sent, but %d were measured", stats.Samples)
+	}
+	if !stats.PromptEstimated() {
+		t.Fatal("a resumed session should report an estimate before any measurement")
+	}
+	if stats.EffectivePrompt() != stats.EstimatedPrompt {
+		t.Errorf("effective prompt %d should be the estimate %d while nothing is measured",
+			stats.EffectivePrompt(), stats.EstimatedPrompt)
+	}
+	if stats.EstimatedPrompt <= 0 {
+		t.Fatal("the estimate is empty; a conversation and a system prompt were loaded")
+	}
+}
+
+// The first real usage replaces the estimate. Averaging them, or letting the
+// estimate stand, would misreport what the provider charged for.
+func TestMeasurementSupersedesTheEstimate(t *testing.T) {
+	sm := newCtxSampler()
+	sm.estimate(90_000, 0)
+
+	sm.observe(assistant(12_000), 0, 0)
+
+	st := sm.get()
+	if st.Samples != 1 {
+		t.Fatalf("samples = %d, want 1", st.Samples)
+	}
+	if st.PromptEstimated() {
+		t.Error("the estimate should not be presented as the context once usage is known")
+	}
+	if st.EffectivePrompt() != 12_000 {
+		t.Errorf("effective prompt = %d, want the measured 12000", st.EffectivePrompt())
+	}
+}
+
+// Both figures are estimates, so the readout must say which, on every line that
+// carries a number.
+func TestContextLineBeforeAnyRequestSaysItIsAnEstimate(t *testing.T) {
+	line := ContextLine("test/model", ContextStats{Window: 128_000, EstimatedPrompt: 90_000})
+	if strings.Contains(line, "no usage reported") {
+		t.Errorf("an estimated session has a figure to report: %q", line)
+	}
+	if !strings.Contains(line, "estimated") || !strings.Contains(line, "≈") {
+		t.Errorf("the readout should mark the figure as an estimate: %q", line)
+	}
+	if !strings.Contains(line, "0 measured") {
+		t.Errorf("the readout should be clear nothing was measured: %q", line)
+	}
+}
+
+// An estimate past the window is worth warning about before the request that
+// would be rejected.
+func TestContextLineWarnsWhenEstimatedPastWindow(t *testing.T) {
+	line := ContextLine("test/model", ContextStats{Window: 128_000, EstimatedPrompt: 200_000})
+	if !strings.Contains(line, "compact before sending") {
+		t.Errorf("an over-window estimate should advise compacting: %q", line)
+	}
+}
+
+// The estimate has to track the conversation: doubling the messages cannot
+// leave the figure unchanged.
+func TestEstimateGrowsWithTheConversation(t *testing.T) {
+	s := summarizeFixture(t, fake.Text("unused"))
+	before, _ := estimatePromptTokens(s.system, s.tools, s.Harness.Messages(), 0)
+
+	doubled := append(s.Harness.Messages(), s.Harness.Messages()...)
+	after, _ := estimatePromptTokens(s.system, s.tools, doubled, 0)
+
+	if after <= before {
+		t.Errorf("doubling the conversation did not grow the estimate: %d then %d", before, after)
+	}
+}

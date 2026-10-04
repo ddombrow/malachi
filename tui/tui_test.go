@@ -488,21 +488,26 @@ func TestRenderGauge(t *testing.T) {
 }
 
 // The gauge tells you how close the last request came to the window, which is
-// what /compact is for. A provider that reports no usage gets no gauge rather
-// than a bar reading zero.
+// what /compact is for. Before anything has been sent it shows a local estimate,
+// marked so it cannot be mistaken for one the provider reported.
 func TestStatusBarShowsContextGauge(t *testing.T) {
 	m := newTestModel(t)
-	if strings.Contains(ansi.Strip(m.statusLine()), "░") {
-		t.Fatal("a session with no reported usage should show no gauge")
+	if st := ansi.Strip(m.statusLine()); !strings.Contains(st, "ctx ≈") {
+		t.Fatalf("a resumed session should be sized before the first request: %q", st)
 	}
 
-	m.context = 64_000 // half of the default 128k window
+	m.context, m.contextEstimated = 64_000, false // half of the default 128k window
 	st := ansi.Strip(m.statusLine())
 	if !strings.Contains(st, "ctx 64.0k") {
 		t.Fatalf("status bar lost the ctx figure: %q", st)
 	}
 	if !strings.Contains(st, "▓▓▓▓░░░░ 50%") {
 		t.Fatalf("status bar lost the gauge: %q", st)
+	}
+
+	// A reported request supersedes the estimate, and the sign goes away.
+	if strings.Contains(st, "≈") {
+		t.Errorf("a measured context should not be marked as an estimate: %q", st)
 	}
 
 	// Over the window still reads as full rather than overflowing the bar.

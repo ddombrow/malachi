@@ -59,10 +59,31 @@ type ContextStats struct {
 	Ratio        float64 // measured tokens per byte of tool output; 0 until known
 	Ratios       int     // how many deltas the ratio is based on
 	LimitErrors  int     // requests rejected for exceeding the context window
+	// EstimatedPrompt sizes the conversation as it stands, without a request
+	// having been sent. A resumed session knows it is already large before the
+	// provider has confirmed anything, and a blank gauge until the first reply
+	// hides exactly the situation the gauge exists to warn about. It is held
+	// apart from PromptTokens so an estimate can never be read as a
+	// measurement.
+	EstimatedPrompt   int64
+	EstimatedToolByte int
 	// Window is the context window the session is configured against, filled
 	// in by the session so a readout can catch it being wrong.
 	Window int
 }
+
+// EffectivePrompt is the context figure to show: what the provider charged for
+// once it has said, and the local estimate before that.
+func (c ContextStats) EffectivePrompt() int64 {
+	if c.Samples > 0 {
+		return c.PromptTokens
+	}
+	return c.EstimatedPrompt
+}
+
+// PromptEstimated reports that EffectivePrompt is a local estimate, so a
+// readout can say so rather than implying the provider agreed.
+func (c ContextStats) PromptEstimated() bool { return c.Samples == 0 && c.EstimatedPrompt > 0 }
 
 // ToolTokens is the tool output in the last request, converted with the
 // measured ratio. Before anything has been measured it falls back to a
@@ -141,10 +162,50 @@ func (sm *ctxSampler) observe(m *agent.AssistantMessage, toolBytes int, compacti
 	}
 }
 
+// estimate records a locally sized request. It never touches Samples or any
+// measured field, so the first real usage replaces it rather than averaging
+// with it.
+func (sm *ctxSampler) estimate(prompt, toolBytes int64) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.stats.EstimatedPrompt, sm.stats.EstimatedToolByte = prompt, int(toolBytes)
+}
+
 func (sm *ctxSampler) get() ContextStats {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	return sm.stats
+}
+
+// estimatedContextLine is the readout before anything has been sent. A resumed
+// session has a size whether or not the provider has confirmed one, and the
+// estimate is labelled as an estimate on every line so it is never mistaken
+// for a measurement.
+func estimatedContextLine(model string, c ContextStats) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "context: %s\n  last request   none sent yet in this session", model)
+	fmt.Fprintf(&b, "\n  estimated      ≈ %s of context, %s of it tool output",
+		tokenCount(c.EstimatedPrompt), byteCount(c.EstimatedToolByte))
+	if c.EstimatedToolByte > 0 {
+		share := 0.0
+		if c.EstimatedPrompt > 0 {
+			share = float64(c.EstimatedToolByte) / float64(c.EstimatedPrompt)
+		}
+		fmt.Fprintf(&b, " (%.0f%%)", share*100)
+	}
+	if c.Ratio > 0 {
+		fmt.Fprintf(&b, "\n  conversion     %.2f tokens per byte, the measured rate",
+			c.Ratio)
+	} else {
+		fmt.Fprintf(&b, "\n  conversion     %.1f chars per token, a guess until a request has been measured",
+			fallbackCharsPerToken)
+	}
+	if c.Window > 0 && c.EstimatedPrompt > int64(c.Window) {
+		fmt.Fprintf(&b, "\n  window         ESTIMATED AT %s OF A %s WINDOW — compact before sending",
+			tokenCount(c.EstimatedPrompt), tokenCount(int64(c.Window)))
+	}
+	fmt.Fprintf(&b, "\n  requests       0 measured")
+	return b.String()
 }
 
 // contextLimitPhrases are how providers say "your request was too big". This is
@@ -262,7 +323,10 @@ func exceedsConfiguredWindow(c ContextStats) bool {
 // ContextLine renders the measurement for /ctx in the TUI's plain style.
 func ContextLine(model string, c ContextStats) string {
 	if c.Samples == 0 {
-		return "no usage reported yet — this provider does not send token counts"
+		if !c.PromptEstimated() {
+			return "no usage reported yet — this provider does not send token counts"
+		}
+		return estimatedContextLine(model, c)
 	}
 	var b strings.Builder
 	peak := ""
@@ -319,4 +383,37 @@ func byteCount(n int) string {
 		return fmt.Sprintf("%.1f kB", float64(n)/(1<<10))
 	}
 	return fmt.Sprintf("%d B", n)
+}
+
+// estimatePromptTokens sizes a request that has not been sent. Everything the
+// wire would carry is counted — system prompt, tool definitions, conversation —
+// and converted with the measured tokens-per-byte once one exists, falling back
+// to a documented guess before that.
+//
+// It is deliberately the same accounting the provider uses on the measured side:
+// the request as JSON, not the visible text. Guessing from rendered characters
+// would systematically undercount, because escaped quotes and tool-result
+// framing are most of what makes a large tool result large.
+func estimatePromptTokens(system string, tools []*agent.Tool, messages []agent.Message, ratio float64) (prompt int64, toolBytes int64) {
+	var total, tool int
+	count := func(raw []byte) { total += len(raw) }
+	count([]byte(system))
+	if raw, err := json.Marshal(tools); err == nil {
+		total += len(raw)
+	}
+	for _, m := range messages {
+		raw, err := json.Marshal(m)
+		if err != nil {
+			continue
+		}
+		total += len(raw)
+		if _, isTool := m.(*agent.ToolResultMessage); isTool {
+			tool += len(raw)
+		}
+	}
+	perToken := ratio
+	if perToken <= 0 {
+		perToken = 1 / fallbackCharsPerToken
+	}
+	return int64(float64(total) * perToken), int64(float64(tool) * perToken)
 }

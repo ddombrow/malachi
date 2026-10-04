@@ -287,6 +287,11 @@ func (m *model) reopen(resume string) tea.Cmd {
 	m.s = next
 	m.bridge = newBridge(next)
 	m.usage, m.context, m.last = agent.Usage{}, 0, nil
+	if st := next.ContextStats(); st.PromptEstimated() {
+		m.context, m.contextEstimated = st.EffectivePrompt(), true
+	} else {
+		m.contextEstimated = false
+	}
 	m.toolArgs = map[string]map[string]any{}
 
 	m.showSession(next)

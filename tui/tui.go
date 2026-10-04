@@ -120,6 +120,9 @@ type model struct {
 	// compactionSeq is the last compaction counter rendered as a transcript
 	// marker; a newer one means a request pass replaced tool output.
 	compactionSeq uint64
+	// contextEstimated marks the gauge as sized locally rather than reported by
+	// the provider, so it is drawn with a sign that says so.
+	contextEstimated bool
 	// phase is the current /compact step, empty when idle; phaseCh carries
 	// progress from the summarisation running off the UI goroutine.
 	phase       string
@@ -180,6 +183,11 @@ func newModel(s *coding.Session, initialPrompt string) *model {
 		isDark:   true,
 		toolArgs: map[string]map[string]any{},
 		initial:  initialPrompt,
+	}
+	// A resumed session knows its own size before anything has been sent, so
+	// the gauge starts filled rather than blank.
+	if st := m.s.ContextStats(); st.PromptEstimated() {
+		m.context, m.contextEstimated = st.EffectivePrompt(), true
 	}
 	m.r = newRenderer(m.width, m.isDark, m.s.Settings().Icons, m.s.Cwd())
 	m.applyInputStyles()
@@ -333,12 +341,22 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		// A resumed session knows its own size before anything has been sent, so
+		// the gauge starts filled rather than blank.
+		if st := m.s.ContextStats(); st.PromptEstimated() {
+			m.context, m.contextEstimated = st.EffectivePrompt(), true
+		}
 		m.r = newRenderer(m.width, m.isDark, m.s.Settings().Icons, m.s.Cwd())
 		m.applyInputStyles()
 		return nil
 
 	case tea.BackgroundColorMsg:
 		m.isDark = msg.IsDark()
+		// A resumed session knows its own size before anything has been sent, so
+		// the gauge starts filled rather than blank.
+		if st := m.s.ContextStats(); st.PromptEstimated() {
+			m.context, m.contextEstimated = st.EffectivePrompt(), true
+		}
 		m.r = newRenderer(m.width, m.isDark, m.s.Settings().Icons, m.s.Cwd())
 		m.applyInputStyles()
 		return nil
@@ -527,7 +545,7 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 			}
 			m.usage = m.usage.Add(msg.Usage)
 			if t := msg.Usage.PromptTokens(); t > 0 {
-				m.context = t
+				m.context, m.contextEstimated = t, false
 			}
 			for _, c := range msg.ToolCalls() {
 				m.toolArgs[c.ID] = c.Arguments
@@ -681,7 +699,11 @@ func (m *model) statusLine() string {
 		}
 	}
 	if m.context > 0 {
-		parts = append(parts, "ctx "+tokens(m.context)+m.contextGauge())
+		sign := ""
+		if m.contextEstimated {
+			sign = "≈"
+		}
+		parts = append(parts, "ctx "+sign+tokens(m.context)+m.contextGauge())
 	}
 	// Compaction trims what the provider sees without touching the transcript,
 	// so the bar is the only always-visible trace of it.

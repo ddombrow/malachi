@@ -194,6 +194,9 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 	// reported figures no longer describe anything.
 	s.preparer.reset()
 	s.compaction.reset()
+	// The gauge would otherwise keep showing the size of a conversation that no
+	// longer exists, right up until the next reply.
+	s.estimateContext()
 	s.diag.LogCompaction(summary, result.Replaced, result.Kept, usage)
 	return result, nil
 }

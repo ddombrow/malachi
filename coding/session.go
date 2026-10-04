@@ -60,6 +60,10 @@ type Session struct {
 	compaction *compactionLog
 	preparer   *codingContextPreparer
 	ctxSampler *ctxSampler
+	// system and tools are kept so a request can be sized locally, without
+	// sending one, before the provider has reported any usage.
+	system string
+	tools  []*agent.Tool
 	// persisted maps messages to the session entries they were written as, so
 	// a compaction can record where its retained tail begins.
 	persisted []persistedMessage
@@ -207,11 +211,12 @@ func Open(opts Options) (*Session, error) {
 	s.compaction = &compactionLog{}
 	s.preparer = newCodingContextPreparer(cwd, s.compaction)
 	s.runtime = provider
+	s.system, s.tools = s.buildPrompt(tools), tools
 	s.Harness = agent.NewHarness(agent.HarnessConfig{
 		Provider:       provider,
 		Model:          model,
-		System:         s.buildPrompt(tools),
-		Tools:          tools,
+		System:         s.system,
+		Tools:          s.tools,
 		ThinkingLevel:  s.thinking,
 		SessionID:      sessionID,
 		PrepareRequest: s.preparer.prepare,
@@ -243,6 +248,10 @@ func Open(opts Options) (*Session, error) {
 	// preparer's byte count belongs to the request the usage describes.
 	s.ctxSampler = newCtxSampler()
 	s.Harness.Subscribe(s.observeContext)
+	// A resumed session is already large, and the gauge that exists to say so
+	// used to stay blank until the first reply arrived. Size it locally now,
+	// once the sampler it feeds exists.
+	s.estimateContext()
 	return s, nil
 }
 
@@ -377,6 +386,14 @@ func (s *Session) observeContext(e agent.Event) {
 	// The ceiling follows the measurement: what the provider actually charged
 	// for, minus what was tool output, is what is left for tool output.
 	s.preparer.setBudget(s.toolOutputBudget(stats))
+}
+
+// estimateContext sizes the conversation without asking the provider. The
+// measurement replaces it as soon as there is one.
+func (s *Session) estimateContext() {
+	prompt, toolBytes := estimatePromptTokens(s.system, s.tools, s.Harness.Messages(), s.ctxSampler.get().Ratio)
+	s.ctxSampler.estimate(prompt, toolBytes)
+	s.diag.LogContextEstimate(prompt, toolBytes)
 }
 
 // ContextWindow is the provider's context window in tokens, defaulting

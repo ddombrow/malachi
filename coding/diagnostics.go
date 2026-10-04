@@ -164,6 +164,15 @@ func (d *Diagnostics) LogContextSample(model string, c ContextStats) {
 	d.record("ctx_sample", fields)
 }
 
+// LogContextEstimate records a locally sized request, so a gauge that was
+// showing an estimate can be told apart from one showing a measurement.
+func (d *Diagnostics) LogContextEstimate(promptTokens, toolBytes int64) {
+	d.record("ctx_estimate", map[string]any{
+		"promptTokens": promptTokens,
+		"toolBytes":    toolBytes,
+	})
+}
+
 func (d *Diagnostics) record(kind string, fields map[string]any) {
 	if d == nil {
 		return
