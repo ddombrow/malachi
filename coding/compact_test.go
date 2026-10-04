@@ -2,12 +2,16 @@ package coding
 
 import (
 	"context"
+	"fmt"
 	"iter"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/agent/session"
+	"github.com/ddombrow/malachi/ai"
 	"github.com/ddombrow/malachi/ai/fake"
 )
 
@@ -66,7 +70,7 @@ func TestSummarizeReplacesPrefixKeepsTail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(phases) < 4 || phases[0] != "reading" || phases[len(phases)-1] != "writing" {
+	if len(phases) < 4 || !strings.HasPrefix(phases[0], "reading ") || phases[len(phases)-1] != "writing" {
 		t.Errorf("phases should name each step, got %v", phases)
 	}
 
@@ -348,4 +352,57 @@ type recordingProvider struct {
 func (p recordingProvider) Stream(ctx context.Context, req agent.Request) iter.Seq[agent.AssistantEvent] {
 	*p.seen = append(*p.seen, req)
 	return p.inner.Stream(ctx, req)
+}
+
+// A long summary has to be visibly alive, or it is indistinguishable from a
+// hang: the only repaint a phase gets is a phase message.
+func TestSummarizeReportsCharactersAsTheyArrive(t *testing.T) {
+	// Unthrottled: the fake answers instantly, so the real interval would
+	// collapse every delta into the first report.
+	defer func(d time.Duration) { compactProgressInterval = d }(compactProgressInterval)
+	compactProgressInterval = 0
+
+	// Three deltas, because a single one cannot show the count advancing.
+	s := summarizeFixture(t, func(_ context.Context, _ agent.Request, b *ai.Builder) {
+		for range 3 {
+			b.Text(strings.Repeat("word ", 100))
+		}
+		b.Done(agent.StopStop)
+	})
+
+	var phases []string
+	if _, err := s.Summarize(context.Background(), "", func(p string) { phases = append(phases, p) }); err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+
+	var counts []float64
+	for _, p := range phases {
+		if !strings.HasPrefix(p, "summarizing ") {
+			continue
+		}
+		var v float64
+		var unit string
+		text := strings.TrimPrefix(p, "summarizing ")
+		if _, err := fmt.Sscanf(text, "%f %s", &v, &unit); err != nil {
+			t.Fatalf("unreadable count %q: %v", text, err)
+		}
+		switch unit {
+		case "B":
+		case "kB":
+			v *= 1 << 10
+		case "MB":
+			v *= 1 << 20
+		default:
+			t.Fatalf("unexpected unit in %q", text)
+		}
+		counts = append(counts, v)
+	}
+	if len(counts) == 0 {
+		t.Fatalf("no character counts reported, phases were %v", phases)
+	}
+	// It has to rise, or the display is a spinner after all: a number that
+	// never moves tells the user nothing a static label would not.
+	if !slices.IsSorted(counts) || counts[0] == counts[len(counts)-1] {
+		t.Errorf("character counts did not advance: %v", counts)
+	}
 }

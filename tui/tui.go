@@ -122,12 +122,13 @@ type model struct {
 	compactionSeq uint64
 	// phase is the current /compact step, empty when idle; phaseCh carries
 	// progress from the summarisation running off the UI goroutine.
-	phase        string
-	phasePercent float64
-	phaseCh      <-chan string
-	cancelPhase  context.CancelFunc
-	quitting     bool
-	initial      string
+	phase       string
+	compacting  bool
+	phaseStart  time.Time
+	phaseCh     <-chan string
+	cancelPhase context.CancelFunc
+	quitting    bool
+	initial     string
 }
 
 // Run starts the interactive UI. initialPrompt, if non-empty, is sent first.
@@ -257,7 +258,8 @@ type compactDoneMsg struct {
 
 // clearPhase returns the live area to idle after a summarisation.
 func (m *model) clearPhase() {
-	m.phase, m.phasePercent, m.phaseCh, m.cancelPhase = "", 0, nil, nil
+	m.phase, m.phaseCh, m.cancelPhase = "", nil, nil
+	m.compacting = false
 }
 
 func (m *model) noteCompaction() {
@@ -364,11 +366,24 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		return m.submit(msg.text)
 
 	case compactPhaseMsg:
-		// Only "summarizing" has measurable progress, and even that is an
-		// estimate; the other steps report what they are doing instead.
+		// A phase message can still be in flight when the compaction finishes:
+		// the summarising goroutine sends done while waitForPhase is still
+		// draining the channel, so done can be handled first and this arrives
+		// after the line was cleared, which would leave it stuck on screen for
+		// the rest of the session. Anything arriving once the run is over is
+		// stale.
+		if !m.compacting {
+			return nil
+		}
 		m.phase = string(msg)
-		m.phasePercent = 0
 		return waitForPhase(m.phaseCh)
+
+	case compactTickMsg:
+		// One chain, re-armed only by its own message, so it cannot multiply.
+		if m.compacting {
+			return compactTick()
+		}
+		return nil
 
 	case compactDoneMsg:
 		m.clearPhase()
@@ -630,16 +645,26 @@ func (m *model) live() string {
 	if m.running && m.partial == nil && len(m.tools) == 0 {
 		b.WriteString(item(m.r.st.toolRun.Render(m.spin.View()) + m.r.st.dim.Render("  working…")))
 	}
-	// Summarising is its own phase, with the step named: only the streaming
-	// step has measurable progress, so the rest say what they are doing rather
-	// than showing a bar that would be a guess.
+	// Summarising is its own phase, with the step named. No progress bar: a
+	// summary has no length to be a fraction of, so a bar would either animate
+	// without meaning or claim a total nobody knows. The streaming step instead
+	// reports the characters received so far, which is real and moves only when
+	// the model does. A bare step is still to come; one carrying a measurement
+	// is under way.
 	if m.phase != "" {
-		label := m.r.st.dim.Render("compact · " + m.phase + "…")
-		if m.phasePercent > 0 {
-			label = m.r.st.dim.Render(fmt.Sprintf("compact · %s %s %.0f%%",
-				m.phase, renderGauge(m.phasePercent), m.phasePercent*100))
+		label := "compact · " + m.phase
+		// A bare step is still to come; one carrying a number is under way.
+		if !strings.Contains(m.phase, " ") {
+			label += "…"
 		}
-		b.WriteString(item(m.r.st.toolRun.Render(m.spin.View()) + " " + label))
+		// Elapsed time is what separates "the model is thinking" from "this is
+		// wedged" when the character count has stopped moving.
+		if m.compacting {
+			if secs := int(time.Since(m.phaseStart).Seconds()); secs >= 1 {
+				label += fmt.Sprintf(" · %ds", secs)
+			}
+		}
+		b.WriteString(item(m.r.st.toolRun.Render(m.spin.View()) + " " + m.r.st.dim.Render(label)))
 	}
 	return b.String()
 }

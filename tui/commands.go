@@ -124,6 +124,8 @@ func (m *model) compactCommand(arg string) tea.Cmd {
 	// The run context belongs to the harness; a summarisation gets its own so esc can
 	// stop it without touching an agent run.
 	ctx, cancel := context.WithCancel(context.Background())
+	m.compacting = true
+	m.phaseStart = time.Now()
 	m.phaseCh, m.cancelPhase = phases, cancel
 	return tea.Batch(func() tea.Msg {
 		defer close(phases)
@@ -137,7 +139,21 @@ func (m *model) compactCommand(arg string) tea.Cmd {
 			return compactDoneMsg{err: context.Canceled}
 		}
 		return compactDoneMsg{result: res, err: err}
-	}, waitForPhase(phases))
+	}, waitForPhase(phases), compactTick())
+}
+
+// compactTickMsg repaints the compaction line while a summarisation runs.
+type compactTickMsg struct{}
+
+// compactTick is a single self-rearming ticker, started with the compaction and
+// stopped by the next tick after it ends. It exists so the line moves even when
+// the model is silent: a counter frozen for a minute and a frozen frame look
+// identical without it.
+func compactTick() tea.Cmd {
+	return func() tea.Msg {
+		time.Sleep(250 * time.Millisecond)
+		return compactTickMsg{}
+	}
 }
 
 // waitForPhase re-reads the summarisation's progress channel. Each return is

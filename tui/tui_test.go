@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -551,14 +552,20 @@ func TestContextGaugeMarksAnOverWindowPrompt(t *testing.T) {
 func TestCompactShowsPhasesAndTheSummary(t *testing.T) {
 	m := newTestModel(t)
 
+	m.compacting, m.phaseStart = true, time.Now()
 	m.phase = "summarizing"
 	if live := ansi.Strip(m.live()); !strings.Contains(live, "compact · summarizing") {
 		t.Errorf("live area should name the step: %q", live)
 	}
-	// The gauge only appears for a step with real progress; none is claimed
-	// here, so none is drawn.
+	// No bar is ever drawn for a compaction: a summary has no length to be a
+	// fraction of, so a bar would be a guess with a denominator attached.
 	if strings.Contains(ansi.Strip(m.live()), "░") {
-		t.Errorf("an unmeasurable step should not draw a bar: %q", ansi.Strip(m.live()))
+		t.Errorf("compaction should not draw a bar: %q", ansi.Strip(m.live()))
+	}
+	// A step carrying a count reports it; a bare step says it is still to come.
+	m.phase = "summarizing 3.1 kB"
+	if live := ansi.Strip(m.live()); !strings.Contains(live, "summarizing 3.1 kB") {
+		t.Errorf("live area should carry the count: %q", live)
 	}
 
 	m.compactSummary(&coding.SummarizeResult{
@@ -582,5 +589,29 @@ func TestCompactShowsPhasesAndTheSummary(t *testing.T) {
 	m.clearPhase()
 	if m.phase != "" {
 		t.Error("clearPhase should leave the live area idle")
+	}
+}
+
+// A phase message can arrive after the compaction has finished: the summarising
+// goroutine sends done while the reader is still draining the channel, so done
+// can be handled first. Honouring the straggler puts the line back with nothing
+// left to clear it, and it stays for the rest of the session.
+func TestPhaseAfterCompletionIsIgnored(t *testing.T) {
+	m := newTestModel(t)
+	m.compacting, m.phaseStart = true, time.Now()
+	m.phase, m.phaseCh = "writing", make(chan string)
+
+	if _, cmd := m.Update(compactDoneMsg{err: context.Canceled}); cmd != nil {
+		t.Fatal("finishing a compaction should not command anything")
+	}
+	if live := ansi.Strip(m.live()); strings.Contains(live, "compact") {
+		t.Errorf("the compaction line should be gone once it has finished: %q", live)
+	}
+
+	if _, cmd := m.Update(compactPhaseMsg("writing")); cmd != nil {
+		t.Error("a stale phase message should not re-arm the reader")
+	}
+	if live := ansi.Strip(m.live()); strings.Contains(live, "compact") {
+		t.Fatalf("a phase arriving after completion came back: %q", live)
 	}
 }

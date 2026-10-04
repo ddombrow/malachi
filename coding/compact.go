@@ -24,11 +24,18 @@ import (
 // Port of tau's /compact: CompactionPlan, _generate_compaction_summary and
 // the CompactionStart/CompactionEnd events.
 
+// compactProgressInterval throttles the received-bytes readout. Fast enough to
+// look alive, slow enough that a chatty stream cannot flood the TUI's one-slot
+// phase channel. It is a variable only so a test can watch the unthrottled
+// stream of updates.
+var compactProgressInterval = 500 * time.Millisecond
+
 const (
 	// compactKeepMessages is how much of the tail is retained verbatim. Enough
 	// for the current exchange to be coherent, since a summary describes the
 	// past and the tail is what the agent is in the middle of.
 	compactKeepMessages = 20
+
 	// minSummaryBytes rejects an empty or truncated summary. A summary shorter
 	// than this has almost certainly lost the conversation.
 	minSummaryBytes = 240
@@ -111,14 +118,15 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 			phases(phase)
 		}
 	}
-	report("reading")
-
 	messages := s.Harness.Messages()
 	keepFrom, err := compactBoundary(messages)
 	if err != nil {
 		return nil, err
 	}
 	prefix, tail := messages[:keepFrom], messages[keepFrom:]
+	// The one phase with a real denominator: the work is known before it
+	// starts, so say what is being folded rather than just naming the step.
+	report(fmt.Sprintf("reading %d messages", len(prefix)))
 	previous := ""
 	if len(messages) > 0 {
 		// A second compaction folds the previous summary in rather than
@@ -131,8 +139,24 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 	stats := s.ctxSampler.get()
 	body := fmt.Sprintf(summarizationBody, previousSection(previous), transcriptJSON(prefix))
 
+	// A summary of a long conversation takes minutes, and the phases either
+	// side of it are instantaneous. Reporting the bytes received so far gives
+	// the only honest answer to "is it stuck?": a number that stops moving is
+	// a model that stopped talking, and a number that moves is not. It is not
+	// a percentage, because a summary has no length it must reach.
+	var received, lastReport int
+	var reportedAt time.Time
+	progress := func(n int) {
+		received = n
+		now := time.Now()
+		if n != lastReport && (lastReport == 0 || now.Sub(reportedAt) >= compactProgressInterval) {
+			lastReport, reportedAt = n, now
+			report(fmt.Sprintf("summarizing %s", byteCount(received)))
+		}
+	}
+
 	report("summarizing")
-	summary, usage, err := s.summarizeOnce(ctx, s.runtime, body, instructions, previous != "")
+	summary, usage, err := s.summarizeOnce(ctx, s.runtime, body, instructions, previous != "", progress)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +199,9 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 }
 
 // summarizeOnce runs the summarisation request and returns the text.
-func (s *Session) summarizeOnce(ctx context.Context, provider agent.Provider, body, instructions string, folding bool) (string, agent.Usage, error) {
+// progress, when non-nil, is called with the running count of characters the
+// model has produced so far.
+func (s *Session) summarizeOnce(ctx context.Context, provider agent.Provider, body, instructions string, folding bool, progress func(int)) (string, agent.Usage, error) {
 	if instructions != "" {
 		body = "Pay particular attention to: " + instructions + "\n\n" + body
 	}
@@ -198,6 +224,9 @@ func (s *Session) summarizeOnce(ctx context.Context, provider agent.Provider, bo
 		switch e := ev.(type) {
 		case *agent.TextDelta:
 			out.WriteString(e.Delta)
+			if progress != nil {
+				progress(out.Len())
+			}
 		case *agent.AssistantDone:
 			usage = e.Message.Usage
 		case *agent.AssistantError:
