@@ -68,6 +68,10 @@ type Session struct {
 	// use the same one, or an embedded session would summarise through a
 	// different provider than it converses with.
 	runtime agent.Provider
+	// sessionID is the routing and prompt-cache hint the loop sends. Anything
+	// else calling the provider directly has to send it too: a gateway that
+	// requires the header answers 400 when it is missing.
+	sessionID string
 }
 
 // persistedMessage is one message and the entry id it was written as.
@@ -199,6 +203,7 @@ func Open(opts Options) (*Session, error) {
 	if s.file != nil {
 		sessionID = strings.TrimSuffix(filepath.Base(s.file.Path()), ".jsonl")
 	}
+	s.sessionID = sessionID
 	s.compaction = &compactionLog{}
 	s.preparer = newCodingContextPreparer(cwd, s.compaction)
 	s.runtime = provider

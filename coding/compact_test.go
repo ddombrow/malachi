@@ -202,6 +202,14 @@ func TestSummarizeFoldsInstructionsAndPreviousSummary(t *testing.T) {
 	if len(req.Tools) != 0 {
 		t.Errorf("the summariser must not be offered tools, got %d", len(req.Tools))
 	}
+	// Every call the agent makes carries the routing and prompt-cache hint; a
+	// gateway that requires the header answers 400 without it.
+	if req.SessionID == "" {
+		t.Error("the summarisation must send SessionID like every other request")
+	}
+	if req.SessionID != s.sessionID {
+		t.Errorf("SessionID = %q, want the session's own %q", req.SessionID, s.sessionID)
+	}
 	// The dropped conversation should be in the body.
 	if !strings.Contains(body, "internal/scan.go") {
 		t.Errorf("the conversation was not included:\n%s", body[:300])

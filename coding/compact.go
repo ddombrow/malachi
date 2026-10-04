@@ -183,8 +183,12 @@ func (s *Session) summarizeOnce(ctx context.Context, provider agent.Provider, bo
 		body = "A previous handover document is included above. Carry it forward: keep what still holds, correct what has changed, and do not simply repeat it.\n\n" + body
 	}
 	req := agent.Request{
-		Model:         s.model,
-		System:        summarizationSystem,
+		Model:  s.model,
+		System: summarizationSystem,
+		// The same routing and prompt-cache hint the loop sends. A gateway
+		// that requires the session header rejects the request without it,
+		// and the summariser would be the only call in the agent that omits it.
+		SessionID:     s.sessionID,
 		Messages:      []agent.Message{agent.NewUserText(body)},
 		ThinkingLevel: "off", // a handover document is not a reasoning task
 	}
