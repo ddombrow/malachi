@@ -206,6 +206,9 @@ func mergeProvider(dst *ProviderConfig, o ProviderConfig) {
 	if o.MaxTokens != 0 {
 		dst.MaxTokens = o.MaxTokens
 	}
+	if o.ContextWindow != 0 {
+		dst.ContextWindow = o.ContextWindow
+	}
 }
 
 // ResolveModel turns a user reference into (provider, model). Accepted forms:
