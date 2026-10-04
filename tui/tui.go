@@ -116,8 +116,11 @@ type model struct {
 	last      *lastTool
 	usage     agent.Usage
 	context   int64 // tokens in the most recent request
-	quitting  bool
-	initial   string
+	// compactionSeq is the last compaction counter rendered as a transcript
+	// marker; a newer one means a request pass replaced tool output.
+	compactionSeq uint64
+	quitting      bool
+	initial       string
 }
 
 // Run starts the interactive UI. initialPrompt, if non-empty, is sent first.
@@ -227,8 +230,42 @@ func (m *model) applyInputStyles() {
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmd := m.update(msg)
+	m.noteCompaction()
 	m.refresh()
 	return m, cmd
+}
+
+// noteCompaction appends a marker line when a request pass has replaced tool
+// output since the last time the UI looked. Compaction is otherwise invisible:
+// the transcript and the session file are left alone on purpose.
+func (m *model) noteCompaction() {
+	c := m.s.Compaction()
+	if c.Seq == m.compactionSeq {
+		return
+	}
+	m.compactionSeq = c.Seq
+	word := "results"
+	if c.Results == 1 {
+		word = "result"
+	}
+	line := fmt.Sprintf("compacted %d tool %s · %s → %s",
+		c.Results, word, bytesHuman(c.Before), bytesHuman(c.After))
+	if c.LedgerEntries > 0 {
+		line += fmt.Sprintf(" · ledger %d entries", c.LedgerEntries)
+	}
+	m.tr.add(func(r *renderer) string { return r.gutter(iconCompacted, r.st.dim, r.st.dim.Render(line)) })
+}
+
+// bytesHuman formats a byte count for the compaction marker. These are context
+// bytes, not tokens, so they must not read like the ctx figure beside them.
+func bytesHuman(n int) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f kB", float64(n)/(1<<10))
+	}
+	return fmt.Sprintf("%d B", n)
 }
 
 // refresh lays out the viewport and fills it with the transcript plus the
@@ -549,6 +586,11 @@ func (m *model) statusLine() string {
 	}
 	if m.context > 0 {
 		parts = append(parts, "ctx "+tokens(m.context))
+	}
+	// Compaction trims what the provider sees without touching the transcript,
+	// so the bar is the only always-visible trace of it.
+	if c := m.s.Compaction(); c.Seq > 0 {
+		parts = append(parts, "cmp "+tokens(int64(c.After)))
 	}
 	steer, follow := m.s.Harness.Queued()
 	if n := len(steer) + len(follow); n > 0 {

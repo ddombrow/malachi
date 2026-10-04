@@ -16,6 +16,7 @@ import (
 const helpText = `Commands:
   /model [ref]        show models, or switch (e.g. /model glm-5.2, /model openai/gpt-5.1)
   /thinking [level]   show or set the reasoning level
+  /compact [bytes]   trim old tool output before the next request
   /new                start a fresh session
   /resume [n|name]    list recent sessions, or resume one
   /copy               copy the latest assistant response
@@ -87,12 +88,38 @@ func (m *model) command(line string) tea.Cmd {
 			return m.printErr(err)
 		}
 		return m.printDim("thinking level set to " + arg)
+	case "compact":
+		return m.compactCommand(arg)
 	case "new":
 		return m.reopen("")
 	case "resume":
 		return m.resumeCommand(arg)
 	}
 	return m.printErr(fmt.Errorf("unknown command /%s (try /help)", name))
+}
+
+// compactCommand trims tool output ahead of the next provider request. With no
+// argument it compacts as hard as it can; a byte budget compacts to that
+// ceiling instead. The transcript is never rewritten, so the marker line is
+// the only record of what the model stopped seeing.
+func (m *model) compactCommand(arg string) tea.Cmd {
+	budget := 0
+	if arg != "" {
+		n, err := strconv.Atoi(arg)
+		if err != nil || n < 0 {
+			return m.printErr(fmt.Errorf("usage: /compact [bytes]"))
+		}
+		budget = n
+	}
+	if !m.s.Compact(budget) {
+		c := m.s.Compaction()
+		return m.printDim(fmt.Sprintf("nothing to compact: %s of tool output, already within the limit",
+			bytesHuman(c.Before)))
+	}
+	if budget == 0 {
+		return m.printDim("compacting tool output before the next request (as far as possible)")
+	}
+	return m.printDim(fmt.Sprintf("compacting tool output above %s before the next request", bytesHuman(budget)))
 }
 
 func (m *model) modelCommand(arg string) tea.Cmd {

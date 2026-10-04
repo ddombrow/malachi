@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -374,6 +375,90 @@ func TestInputPromptMatchesUserGutter(t *testing.T) {
 	d.applyInputStyles()
 	if d.input.Prompt != d.r.icons[iconUser]+" " {
 		t.Fatalf("prompt did not follow the icon set: %q", d.input.Prompt)
+	}
+}
+
+// Compaction never touches the transcript, so the status bar and a transcript
+// marker are the only way the user learns the model's view was trimmed.
+func TestCompactionIsVisible(t *testing.T) {
+	m := newTestModel(t)
+	if strings.Contains(ansi.Strip(m.statusLine()), "cmp ") {
+		t.Fatal("status bar shows cmp before anything has compacted")
+	}
+
+	// A run with large tool output trips the ceiling.
+	history := []agent.Message{
+		agent.NewUserText("look around"),
+	}
+	for i := 0; i < 4; i++ {
+		id := fmt.Sprintf("c%d", i)
+		a := agent.NewAssistantMessage("fake")
+		a.Content = []agent.Content{&agent.ToolCall{ID: id, Name: "bash", Arguments: map[string]any{"command": "make"}}}
+		a.StopReason = agent.StopToolUse
+		history = append(history, a, &agent.ToolResultMessage{
+			ToolCallID: id, ToolName: "bash",
+			Content: []agent.Content{&agent.TextContent{Text: strings.Repeat("out ", 20_000)}},
+			Details: map[string]any{"command": "make", "exit_code": 0},
+		})
+	}
+	m.s.Harness.ReplaceMessages(history)
+	if err := m.s.Prompt(context.Background(), "go on"); err != nil {
+		t.Fatal(err)
+	}
+	m.Update(nil)
+
+	c := m.s.Compaction()
+	if c.Seq == 0 {
+		t.Fatal("a provider request with 80 kB of tool output must compact")
+	}
+	if st := ansi.Strip(m.statusLine()); !strings.Contains(st, "cmp ") {
+		t.Errorf("status bar must show compaction: %q", st)
+	}
+	out := ansi.Strip(m.tr.text(m.r))
+	if !strings.Contains(out, "compacted 3 tool results") {
+		t.Errorf("transcript marker missing or wrong: %q", out)
+	}
+	if !strings.Contains(out, "kB") || !strings.Contains(out, "ledger 4 entries") {
+		t.Errorf("marker should report sizes and ledger size: %q", out)
+	}
+}
+
+func TestCompactCommandForcesNextRequest(t *testing.T) {
+	m := newTestModel(t)
+	// Nothing to compact yet: say so instead of arming a no-op.
+	m.command("/compact")
+	if out := ansi.Strip(m.tr.text(m.r)); !strings.Contains(out, "nothing to compact") {
+		t.Fatalf("want an honest nothing-to-compact line, got %q", out)
+	}
+	m.command("/compact 1024x")
+	if out := ansi.Strip(m.tr.text(m.r)); !strings.Contains(out, "usage: /compact") {
+		t.Errorf("bad argument should print usage, got %q", out)
+	}
+
+	history := []agent.Message{agent.NewUserText("look around")}
+	for i := 0; i < 4; i++ {
+		id := fmt.Sprintf("c%d", i)
+		a := agent.NewAssistantMessage("fake")
+		a.Content = []agent.Content{&agent.ToolCall{ID: id, Name: "bash", Arguments: map[string]any{"command": "make"}}}
+		a.StopReason = agent.StopToolUse
+		history = append(history, a, &agent.ToolResultMessage{
+			ToolCallID: id, ToolName: "bash",
+			Content: []agent.Content{&agent.TextContent{Text: strings.Repeat("out ", 20_000)}},
+			Details: map[string]any{"command": "make", "exit_code": 0},
+		})
+	}
+	m.s.Harness.ReplaceMessages(history)
+	m.command("/compact")
+	out := ansi.Strip(m.tr.text(m.r))
+	if !strings.Contains(out, "compacting tool output before the next request") {
+		t.Fatalf("want a pending-compaction line, got %q", out)
+	}
+	if err := m.s.Prompt(context.Background(), "go on"); err != nil {
+		t.Fatal(err)
+	}
+	m.Update(nil)
+	if out := ansi.Strip(m.tr.text(m.r)); !strings.Contains(out, "compacted") {
+		t.Errorf("forced pass should have compacted: %q", out)
 	}
 }
 
