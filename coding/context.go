@@ -21,14 +21,18 @@ const (
 	maxLedgerFieldBytes     = 240
 )
 
-// Compaction is the latest request-view reduction. Seq is 0 until compaction
-// fires, then increases only when the numbers change.
+// Compaction is the state of the request view. Results is how many tool
+// results are currently kept out of it; NewResults is how many the latest
+// pass newly trimmed. Seq moves only when that grows, so a UI can tell a fresh
+// trim from a pass that merely re-applied the same markers.
 type Compaction struct {
 	Results int
-	Before  int
-	After   int
-	// LedgerEntries is how many facts the injected ledger carried; the ledger
-	// is not counted in After, which measures tool output only.
+	// NewResults is what a pass newly trimmed. The transcript is never
+	// rewritten, so every pass re-applies the same markers; only this counts
+	// as an event worth reporting.
+	NewResults    int
+	Before        int
+	After         int
 	LedgerEntries int
 	Seq           uint64
 }
@@ -38,16 +42,21 @@ type compactionLog struct {
 	Compaction
 }
 
-func (l *compactionLog) note(results, before, after, ledgerEntries int) {
+func (l *compactionLog) note(results, newResults, before, after, ledgerEntries int) {
 	if l == nil || results == 0 {
 		return
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.Seq > 0 && l.Results == results && l.Before == before && l.After == after && l.LedgerEntries == ledgerEntries {
+	// The view's size is state: it moves as the transcript grows, and the
+	// status bar wants the current figure. Only newly trimmed results are an
+	// event, and only those may advance Seq.
+	l.Results, l.Before, l.After, l.LedgerEntries = results, before, after, ledgerEntries
+	if newResults == 0 {
+		l.NewResults = 0
 		return
 	}
-	l.Results, l.Before, l.After, l.LedgerEntries = results, before, after, ledgerEntries
+	l.NewResults = newResults
 	l.Seq++
 }
 
@@ -78,8 +87,12 @@ type codingContextPreparer struct {
 	records   []string
 	results   []toolResultSize
 	totalSize int
-	override  int  // ceiling for one request, set by forceBudget
-	force     bool // the override is pending
+	// trimmed records which result indexes have already been replaced with a
+	// marker, so a pass can report what it newly trimmed rather than what it
+	// re-applied.
+	trimmed  map[int]bool
+	override int  // ceiling for one request, set by forceBudget
+	force    bool // the override is pending
 }
 
 // newCodingContextPreparer builds a bounded, deterministic view of the coding
@@ -88,7 +101,7 @@ type codingContextPreparer struct {
 // Harness.Run; the mutex also keeps it safe when request preparation is invoked
 // directly from another goroutine, as /compact does.
 func newCodingContextPreparer(cwd string, log *compactionLog) *codingContextPreparer {
-	return &codingContextPreparer{cwd: cwd, log: log, calls: map[string]*agent.ToolCall{}}
+	return &codingContextPreparer{cwd: cwd, log: log, calls: map[string]*agent.ToolCall{}, trimmed: map[int]bool{}}
 }
 
 func (c *codingContextPreparer) prepare(req agent.Request) agent.Request {
@@ -96,7 +109,7 @@ func (c *codingContextPreparer) prepare(req agent.Request) agent.Request {
 	defer c.mu.Unlock()
 
 	c.update(req.Messages)
-	compacted, results, before, after := compactToolResultsWithSizes(req.Messages, c.results, c.totalSize, c.budgetLocked())
+	compacted, results, fresh, before, after := compactToolResultsWithSizes(req.Messages, c.results, c.trimmed, c.totalSize, c.budgetLocked())
 	if results > 0 {
 		req.Messages = compacted
 		entries := 0
@@ -104,7 +117,7 @@ func (c *codingContextPreparer) prepare(req agent.Request) agent.Request {
 			req.Messages = insertBeforeLastAssistant(req.Messages, &agent.UserMessage{Content: agent.UserContent{Text: ledger}})
 			entries = len(c.records)
 		}
-		c.log.note(results, before, after, entries)
+		c.log.note(results, fresh, before, after, entries)
 	}
 	return req
 }
@@ -115,6 +128,15 @@ func (c *codingContextPreparer) prime(messages []agent.Message) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.update(messages)
+}
+
+// toolBytes is the context-visible tool output in the request as last
+// prepared. Read from the harness dispatch, it describes the request whose
+// usage is arriving.
+func (c *codingContextPreparer) toolBytes() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.totalSize
 }
 
 // forceBudget asks for the next request to compact tool output harder than
@@ -152,6 +174,7 @@ func (c *codingContextPreparer) update(messages []agent.Message) {
 		c.calls = map[string]*agent.ToolCall{}
 		c.records = nil
 		c.results = nil
+		c.trimmed = map[int]bool{}
 		c.totalSize = 0
 	}
 	for i := len(c.prefix); i < len(messages); i++ {
@@ -226,7 +249,7 @@ func sameMessage(a, b agent.Message) bool {
 // compactToolResults keeps tool-call/result pairs intact while replacing old
 // result payloads until their combined context-visible content fits the byte
 // budget. The most recent result is retained even when it alone exceeds it.
-func compactToolResults(messages []agent.Message, budget int) ([]agent.Message, int, int, int) {
+func compactToolResults(messages []agent.Message, budget int) ([]agent.Message, int, int, int, int) {
 	var results []toolResultSize
 	total := 0
 	for i, m := range messages {
@@ -236,20 +259,26 @@ func compactToolResults(messages []agent.Message, budget int) ([]agent.Message, 
 			total += n
 		}
 	}
-	return compactToolResultsWithSizes(messages, results, total, budget)
+	return compactToolResultsWithSizes(messages, results, map[int]bool{}, total, budget)
 }
 
-func compactToolResultsWithSizes(messages []agent.Message, results []toolResultSize, total, budget int) ([]agent.Message, int, int, int) {
+// compactToolResultsWithSizes replaces old result payloads with markers until
+// the context-visible bytes fit the budget, keeping tool-call/result pairs
+// intact and the most recent result whole. The transcript is never rewritten,
+// so every pass re-applies the same markers; trimmed records which result
+// indexes have already been replaced so a pass can report only what it newly
+// trimmed. It returns the compacted view, how many results are trimmed out of
+// it, how many were newly trimmed, and the byte totals either side.
+func compactToolResultsWithSizes(messages []agent.Message, results []toolResultSize, trimmed map[int]bool, total, budget int) (out []agent.Message, count, fresh int, before, after int) {
 	if budget < 0 {
 		budget = 0
 	}
-	before := total
+	before = total
 	if total <= budget {
-		return messages, 0, before, before
+		return messages, 0, 0, before, before
 	}
 
-	out := append([]agent.Message(nil), messages...)
-	n := 0
+	out = append([]agent.Message(nil), messages...)
 	for i, size := range results {
 		if total <= budget {
 			break
@@ -273,12 +302,16 @@ func compactToolResultsWithSizes(messages []agent.Message, results []toolResultS
 		copy.Content = []agent.Content{&agent.TextContent{Text: marker}}
 		out[size.index] = &copy
 		total += len(marker) - originalBytes
-		n++
+		count++
+		if !trimmed[size.index] {
+			trimmed[size.index] = true
+			fresh++
+		}
 	}
-	if n == 0 {
-		return messages, 0, before, before
+	if count == 0 {
+		return messages, 0, 0, before, before
 	}
-	return out, n, before, total
+	return out, count, fresh, before, total
 }
 
 func toolResultPayloadBytes(result *agent.ToolResultMessage) int {

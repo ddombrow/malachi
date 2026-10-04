@@ -123,6 +123,32 @@ func (d *Diagnostics) observe(e agent.Event) {
 	}
 }
 
+// LogContextSample records what one request cost: the provider's token count
+// beside the tool output it carried. Numbers only, no content, so a week of
+// sessions is a usable distribution rather than one session's snapshot.
+func (d *Diagnostics) LogContextSample(model string, c ContextStats) {
+	if d == nil || c.Samples == 0 {
+		return
+	}
+	fields := map[string]any{
+		"inputTokens": c.InputTokens,
+		"toolBytes":   c.ToolBytes,
+		"samples":     c.Samples,
+		"compacted":   c.Compacted,
+	}
+	if c.Ratio > 0 {
+		fields["tokensPerByte"] = c.Ratio
+		fields["toolShare"] = c.ToolShare
+	}
+	if c.PeakInput > 0 {
+		fields["peakInput"] = c.PeakInput
+	}
+	if c.LimitErrors > 0 {
+		fields["limitErrors"] = c.LimitErrors
+	}
+	d.record("ctx_sample", fields)
+}
+
 func (d *Diagnostics) record(kind string, fields map[string]any) {
 	if d == nil {
 		return

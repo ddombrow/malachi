@@ -2,6 +2,7 @@ package coding
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -185,7 +186,7 @@ func TestCompactionPreservesErrorsAndImagesAreCounted(t *testing.T) {
 	errorMessages := []agent.Message{errorResult, &agent.ToolResultMessage{
 		ToolCallID: "recent", ToolName: "read", Content: []agent.Content{&agent.TextContent{Text: "recent"}},
 	}}
-	compactedErrors, n, _, _ := compactToolResults(errorMessages, 1024)
+	compactedErrors, n, _, _, _ := compactToolResults(errorMessages, 1024)
 	if n == 0 {
 		t.Fatal("oversized error should compact")
 	}
@@ -196,7 +197,7 @@ func TestCompactionPreservesErrorsAndImagesAreCounted(t *testing.T) {
 	imageMessages := []agent.Message{imageResult, &agent.ToolResultMessage{
 		ToolCallID: "recent", ToolName: "read", Content: []agent.Content{&agent.TextContent{Text: "recent"}},
 	}}
-	compactedImages, n, _, _ := compactToolResults(imageMessages, 1024)
+	compactedImages, n, _, _, _ := compactToolResults(imageMessages, 1024)
 	if n == 0 {
 		t.Fatal("oversized image should compact")
 	}
@@ -216,7 +217,7 @@ func TestCompactionRetainsOversizedMostRecentResult(t *testing.T) {
 		ToolCallID: "recent", ToolName: "read",
 		Content: []agent.Content{&agent.TextContent{Text: recentText}},
 	}
-	compacted, n, _, _ := compactToolResults([]agent.Message{old, recent}, toolResultContextBudget)
+	compacted, n, _, _, _ := compactToolResults([]agent.Message{old, recent}, toolResultContextBudget)
 	if n == 0 {
 		t.Fatal("older result should compact")
 	}
@@ -289,6 +290,59 @@ func TestCompactionStatsAndForcedBudget(t *testing.T) {
 	// Nothing left to compact reports honestly instead of arming a no-op.
 	if p.forceBudget(1 << 20) {
 		t.Error("forceBudget claimed work above the total output size")
+	}
+}
+
+// A pass that re-applies the same markers is not an event: the transcript is
+// never rewritten, so every request trims the same results again. Reporting
+// that once per request produced pairs of identical markers.
+func TestRepeatedPassesReportOnlyNewlyTrimmedResults(t *testing.T) {
+	log := &compactionLog{}
+	p := newCodingContextPreparer(t.TempDir(), log)
+
+	var messages []agent.Message
+	turn := func(id string, n int) {
+		a := agent.NewAssistantMessage("fake")
+		a.Content = []agent.Content{&agent.ToolCall{ID: id, Name: "bash", Arguments: map[string]any{"command": "make"}}}
+		a.StopReason = agent.StopToolUse
+		messages = append(messages, a, &agent.ToolResultMessage{
+			ToolCallID: id, ToolName: "bash",
+			Content: []agent.Content{&agent.TextContent{Text: strings.Repeat("x", n)}},
+			Details: map[string]any{"command": "make", "exit_code": 0},
+		})
+	}
+	messages = append(messages, agent.NewUserText("go"))
+	// Well over the default ceiling, so several results must be trimmed.
+	for i := 0; i < 8; i++ {
+		turn(fmt.Sprintf("c%d", i), 20_000)
+	}
+
+	p.prepare(agent.Request{Messages: messages})
+	first := log.get()
+	if first.Seq != 1 || first.NewResults != first.Results || first.Results < 2 {
+		t.Fatalf("first pass should trim several results exactly once: %+v", first)
+	}
+
+	// The transcript is unchanged, so the same results are re-trimmed and
+	// nothing is new. This is the case that produced paired markers.
+	p.prepare(agent.Request{Messages: messages})
+	if got := log.get(); got.Seq != 1 || got.NewResults != 0 || got.Results != first.Results {
+		t.Fatalf("a repeat pass must not report again: %+v", got)
+	}
+
+	// Growth that pushes the ceiling over another result is a real event: one
+	// more result joins the trimmed set.
+	turn("c8", 20_000)
+	p.prepare(agent.Request{Messages: messages})
+	second := log.get()
+	if second.Seq != 2 || second.NewResults < 1 || second.Results <= first.Results {
+		t.Fatalf("a newly trimmed result should be reported once: %+v", second)
+	}
+
+	// And once more with no change: silent again.
+	p.prepare(agent.Request{Messages: messages})
+	if got := log.get(); got.Seq != 2 || got.NewResults != 0 {
+		t.Errorf("still no new trimming, so still no report: %+v", got)
 	}
 }
 

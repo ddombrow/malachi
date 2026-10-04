@@ -11,12 +11,14 @@ import (
 
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/agent/session"
+	"github.com/ddombrow/malachi/coding"
 )
 
 const helpText = `Commands:
   /model [ref]        show models, or switch (e.g. /model glm-5.2, /model openai/gpt-5.1)
   /thinking [level]   show or set the reasoning level
   /compact [bytes]   trim old tool output before the next request
+  /ctx               measured context: tokens, tool output share, compactions
   /new                start a fresh session
   /resume [n|name]    list recent sessions, or resume one
   /copy               copy the latest assistant response
@@ -90,6 +92,8 @@ func (m *model) command(line string) tea.Cmd {
 		return m.printDim("thinking level set to " + arg)
 	case "compact":
 		return m.compactCommand(arg)
+	case "ctx":
+		return m.printDim(coding.ContextLine(m.s.Model(), m.s.ContextStats()))
 	case "new":
 		return m.reopen("")
 	case "resume":

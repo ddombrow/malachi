@@ -59,6 +59,7 @@ type Session struct {
 	liveModels map[string][]string // provider name -> fetched model ids
 	compaction *compactionLog
 	preparer   *codingContextPreparer
+	ctxSampler *ctxSampler
 }
 
 // SessionsDir returns the directory holding cwd's sessions, named like tau's
@@ -218,6 +219,10 @@ func Open(opts Options) (*Session, error) {
 	// Diagnostics follow every run, including in-memory sessions that have
 	// no file to record a failure in.
 	s.Harness.Subscribe(s.diag.observe)
+	// Measurement follows the same stream, in the same dispatch, so the
+	// preparer's byte count belongs to the request the usage describes.
+	s.ctxSampler = newCtxSampler()
+	s.Harness.Subscribe(s.observeContext)
 	return s, nil
 }
 
@@ -296,6 +301,25 @@ func (s *Session) Diagnostics() *Diagnostics { return s.diag }
 // Compaction reports the latest request-view tool-output reduction. Seq is 0
 // until compaction has fired. The saved transcript is not rewritten.
 func (s *Session) Compaction() Compaction { return s.compaction.get() }
+
+// ContextStats reports what the provider actually charged for each request,
+// so the cost of tool output can be derived instead of guessed.
+func (s *Session) ContextStats() ContextStats { return s.ctxSampler.get() }
+
+// observeContext records one request's measured shape.
+func (s *Session) observeContext(e agent.Event) {
+	end, ok := e.(*agent.MessageEndEvent)
+	if !ok {
+		return
+	}
+	m, ok := end.Message.(*agent.AssistantMessage)
+	if !ok {
+		return
+	}
+	seq := s.compaction.get().Seq
+	s.ctxSampler.observe(m, s.preparer.toolBytes(), seq)
+	s.diag.LogContextSample(m.Model, s.ctxSampler.get())
+}
 
 // Compact asks for the next provider request to trim tool output harder than
 // the default ceiling: everything above budget bytes is replaced by a marker

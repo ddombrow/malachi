@@ -245,11 +245,14 @@ func (m *model) noteCompaction() {
 	}
 	m.compactionSeq = c.Seq
 	word := "results"
-	if c.Results == 1 {
+	if c.NewResults == 1 {
 		word = "result"
 	}
 	line := fmt.Sprintf("compacted %d tool %s · %s → %s",
-		c.Results, word, bytesHuman(c.Before), bytesHuman(c.After))
+		c.NewResults, word, bytesHuman(c.Before), bytesHuman(c.After))
+	if total := c.Results - c.NewResults; total > 0 {
+		line += fmt.Sprintf(" · %d already trimmed", total)
+	}
 	if c.LedgerEntries > 0 {
 		line += fmt.Sprintf(" · ledger %d entries", c.LedgerEntries)
 	}
