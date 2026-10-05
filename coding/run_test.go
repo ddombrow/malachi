@@ -261,3 +261,17 @@ func TestFailedSetModelChangesNothing(t *testing.T) {
 		t.Fatalf("failed SetModel changed the selection to %s/%s", s.Provider().Name, s.Model())
 	}
 }
+
+// Refusing to compact a short conversation is not a compaction: no start or
+// end event, so a frontend shows no progress line for it.
+func TestCompactWithNothingToFoldReportsNoEvents(t *testing.T) {
+	s := openRunSession(t, fake.New())
+	ev := watch(t, s)
+	if _, err := s.Compact(context.Background(), ""); !errors.Is(err, ErrNothingToSummarize) {
+		t.Fatalf("err = %v", err)
+	}
+	s.emit(AgentSettledEvent{}) // a marker: everything before it has been delivered
+	if v := ev.next("anything", func(any) bool { return true }); v != (AgentSettledEvent{}) {
+		t.Fatalf("a refused compaction reported %T", v)
+	}
+}

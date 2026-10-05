@@ -202,6 +202,12 @@ func (s *Session) Compact(ctx context.Context, instructions string) (*SummarizeR
 		s.runMu.Unlock()
 		return nil, err
 	}
+	// Nothing to fold is a refusal, not a compaction that failed: no start
+	// or end is reported for it.
+	if _, err := compactBoundary(s.Harness.Messages()); err != nil {
+		s.runMu.Unlock()
+		return nil, err
+	}
 	cctx := s.startCompactingLocked(ctx)
 	s.runMu.Unlock()
 	res, aborted, held, err := s.finishCompaction(cctx, CompactionManual, instructions, "")
