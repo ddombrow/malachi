@@ -1,7 +1,9 @@
 package coding
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -315,8 +317,16 @@ func transcriptJSON(messages []agent.Message) string {
 	return b.String()
 }
 
+// quoteJSON encodes s as a JSON string. HTML escaping is off: the reader is a
+// model, and code is full of <, > and & that \u003c would only obscure.
 func quoteJSON(s string) string {
-	return strings.ReplaceAll(`"`+strings.ReplaceAll(s, `"`, `\"`)+`"`, "\n", `\n`)
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(s); err != nil {
+		return `""` // a string always encodes; this is unreachable
+	}
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 func previousSection(summary string) string {

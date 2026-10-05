@@ -2,6 +2,7 @@ package coding
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -515,5 +516,23 @@ func TestSummarizeCancelledBeforeWritingChangesNothing(t *testing.T) {
 	}
 	if len(s.Harness.Messages()) != before {
 		t.Fatal("a cancelled compaction replaced the transcript")
+	}
+}
+
+// The summariser input is labelled JSON, so it has to parse as JSON and
+// round-trip the text exactly, backslashes and control characters included.
+func TestSummarizerInputIsValidJSON(t *testing.T) {
+	tricky := "path C:\\new\\table, regex \\d+\\n, quote \", tab\there, <b>&amp;</b>\nnext line"
+	body := transcriptJSON([]agent.Message{agent.NewUserText(tricky), assistantText("ok")})
+	raw := strings.TrimSuffix(strings.TrimPrefix(body, "```json\n"), "\n```")
+	var parsed []struct{ Role, Text string }
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, raw)
+	}
+	if len(parsed) != 2 || parsed[0].Text != tricky {
+		t.Fatalf("text did not round-trip:\n got %q\nwant %q", parsed[0].Text, tricky)
+	}
+	if strings.Contains(raw, `\u003c`) {
+		t.Error("HTML escaping obscures code for the model")
 	}
 }
