@@ -394,8 +394,15 @@ func TestCompactAnswersWithTheResultAndReportsEvents(t *testing.T) {
 	s.Harness.ReplaceMessages(history)
 	c := serve(t, s)
 	c.send(`{"id":"compact","type":"compact"}`)
-	c.event("compaction_start")
 	r := c.response("compact")
+	// The compaction's events come before the response that reports it.
+	var before []string
+	for _, rec := range c.seen[:len(c.seen)-1] {
+		before = append(before, fmt.Sprint(rec["type"]))
+	}
+	if len(before) < 2 || before[0] != "compaction_start" || before[len(before)-1] != "compaction_end" {
+		t.Fatalf("records before the compact response: %v", before)
+	}
 	data := r["data"].(map[string]any)
 	for _, k := range []string{"summary", "firstKeptEntryId", "tokensBefore", "estimatedTokensAfter", "details"} {
 		if _, ok := data[k]; !ok {
@@ -405,7 +412,6 @@ func TestCompactAnswersWithTheResultAndReportsEvents(t *testing.T) {
 	if data["summary"] != summary {
 		t.Fatalf("summary = %v", data["summary"])
 	}
-	c.event("compaction_end")
 	c.close()
 }
 

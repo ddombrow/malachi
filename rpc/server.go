@@ -29,10 +29,11 @@ type Server struct {
 	in  io.Reader
 	out io.Writer
 
-	// wmu serializes every write, so records never interleave. Commands that
-	// start work hold it across the session call and their response, which
-	// is what puts a prompt's response ahead of the prompt's events: the
-	// session delivers events from its own goroutine, and they wait here.
+	// wmu serializes every write, so records never interleave. Ordering
+	// rules: a prompt's response precedes the run's events (submit holds wmu
+	// across Submit and the response; events wait here), and any other
+	// command's response follows the events its own work produced (the
+	// handler flushes the session's events before replying).
 	wmu sync.Mutex
 	enc *json.Encoder
 

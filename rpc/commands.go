@@ -58,6 +58,7 @@ func (sv *Server) dispatch(id any, typ string, cmd map[string]any) {
 		if err == nil {
 			err = s.SetThinkingLevel(level)
 		}
+		s.Flush() // thinking_level_changed before the response
 		sv.reply(id, typ, nil, err)
 	case "compact":
 		instructions, err := optionalString(cmd, "customInstructions")
@@ -67,6 +68,10 @@ func (sv *Server) dispatch(id any, typ string, cmd map[string]any) {
 		}
 		sv.background(func() {
 			res, err := s.Compact(sv.ctx, instructions)
+			// The compaction's events describe the work this response reports,
+			// so they go first. Events are delivered asynchronously; without
+			// this the response could overtake compaction_start.
+			s.Flush()
 			sv.reply(id, typ, res, err)
 		})
 	case "set_auto_compaction":
@@ -181,6 +186,7 @@ func (sv *Server) setModel(s *coding.Session, id any, typ string, cmd map[string
 		sv.fail(id, typ, err.Error())
 		return
 	}
+	s.Flush() // a thinking_level_changed the switch caused goes first
 	sv.ok(id, typ, modelOf(s.Provider(), s.Model()))
 }
 

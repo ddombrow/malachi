@@ -114,6 +114,11 @@ which follows Pi's, so clients written for those should work here.
 | `get_session_stats` | message and token counts, cost, context usage |
 | `set_trust` (`decision`: `trusted`/`untrusted`, `remember?`, `scope?: "parent"`) | the new `projectTrust` |
 
+Ordering: a `prompt`'s response comes before the events of the run it
+starts; any other command's response comes after the events its own work
+produced (a `compact`'s `compaction_start` … `compaction_end`, then its
+response).
+
 A `prompt` while the agent is working must say what to do with it:
 `"streamingBehavior": "steer"` (inject before the next model call) or
 `"followUp"` (send when the run would otherwise stop). During a compaction a
