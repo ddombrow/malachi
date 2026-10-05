@@ -4,6 +4,19 @@ A small terminal coding agent in Go, modeled on [tau](https://github.com/hugging
 (itself a Python port of Pi). It speaks Pi-compatible JSON for messages,
 events, and sessions, and reads tau session files.
 
+> [!WARNING]
+> **malachi does not ask permission before it acts.** When the model decides
+> to run a shell command, write a file, or edit one, it happens immediately,
+> with your user account's privileges: there is no approval prompt and no
+> undo. It can delete files, change anything your account can change, and
+> reach the network. Use it on work you can recover (a version-controlled
+> checkout, committed first), and run it in a container, VM, or disposable
+> environment for anything you do not trust — including repositories you
+> did not write, whose files the model will read. [Project
+> trust](#project-trust) only decides whether a repository's `AGENTS.md` is
+> obeyed; it is not a sandbox. The same applies in `-p` and RPC mode, where
+> nobody is watching at all.
+
 ```text
 cmd/malachi   CLI: interactive TUI or print mode (-p)
 tui/          full-screen Bubble Tea frontend
