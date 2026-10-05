@@ -20,6 +20,7 @@ import (
 
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/coding"
+	"github.com/ddombrow/malachi/rpc"
 	"github.com/ddombrow/malachi/tui"
 )
 
@@ -50,7 +51,7 @@ func run() int {
 		cont       = flag.Bool("c", false, "continue the most recent session in this directory")
 		resume     = flag.String("resume", "", "resume a session by file path or name prefix")
 		noSession  = flag.Bool("no-session", false, "do not save the session to disk")
-		mode       = flag.String("mode", "text", "print mode output: text or json (one Pi-compatible event per line)")
+		mode       = flag.String("mode", "text", `"text" or "json" (one Pi-compatible event per line) for -p output, or "rpc" to run headless: JSON commands on stdin, responses and events on stdout`)
 		cwd        = flag.String("cwd", "", "working directory (default: current directory)")
 		listModels = flag.Bool("list-models", false, "list the models the provider currently serves and exit")
 		version    = flag.Bool("version", false, "print the version and exit")
@@ -65,6 +66,12 @@ func run() int {
 	if *version {
 		fmt.Println("malachi", coding.Version)
 		return 0
+	}
+	switch *mode {
+	case "text", "json", "rpc":
+	default:
+		fmt.Fprintf(os.Stderr, "malachi: unknown -mode %q (want text, json or rpc)\n", *mode)
+		return 2
 	}
 
 	// Secrets such as OPENCODE_API_KEY may live in ~/.malachi/.env.
@@ -87,6 +94,10 @@ func run() int {
 		return 1
 	}
 	defer s.Close()
+
+	if *mode == "rpc" {
+		return rpcRun(s)
+	}
 
 	if *printMode {
 		// Print mode cannot ask a question, so a withheld project file is
@@ -193,6 +204,24 @@ func printRun(s *coding.Session, prompt, mode string) int {
 	}
 	if last != nil && (last.StopReason == agent.StopError || last.StopReason == agent.StopAborted) {
 		fmt.Fprintf(os.Stderr, "malachi: %s: %s\n", last.StopReason, last.ErrorMessage)
+		return 1
+	}
+	return 0
+}
+
+// rpcRun serves the session headless until stdin closes. Project trust is
+// reported in get_state and answered with set_trust, so nothing is printed:
+// stdout belongs to the protocol.
+func rpcRun(s *coding.Session) int {
+	sv := rpc.New(s, os.Stdin, os.Stdout)
+	err := sv.Run(context.Background())
+	// new_session and switch_session replace the session; the one opened
+	// here is closed by run's defer, the last one here.
+	if last := sv.Session(); last != s {
+		last.Close()
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "malachi:", err)
 		return 1
 	}
 	return 0
