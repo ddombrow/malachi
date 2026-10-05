@@ -28,9 +28,8 @@ func NewGlobTool(cwd string) *agent.Tool {
 			"Returns at most %d paths; raise limit or narrow the pattern for more.", DefaultGlobLimit),
 		PromptSnippet: "Find files by name pattern",
 		PromptGuidelines: []string{
-			"Use glob to locate files by name instead of shelling out to ls or find.",
-			"Use grep to search inside files; use glob to find which files exist.",
-			"Prefer a specific pattern such as \"**/*.go\" over listing a whole directory.",
+			"Use glob to find which files exist and grep to search inside them; glob first when you know the filename shape but not the file.",
+			"Prefer a specific pattern such as \"**/*.go\" over listing a directory, and a narrower pattern over raising limit: a smaller result costs less context.",
 		},
 		Parameters: map[string]any{
 			"type": "object",

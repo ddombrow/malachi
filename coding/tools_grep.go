@@ -43,10 +43,8 @@ func NewGrepTool(cwd string) *agent.Tool {
 			"narrow the pattern or add a glob to see more.", DefaultGrepLimit),
 		PromptSnippet: "Search file contents by regular expression",
 		PromptGuidelines: []string{
-			"Use grep to find where something is defined or used instead of reading whole files or shelling out to grep/rg.",
-			"Prefer searching for a distinctive identifier over reading a file to see if it contains something.",
-			"Use glob first when you know the filename shape but not the file itself.",
-			"Prefer a narrower pattern with a glob over raising limit: a smaller result costs less context.",
+			"Use grep to find where something is defined or used, instead of reading whole files or shelling out to grep/rg.",
+			"Search for a distinctive identifier rather than reading a file to see whether it contains something.",
 		},
 		Parameters: map[string]any{
 			"type": "object",

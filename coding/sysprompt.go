@@ -141,7 +141,10 @@ func guidelines(tools []*agent.Tool) []string {
 	}
 	for _, t := range tools {
 		if t.Name == "bash" {
-			add("Use bash for file operations like ls, rg, find")
+			// Not for finding things. grep and glob exist for that, and telling
+			// the model to use ls and rg while three lines later it is told not
+			// to is a contradiction it resolves arbitrarily.
+			add("Use bash for builds, tests, version control, and other shell work.")
 		}
 	}
 	for _, t := range tools {

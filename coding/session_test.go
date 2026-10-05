@@ -148,9 +148,52 @@ func TestContextFiles(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 	prompt := BuildSystemPrompt(PromptOptions{Cwd: sub, Tools: CodingTools(sub), ContextFiles: files})
-	for _, want := range []string{"- read: Read file contents", "<project_context>", "a rules", "Use bash for file operations"} {
+	for _, want := range []string{
+		"- read: Read file contents",
+		"<project_context>",
+		"a rules",
+		"Use bash for builds, tests, version control",
+	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q", want)
+		}
+	}
+}
+
+// The search guidance must not contradict itself. Telling the model to use
+// rg and ls in one line and grep and glob in the next leaves the choice to
+// it, and it resolves that by shelling out, which is the expensive path the
+// tools exist to avoid.
+func TestSystemPromptHasNoConflictingSearchGuidance(t *testing.T) {
+	sub := t.TempDir()
+	prompt := BuildSystemPrompt(PromptOptions{Cwd: sub, Tools: CodingTools(sub)})
+	if strings.Contains(prompt, "Use bash for file operations") {
+		t.Error("prompt tells the model to use bash to find things")
+	}
+	// Each tool should be recommended once. The tool list always names every
+	// tool; only the guidelines are at risk of saying the same thing twice.
+	var guidelines []string
+	inGuidelines := false
+	for _, line := range strings.Split(prompt, "\n") {
+		if line == "Guidelines:" {
+			inGuidelines = true
+			continue
+		}
+		if inGuidelines && strings.HasPrefix(line, "- ") {
+			guidelines = append(guidelines, strings.TrimPrefix(line, "- "))
+		}
+	}
+	counts := map[string]int{}
+	for _, g := range guidelines {
+		if rest, ok := strings.CutPrefix(g, "Use "); ok {
+			tool, _, _ := strings.Cut(rest, " ")
+			counts[tool]++
+		}
+	}
+	for _, tool := range []string{"grep", "glob", "read", "bash"} {
+		if counts[tool] > 1 {
+			t.Errorf("guidelines recommend %s %d times:\n  %s", tool, counts[tool],
+				strings.Join(guidelines, "\n  "))
 		}
 	}
 }
