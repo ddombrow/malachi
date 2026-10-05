@@ -411,7 +411,10 @@ func (s *Session) entryIDFor(m agent.Message) string {
 	return ""
 }
 
-// append writes an entry, reporting whether it reached the disk.
+// append writes e, after any header entries still waiting for the file to
+// exist, and reports whether e itself reached the disk. Callers record entry
+// ids on the strength of that answer, so a failed write must never read as
+// success.
 func (s *Session) append(e *session.Entry) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -420,17 +423,16 @@ func (s *Session) append(e *session.Entry) bool {
 	}
 	pending := append(s.header, e)
 	s.header = nil
+	var err error
 	for _, entry := range pending {
-		if err := s.file.Append(entry); err != nil && s.persistErr == nil {
+		if err = s.file.Append(entry); err != nil && s.persistErr == nil {
 			s.persistErr = fmt.Errorf("persist session: %w", err)
 			// The session file is the one place that cannot report its own
 			// failure, so send it somewhere that can.
 			s.diag.LogPersistError(s.persistErr)
-		} else if err != nil {
-			return false
 		}
 	}
-	return true
+	return err == nil // err is e's, the last entry written
 }
 
 // recordSetting writes a settings-change entry now if the file exists,

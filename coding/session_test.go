@@ -243,3 +243,37 @@ func TestSessionIDIsStableAcrossResume(t *testing.T) {
 		t.Fatal("in-memory sessions need a session id too")
 	}
 }
+
+// A message whose entry failed to write must not be remembered as persisted:
+// a later compaction would name it as the start of its retained tail.
+func TestFailedWriteIsNotRecordedAsPersisted(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	s, err := Open(testOpts(t, home, cwd, fake.New(fake.Text("a"), fake.Text("b"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Prompt(context.Background(), "first"); err != nil {
+		t.Fatal(err)
+	}
+	// The file exists; now make it unwritable, so the next failure is the
+	// first one and lands on a message entry, not a header.
+	if err := os.Chmod(s.Path(), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(s.Path(), 0o600) })
+	if err := s.Prompt(context.Background(), "second"); err != nil {
+		t.Fatal(err)
+	}
+	if s.PersistError() == nil {
+		t.Fatal("the failed write was not reported")
+	}
+	msgs := s.Harness.Messages()
+	for _, m := range msgs[len(msgs)-2:] {
+		if id := s.entryIDFor(m); id != "" {
+			t.Fatalf("%s message recorded as entry %s, which never reached the disk", m.Role(), id)
+		}
+	}
+	if s.entryIDFor(msgs[0]) == "" {
+		t.Fatal("messages written before the failure should still be recorded")
+	}
+}
