@@ -36,6 +36,10 @@ go install github.com/ddombrow/malachi/cmd/malachi@latest
 `malachi -version` reports the release it was installed from. To build from a
 checkout instead, see [Development](#development).
 
+macOS and Linux are supported. malachi builds on Windows, but its bash tool
+needs `bash` or `sh` on the PATH, and cancelling a command there stops only
+the shell, not the processes it started.
+
 ## Usage
 
 ```sh

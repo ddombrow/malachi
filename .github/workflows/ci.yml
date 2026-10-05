@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request makes the older run moot.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: lint, test, build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # The supported platforms; see "Install" in the README.
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # git describe stamps the build; it needs history and tags.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # The same tasks a contributor runs (task is pinned in go.mod).
+      - run: go tool task lint
+      - run: go tool task test
+      - run: go tool task build
+      - run: bin/malachi -version
