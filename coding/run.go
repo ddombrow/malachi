@@ -297,7 +297,12 @@ func (s *Session) emitQueue() {
 	steer, follow := s.Harness.Queued()
 	ev := QueueUpdateEvent{Steering: texts(steer), FollowUp: texts(follow)}
 	s.runMu.Lock()
-	key := fmt.Sprint(ev.Steering, ev.FollowUp)
+	// An empty queue keys as "", the starting value, so a run does not open
+	// with a report that nothing is queued.
+	key := ""
+	if len(ev.Steering)+len(ev.FollowUp) > 0 {
+		key = fmt.Sprint(ev.Steering, ev.FollowUp)
+	}
 	changed := key != s.lastQueue
 	s.lastQueue = key
 	s.runMu.Unlock()

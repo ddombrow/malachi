@@ -92,7 +92,14 @@ func TestSubmitRunsAndSettles(t *testing.T) {
 	if err := s.Submit(context.Background(), "hello", ""); err != nil {
 		t.Fatal(err)
 	}
-	ev.settled()
+	// Nothing was ever queued, so nothing about the queue is reported.
+	if q, ok := ev.next("queue_update or agent_settled", func(v any) bool {
+		_, q := v.(QueueUpdateEvent)
+		_, settled := v.(AgentSettledEvent)
+		return q || settled
+	}).(QueueUpdateEvent); ok {
+		t.Fatalf("a run with an empty queue reported it: %+v", q)
+	}
 	if st := s.State(); st.Running || st.Compacting {
 		t.Fatalf("state after settling: %+v", st)
 	}
