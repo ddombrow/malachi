@@ -659,10 +659,14 @@ func TestCompactionMakesTheLastMeasurementStale(t *testing.T) {
 		t.Fatalf("measured prompt = %d", got)
 	}
 
-	if _, err := s.Summarize(context.Background(), "", nil); err != nil {
+	res, err := s.Summarize(context.Background(), "", nil)
+	if err != nil {
 		t.Fatal(err)
 	}
 	stats := s.ContextStats()
+	if res.TokensAfter <= 0 || int64(res.TokensAfter) != stats.EffectivePrompt() {
+		t.Fatalf("TokensAfter = %d, effective = %d", res.TokensAfter, stats.EffectivePrompt())
+	}
 	if !stats.PromptEstimated() || stats.EffectivePrompt() >= 900_000 {
 		t.Fatalf("after compaction the gauge still shows the old measurement: %d (estimated=%v)", stats.EffectivePrompt(), stats.PromptEstimated())
 	}

@@ -55,15 +55,28 @@ const (
 // recent to be worth replacing.
 var ErrNothingToSummarize = errors.New("not enough conversation to summarize")
 
-// SummarizeResult reports what a summarisation did.
+// SummarizeResult reports what a summarisation did. Its JSON is the shape
+// tau's RPC compact returns, plus malachi's own counts.
 type SummarizeResult struct {
-	Summary      string // the summary the model wrote, as it will be replayed
-	TokensBefore int    // estimated prompt size before the replacement
-	Replaced     int    // messages the summary stands in for
-	Kept         int    // messages retained verbatim
-	Usage        agent.Usage
-	FirstKeptID  string // entry id of the retained tail's first message
-	Warnings     []string
+	Summary      string `json:"summary"`      // the summary the model wrote, as it will be replayed
+	TokensBefore int    `json:"tokensBefore"` // estimated prompt size before the replacement
+	// TokensAfter is the estimated prompt size once the summary replaced the
+	// prefix.
+	TokensAfter int         `json:"estimatedTokensAfter"`
+	Replaced    int         `json:"replaced"` // messages the summary stands in for
+	Kept        int         `json:"kept"`     // messages retained verbatim
+	Usage       agent.Usage `json:"usage"`
+	FirstKeptID string      `json:"firstKeptEntryId"` // entry id of the retained tail's first message
+	Warnings    []string    `json:"warnings,omitempty"`
+}
+
+// MarshalJSON adds the empty details object tau's wire shape carries.
+func (r SummarizeResult) MarshalJSON() ([]byte, error) {
+	type plain SummarizeResult
+	return json.Marshal(struct {
+		plain
+		Details map[string]any `json:"details"`
+	}{plain(r), map[string]any{}})
 }
 
 // summarizationSystem asks for a structured handover rather than a reply. The
@@ -220,6 +233,7 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 	// longer exists, right up until the next reply.
 	s.ctxSampler.compacted()
 	s.estimateContext()
+	result.TokensAfter = int(s.ctxSampler.get().EffectivePrompt())
 	s.diag.LogCompaction(summary, result.Replaced, result.Kept, usage)
 	return result, nil
 }
