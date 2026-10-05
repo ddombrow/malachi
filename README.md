@@ -200,3 +200,9 @@ if anything else is in it. Builds are stamped with `git describe`
 (`bin/malachi -version`). Loop and harness tests use the scripted provider in
 `ai/fake`. Golden fixtures in `agent/testdata` and
 `agent/session/testdata` were generated from tau's own models.
+
+## License
+
+MIT; see [LICENSE](LICENSE). malachi ports parts of
+[tau](https://github.com/huggingface/tau), also MIT; [NOTICE](NOTICE)
+carries tau's copyright and license.
