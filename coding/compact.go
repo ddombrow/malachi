@@ -181,8 +181,16 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 	// rather than one whose tail has vanished.
 	if s.file != nil {
 		result.FirstKeptID = s.entryIDFor(tail[0])
-		s.append(session.NewCompactionEntry(summary, result.FirstKeptID,
-			result.TokensBefore, usage, s.provider.Name, s.model))
+		// Replay keeps only what follows the compaction unless the entry names
+		// where the tail starts, so writing one without that would silently
+		// drop the tail on the next resume. Refuse instead; nothing has changed.
+		if result.FirstKeptID == "" {
+			return nil, errors.New("compact: the retained messages are not in the session file yet; nothing was changed")
+		}
+		if !s.append(session.NewCompactionEntry(summary, result.FirstKeptID,
+			result.TokensBefore, usage, s.provider.Name, s.model)) {
+			return nil, errors.New("compact: could not write the compaction to the session file; nothing was changed")
+		}
 	}
 	note := &agent.CompactionSummaryMessage{
 		Summary:      summary,

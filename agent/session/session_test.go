@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ddombrow/malachi/agent"
@@ -89,5 +90,20 @@ func TestFileLazyCreateAndAppendChain(t *testing.T) {
 	infos, _ := List(filepath.Dir(path))
 	if len(infos) != 1 || infos[0].Preview != "hi" {
 		t.Fatalf("list: %+v", infos)
+	}
+}
+
+func TestReplayReportsEntryIDsPerMessage(t *testing.T) {
+	f, err := Load("testdata/tau_session.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := Replay(BranchPath(f.Entries(), "e9"))
+	if len(st.EntryIDs) != len(st.Messages) {
+		t.Fatalf("%d ids for %d messages", len(st.EntryIDs), len(st.Messages))
+	}
+	// The compaction summary is synthesized; the rest came from entries.
+	if want := []string{"", "e5", "e8"}; strings.Join(st.EntryIDs, ",") != strings.Join(want, ",") {
+		t.Fatalf("entry ids = %v, want %v", st.EntryIDs, want)
 	}
 }

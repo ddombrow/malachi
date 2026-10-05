@@ -235,6 +235,14 @@ func Open(opts Options) (*Session, error) {
 		PrepareRequest:  s.preparer.prepare,
 		RecoverOverflow: s.recoverOverflow,
 	}, state.Messages)
+	// Messages replayed from disk are already persisted. Recording their entry
+	// ids lets a compaction of a resumed session name where its retained tail
+	// begins; without them it would look unpersisted and replay would drop it.
+	for i, m := range state.Messages {
+		if id := state.EntryIDs[i]; id != "" {
+			s.persisted = append(s.persisted, persistedMessage{message: m, entryID: id})
+		}
+	}
 
 	if s.file != nil {
 		if !s.file.Exists() {

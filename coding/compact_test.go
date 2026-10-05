@@ -406,3 +406,50 @@ func TestSummarizeReportsCharactersAsTheyArrive(t *testing.T) {
 		t.Errorf("character counts did not advance: %v", counts)
 	}
 }
+
+// A resumed session's messages come from disk, not from this process's
+// persistence listener. Compacting one must still record where the retained
+// tail begins, or the next resume replays the summary alone.
+func TestSummarizeAfterResumeKeepsTailOnDisk(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	var scripts []fake.Script
+	for i := 0; i < 15; i++ {
+		scripts = append(scripts, fake.Text("ok"))
+	}
+	s, err := Open(Options{Cwd: cwd, Home: home, Settings: &Settings{}, Provider: fake.New(scripts...)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 15; i++ {
+		if err := s.Prompt(context.Background(), fmt.Sprintf("turn %d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resumed, err := Open(Options{Cwd: cwd, Home: home, Settings: &Settings{}, Continue: true, Provider: fake.New(fake.Text(goodSummary))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := resumed.Summarize(context.Background(), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FirstKeptID == "" {
+		t.Fatal("compaction of a resumed session did not find its tail on disk")
+	}
+
+	f, err := session.Load(resumed.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed := session.Replay(session.BranchPath(f.Entries(), f.TipID())).Messages
+	inMemory := resumed.Harness.Messages()
+	if len(replayed) != len(inMemory) {
+		t.Fatalf("replay has %d messages, memory has %d: the retained tail was lost", len(replayed), len(inMemory))
+	}
+	for i := 1; i < len(inMemory); i++ {
+		if agent.MessageText(replayed[i]) != agent.MessageText(inMemory[i]) {
+			t.Fatalf("message %d differs: %q vs %q", i, agent.MessageText(replayed[i]), agent.MessageText(inMemory[i]))
+		}
+	}
+}

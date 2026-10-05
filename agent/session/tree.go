@@ -42,7 +42,12 @@ func BranchPath(entries []*Entry, tipID string) []*Entry {
 
 // State is what replaying a branch path yields.
 type State struct {
-	Messages      []agent.Message
+	Messages []agent.Message
+	// EntryIDs[i] is the id of the entry Messages[i] was replayed from, or ""
+	// for a message synthesized during replay (a compaction's summary). A
+	// resumed session needs these to point later entries, such as a new
+	// compaction's first kept entry, at messages already on disk.
+	EntryIDs      []string
 	Provider      string
 	Model         string
 	ThinkingLevel string
@@ -80,11 +85,11 @@ func replay(path []*Entry, honorCompaction bool) State {
 				}
 			}
 		}
-		st.Messages = append(st.Messages, &agent.CompactionSummaryMessage{
+		st.add(&agent.CompactionSummaryMessage{
 			Summary:      compaction.String("summary"),
 			TokensBefore: compaction.Int("tokens_before"),
 			Timestamp:    int64(compaction.Timestamp * 1000),
-		})
+		}, "")
 	}
 
 	for i, e := range path {
@@ -105,7 +110,7 @@ func replay(path []*Entry, honorCompaction bool) State {
 		}
 		switch e.Type {
 		case TypeMessage:
-			st.Messages = append(st.Messages, e.Message)
+			st.add(e.Message, e.ID)
 		case TypeCustomMessage:
 			m := &agent.CustomMessage{
 				CustomType: e.String("custom_type"),
@@ -118,14 +123,19 @@ func replay(path []*Entry, honorCompaction bool) State {
 			if raw, ok := e.Fields["display"]; ok {
 				_ = json.Unmarshal(raw, &m.Display)
 			}
-			st.Messages = append(st.Messages, m)
+			st.add(m, e.ID)
 		case TypeBranchSummary:
-			st.Messages = append(st.Messages, &agent.BranchSummaryMessage{
+			st.add(&agent.BranchSummaryMessage{
 				Summary:   e.String("summary"),
 				FromID:    e.String("branch_root_id"),
 				Timestamp: int64(e.Timestamp * 1000),
-			})
+			}, e.ID)
 		}
 	}
 	return st
+}
+
+func (st *State) add(m agent.Message, entryID string) {
+	st.Messages = append(st.Messages, m)
+	st.EntryIDs = append(st.EntryIDs, entryID)
 }
