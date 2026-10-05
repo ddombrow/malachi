@@ -9,7 +9,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -29,13 +28,14 @@ import (
 
 // Messages delivered to the Bubble Tea loop.
 type (
-	agentEventMsg   struct{ e agent.Event }
-	runDoneMsg      struct{ err error }
+	// sessionEventMsg carries one event from Session.Subscribe: an agent.Event
+	// or one of coding's session events.
+	sessionEventMsg struct{ e any }
 	bridgeClosedMsg struct{}
 )
 
-// bridge forwards harness events into the UI. Events are delivered through a
-// channel read by a tea.Cmd, so the harness goroutine never touches UI state.
+// bridge forwards session events into the UI. Events are delivered through a
+// channel read by a tea.Cmd, so the session's goroutines never touch UI state.
 type bridge struct {
 	ch    chan tea.Msg
 	done  chan struct{}
@@ -44,9 +44,9 @@ type bridge struct {
 
 func newBridge(s *coding.Session) *bridge {
 	b := &bridge{ch: make(chan tea.Msg, 4096), done: make(chan struct{})}
-	b.unsub = s.Harness.Subscribe(func(e agent.Event) {
+	b.unsub = s.Subscribe(func(e any) {
 		select {
-		case b.ch <- agentEventMsg{e}:
+		case b.ch <- sessionEventMsg{e}:
 		case <-b.done:
 		}
 	})
@@ -108,8 +108,6 @@ type model struct {
 	chrome        int // rows the block under the transcript currently uses
 	isDark        bool
 
-	running   bool
-	cancelRun context.CancelFunc
 	partial   *agent.AssistantMessage
 	lastReply string
 	sel       selection
@@ -128,27 +126,14 @@ type model struct {
 	// contextEstimated marks the gauge as sized locally rather than reported by
 	// the provider, so it is drawn with a sign that says so.
 	contextEstimated bool
-	// phase is the current /compact step, empty when idle; phaseCh carries
-	// progress from the summarisation running off the UI goroutine.
-	phase      string
-	compacting bool
-	// pendingPrompt is a prompt held while the session compacts itself, so a
-	// conversation that outgrows the window does not cost the user their turn.
-	pendingPrompt string
-	// summarizing is true from the moment a summarisation starts until its
-	// goroutine reports back. Unlike compacting, which drives the progress
-	// line and is cleared as soon as esc is pressed, it stays set until the
-	// work has really stopped, because Summarize replaces the transcript and
-	// nothing may start a run on the transcript it is about to replace.
-	summarizing bool
-	// autoCompacting marks a summarisation the session started itself to fit
-	// the context window, as opposed to the user's /compact.
-	autoCompacting bool
-	phaseStart     time.Time
-	phaseCh        <-chan string
-	cancelPhase    context.CancelFunc
-	quitting       bool
-	initial        string
+	// phase is the current compaction step shown in the live area, empty
+	// when no compaction is running. It follows the session's compaction
+	// events; whether work may start is the session's business, not the UI's.
+	phase       string
+	phaseReason coding.CompactionReason
+	phaseStart  time.Time
+	quitting    bool
+	initial     string
 }
 
 // Run starts the interactive UI. initialPrompt, if non-empty, is sent first.
@@ -164,9 +149,7 @@ func Run(s *coding.Session, initialPrompt string) (err error) {
 	p := tea.NewProgram(m)
 	_, err = p.Run()
 	m.bridge.close()
-	if m.cancelRun != nil {
-		m.cancelRun()
-	}
+	m.s.Abort()
 	if path := m.s.Path(); path != "" && fileExists(path) {
 		fmt.Printf("\nSession saved: %s\nResume with: malachi -c\n", shortenHome(path))
 	}
@@ -274,20 +257,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // noteTrim appends a marker line when a request pass has replaced tool
 // output since the last time the UI looked. Trimming is otherwise invisible:
 // the transcript and the session file are left alone on purpose.
-// compactPhaseMsg reports which step of a summarisation is running.
-type compactPhaseMsg string
-
-// compactDoneMsg ends a summarisation, with the summary or the reason there is
-// none. A cancelled compaction reports err and leaves the session untouched.
-type compactDoneMsg struct {
-	result *coding.SummarizeResult
-	err    error
+// clearPhase returns the live area to idle after a compaction.
+func (m *model) clearPhase() {
+	m.phase, m.phaseReason = "", ""
 }
 
-// clearPhase returns the live area to idle after a summarisation.
-func (m *model) clearPhase() {
-	m.phase, m.phaseCh, m.cancelPhase = "", nil, nil
-	m.compacting = false
+// busy reports whether the session is working on something: a run, a
+// compaction, or both.
+func (m *model) busy() bool {
+	st := m.s.State()
+	return st.Running || st.Compacting
 }
 
 func (m *model) noteTrim() {
@@ -385,82 +364,22 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		m.applyInputStyles()
 		return nil
 
-	case agentEventMsg:
+	case sessionEventMsg:
 		cmd := m.handleEvent(msg.e)
 		return tea.Batch(cmd, m.bridge.next())
-
-	case runDoneMsg:
-		m.running, m.cancelRun = false, nil
-		m.partial, m.tools = nil, nil
-		var cmds []tea.Cmd
-		if msg.err != nil {
-			cmds = append(cmds, m.printErr(msg.err))
-		}
-		if err := m.s.PersistError(); err != nil {
-			cmds = append(cmds, m.printErr(err))
-		}
-		if m.quitting {
-			cmds = append(cmds, tea.Quit)
-		}
-		return tea.Sequence(cmds...)
 
 	case submitMsg:
 		return m.submit(msg.text)
 
-	case compactPhaseMsg:
-		// A phase message can still be in flight when the compaction finishes:
-		// the summarising goroutine sends done while waitForPhase is still
-		// draining the channel, so done can be handled first and this arrives
-		// after the line was cleared, which would leave it stuck on screen for
-		// the rest of the session. Anything arriving once the run is over is
-		// stale.
-		if !m.compacting {
-			return nil
-		}
-		m.phase = string(msg)
-		return waitForPhase(m.phaseCh)
-
 	case compactTickMsg:
 		// One chain, re-armed only by its own message, so it cannot multiply.
-		if m.compacting {
+		if m.phase != "" {
 			return compactTick()
 		}
 		return nil
 
-	case compactDoneMsg:
-		m.clearPhase()
-		auto := m.autoCompacting
-		m.summarizing, m.autoCompacting = false, false
-		// A prompt held through the compaction (the one that triggered an
-		// automatic compaction, or one typed during /compact) is sent either
-		// way: failing to send it would mean retyping the turn.
-		prompt := m.pendingPrompt
-		m.pendingPrompt = ""
-		if msg.err != nil {
-			if errors.Is(msg.err, context.Canceled) {
-				if prompt != "" {
-					// The user stopped the compaction, not the prompt; give it
-					// back rather than sending it or dropping it.
-					if strings.TrimSpace(m.input.Value()) == "" {
-						m.input.SetValue(prompt)
-					}
-					return m.printDim("compaction cancelled — your prompt is back in the input")
-				}
-				return nil // already reported by esc
-			}
-			if prompt != "" {
-				return tea.Batch(m.printErr(msg.err), m.startRun(prompt))
-			}
-			return m.printErr(msg.err)
-		}
-		m.compactSummary(msg.result)
-		if prompt != "" {
-			if auto {
-				return tea.Batch(m.printDim("compacted automatically to fit the context window"), m.startRun(prompt))
-			}
-			return m.startRun(prompt)
-		}
-		return nil
+	case compactErrMsg:
+		return m.printErr(msg.err)
 
 	case printMsg:
 		return m.print(msg.render)
@@ -476,7 +395,7 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
-		if !m.running {
+		if !m.busy() {
 			return nil
 		}
 		return cmd
@@ -492,28 +411,27 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 				m.input.Reset()
 				return nil
 			}
-			if m.running {
+			if m.busy() {
+				// Quit once the session has stopped, so the abort is recorded
+				// rather than cut off.
 				m.quitting = true
-				m.s.Harness.Cancel()
+				m.s.Abort()
 				return nil
 			}
 			return tea.Quit
 		case "ctrl+d":
-			if m.input.Value() == "" && !m.running {
+			if m.input.Value() == "" && !m.busy() {
 				return tea.Quit
 			}
 		case "esc":
-			if m.phase != "" && m.cancelPhase != nil {
-				// The summarisation call is the user's to stop; nothing has
-				// been written yet, so cancelling leaves the session as it was.
-				m.cancelPhase()
-				m.printDim("compaction cancelled")
-				m.clearPhase()
+			// The compaction end event reports the cancellation, and hands
+			// back any prompt that was waiting for it.
+			if st := m.s.State(); st.Compacting {
+				m.s.Abort()
 				return nil
-			}
-			if m.running {
-				m.s.Harness.Cancel()
-				m.s.Harness.ClearQueues()
+			} else if st.Running {
+				m.s.Abort()
+				m.s.ClearQueue()
 				return nil
 			}
 		case "pgup":
@@ -550,60 +468,53 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 }
 
 // submit handles a line of input: a slash command, a steering message while
-// the agent runs, or a new prompt.
+// the agent runs, a prompt held through a compaction, or a new prompt. Which
+// of those it is, and whether it is allowed, is the session's decision.
 func (m *model) submit(text string) tea.Cmd {
 	if strings.HasPrefix(text, "/") {
 		return m.command(text)
 	}
-	if m.running {
-		m.s.Harness.Steer(agent.NewUserText(text))
-		return m.printDim("queued — will be sent after the current step")
+	st := m.s.State()
+	behavior := ""
+	if st.Running {
+		behavior = coding.BehaviorSteer
 	}
-	// A run started now would work on a transcript the summary is about to
-	// replace. Hold the prompt and send it once the compaction is done.
-	if m.summarizing {
-		if m.pendingPrompt != "" {
-			m.input.SetValue(text)
-			return m.printErr(errors.New("a prompt is already waiting for the compaction; send this one after it"))
-		}
-		m.pendingPrompt = text
+	if err := m.s.Submit(context.Background(), text, behavior); err != nil {
+		m.input.SetValue(text) // refused: keep what was typed
+		return m.printErr(err)
+	}
+	switch {
+	case st.Running:
+		return m.printDim("queued — will be sent after the current step")
+	case st.Compacting:
 		return m.printDim("held — will be sent when the compaction finishes")
 	}
-	// A conversation past the configured window is compacted before it is
-	// sent, rather than sent and rejected. The prompt waits for the summary
-	// rather than being queued, so the model sees it in the order it was typed.
-	if _, _, needed := m.s.NeedsCompaction(); needed {
-		return m.autoCompact(text)
-	}
-	return m.startRun(text)
-}
-
-// autoCompact folds the conversation because it outgrew the context window,
-// then sends the prompt that was waiting for it. The prompt is held, not
-// dropped, so the user does not retype it because the session got long.
-func (m *model) autoCompact(text string) tea.Cmd {
-	estimated, threshold, _ := m.s.NeedsCompaction()
-	m.pendingPrompt = text
-	m.autoCompacting = true
-	head := fmt.Sprintf("auto · compacting %s over %s", tokens(int64(estimated)), tokens(int64(threshold)))
-	return tea.Batch(m.summarize(head, m.s.AutoCompact), waitForPhase(m.phaseCh), compactTick())
-}
-
-func (m *model) startRun(text string) tea.Cmd {
-	ctx, cancel := context.WithCancel(context.Background())
-	m.running, m.cancelRun = true, cancel
-	s := m.s
-	run := func() tea.Msg {
-		err := s.Prompt(ctx, text)
-		cancel()
-		return runDoneMsg{err}
-	}
-	return tea.Batch(run, m.spin.Tick)
+	return m.spin.Tick
 }
 
 // handleEvent updates the live area and prints completed items.
-func (m *model) handleEvent(e agent.Event) tea.Cmd {
+func (m *model) handleEvent(e any) tea.Cmd {
 	switch ev := e.(type) {
+	case coding.CompactionStartEvent:
+		m.phaseReason, m.phaseStart = ev.Reason, time.Now()
+		m.phase = compactionHead(ev.Reason)
+		return tea.Batch(compactTick(), m.spin.Tick)
+	case coding.CompactionProgressEvent:
+		if m.phaseReason != "" {
+			m.phase = ev.Phase
+		}
+	case coding.CompactionEndEvent:
+		return m.compactionEnded(ev)
+	case coding.AgentSettledEvent:
+		m.partial, m.tools = nil, nil
+		var cmds []tea.Cmd
+		if err := m.s.PersistError(); err != nil {
+			cmds = append(cmds, m.printErr(err))
+		}
+		if m.quitting && !m.busy() {
+			cmds = append(cmds, tea.Quit)
+		}
+		return tea.Sequence(cmds...)
 	case *agent.MessageStartEvent:
 		if a, ok := ev.Message.(*agent.AssistantMessage); ok {
 			m.partial = a
@@ -698,7 +609,7 @@ func (m *model) View() tea.View {
 	v := tea.NewView("")
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
-	if m.quitting && !m.running {
+	if m.quitting && !m.busy() {
 		return v
 	}
 	top := m.r.st.dim.Render(strings.Repeat(highRule, max(1, m.width)))
@@ -740,7 +651,7 @@ func (m *model) live() string {
 		}
 		b.WriteString(item(m.r.gutter(toolIcon(t.name), m.r.st.toolRun, head)))
 	}
-	if m.running && m.partial == nil && len(m.tools) == 0 {
+	if m.s.State().Running && m.phase == "" && m.partial == nil && len(m.tools) == 0 {
 		b.WriteString(item(m.r.st.toolRun.Render(m.spin.View()) + m.r.st.dim.Render("  working…")))
 	}
 	// Summarising is its own phase, with the step named. No progress bar: a
@@ -757,7 +668,7 @@ func (m *model) live() string {
 		}
 		// Elapsed time is what separates "the model is thinking" from "this is
 		// wedged" when the character count has stopped moving.
-		if m.compacting {
+		if m.phaseReason != "" {
 			if secs := int(time.Since(m.phaseStart).Seconds()); secs >= 1 {
 				label += fmt.Sprintf(" · %ds", secs)
 			}
@@ -795,7 +706,7 @@ func (m *model) statusLine() string {
 		parts = append(parts, fmt.Sprintf("%d queued", n))
 	}
 	right := "/help"
-	if m.running {
+	if m.busy() {
 		right = "esc to cancel"
 	}
 	if !m.vp.AtBottom() {

@@ -2,7 +2,6 @@ package coding
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/ddombrow/malachi/agent"
 )
@@ -53,17 +52,6 @@ func (s *Session) NeedsCompaction() (estimated, threshold int, needed bool) {
 		return estimated, threshold, false
 	}
 	return estimated, threshold, true
-}
-
-// AutoCompact folds the conversation into a handover when the session has outgrown
-// the context window, reporting why it did and why it might not have.
-func (s *Session) AutoCompact(ctx context.Context, phases func(string)) (*SummarizeResult, error) {
-	estimated, threshold, needed := s.NeedsCompaction()
-	if !needed {
-		return nil, ErrNothingToSummarize
-	}
-	note := fmt.Sprintf(autoCompactNote, estimated, threshold)
-	return s.Summarize(ctx, note, phases)
 }
 
 // recoverOverflow compacts the conversation and prepares the request to be

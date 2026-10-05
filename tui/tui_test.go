@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -42,7 +41,7 @@ func TestStreamingTextIsLiveThenPrinted(t *testing.T) {
 	m := newTestModel(t)
 	partial := agent.NewAssistantMessage("m")
 	partial.Content = []agent.Content{&agent.TextContent{Text: "Hello wor"}}
-	m.Update(agentEventMsg{&agent.MessageUpdateEvent{Message: partial, AssistantMessageEvent: &agent.TextDelta{Delta: "wor", Partial: partial}}})
+	m.Update(sessionEventMsg{&agent.MessageUpdateEvent{Message: partial, AssistantMessageEvent: &agent.TextDelta{Delta: "wor", Partial: partial}}})
 	if v := m.View().Content; !strings.Contains(v, "Hello wor") {
 		t.Fatalf("live area missing partial text:\n%s", v)
 	}
@@ -65,8 +64,8 @@ func TestStreamingTextIsLiveThenPrinted(t *testing.T) {
 func TestToolLifecycle(t *testing.T) {
 	m := newTestModel(t)
 	args := map[string]any{"command": "go test ./..."}
-	m.Update(agentEventMsg{&agent.ToolExecutionStartEvent{ToolCallID: "c", ToolName: "bash", Args: args}})
-	m.Update(agentEventMsg{&agent.ToolExecutionUpdateEvent{ToolCallID: "c", ToolName: "bash", PartialResult: agent.TextResult("ok pkg/a")}})
+	m.Update(sessionEventMsg{&agent.ToolExecutionStartEvent{ToolCallID: "c", ToolName: "bash", Args: args}})
+	m.Update(sessionEventMsg{&agent.ToolExecutionUpdateEvent{ToolCallID: "c", ToolName: "bash", PartialResult: agent.TextResult("ok pkg/a")}})
 	v := m.View().Content
 	if !strings.Contains(v, "$ go test ./...") || !strings.Contains(v, "ok pkg/a") {
 		t.Fatalf("running tool not shown:\n%s", v)
@@ -113,7 +112,7 @@ func TestCopyLatestAssistantResponse(t *testing.T) {
 
 	a := agent.NewAssistantMessage("m")
 	a.Content = []agent.Content{&agent.TextContent{Text: "A **copyable** answer."}}
-	m.Update(agentEventMsg{&agent.MessageEndEvent{Message: a}})
+	m.Update(sessionEventMsg{&agent.MessageEndEvent{Message: a}})
 	if m.lastReply != "A **copyable** answer." {
 		t.Fatalf("stored reply = %q", m.lastReply)
 	}
@@ -294,10 +293,14 @@ func TestSpinnerStopsWhenIdle(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("idle session must not re-arm spinner")
 	}
-	m.running = true
-	_, cmd = m.Update(m.spin.Tick())
+	m.Update(sessionEventMsg{coding.CompactionStartEvent{Reason: coding.CompactionManual}})
+	// A compaction is work too, and its line carries the spinner.
+	release := make(chan struct{})
+	defer close(release)
+	busy := compactingModel(t, release)
+	_, cmd = busy.Update(busy.spin.Tick())
 	if cmd == nil {
-		t.Fatal("running session must keep the spinner ticking")
+		t.Fatal("a busy session must keep the spinner ticking")
 	}
 }
 
@@ -560,8 +563,8 @@ func TestContextGaugeMarksAnOverWindowPrompt(t *testing.T) {
 func TestCompactShowsPhasesAndTheSummary(t *testing.T) {
 	m := newTestModel(t)
 
-	m.compacting, m.phaseStart = true, time.Now()
-	m.phase = "summarizing"
+	m.Update(sessionEventMsg{coding.CompactionStartEvent{Reason: coding.CompactionManual}})
+	m.Update(sessionEventMsg{coding.CompactionProgressEvent{Reason: coding.CompactionManual, Phase: "summarizing"}})
 	if live := ansi.Strip(m.live()); !strings.Contains(live, "compact · summarizing") {
 		t.Errorf("live area should name the step: %q", live)
 	}
@@ -571,19 +574,19 @@ func TestCompactShowsPhasesAndTheSummary(t *testing.T) {
 		t.Errorf("compaction should not draw a bar: %q", ansi.Strip(m.live()))
 	}
 	// A step carrying a count reports it; a bare step says it is still to come.
-	m.phase = "summarizing 3.1 kB"
+	m.Update(sessionEventMsg{coding.CompactionProgressEvent{Reason: coding.CompactionManual, Phase: "summarizing 3.1 kB"}})
 	if live := ansi.Strip(m.live()); !strings.Contains(live, "summarizing 3.1 kB") {
 		t.Errorf("live area should carry the count: %q", live)
 	}
 
-	m.compactSummary(&coding.SummarizeResult{
+	m.Update(sessionEventMsg{coding.CompactionEndEvent{Reason: coding.CompactionManual, Result: &coding.SummarizeResult{
 		Summary:      "## Goal\nFix the parser.",
 		Replaced:     180,
 		Kept:         20,
 		TokensBefore: 255_200,
 		Usage:        agent.Usage{TotalTokens: 1500},
 		Warnings:     []string{"only 1 of 6 expected sections present"},
-	})
+	}}})
 	out := ansi.Strip(m.tr.text(m.r))
 	for _, want := range []string{
 		"compacted 180 messages into a summary · kept 20",
@@ -594,33 +597,8 @@ func TestCompactShowsPhasesAndTheSummary(t *testing.T) {
 			t.Errorf("transcript missing %q:\n%s", want, out)
 		}
 	}
-	m.clearPhase()
 	if m.phase != "" {
-		t.Error("clearPhase should leave the live area idle")
-	}
-}
-
-// A phase message can arrive after the compaction has finished: the summarising
-// goroutine sends done while the reader is still draining the channel, so done
-// can be handled first. Honouring the straggler puts the line back with nothing
-// left to clear it, and it stays for the rest of the session.
-func TestPhaseAfterCompletionIsIgnored(t *testing.T) {
-	m := newTestModel(t)
-	m.compacting, m.phaseStart = true, time.Now()
-	m.phase, m.phaseCh = "writing", make(chan string)
-
-	if _, cmd := m.Update(compactDoneMsg{err: context.Canceled}); cmd != nil {
-		t.Fatal("finishing a compaction should not command anything")
-	}
-	if live := ansi.Strip(m.live()); strings.Contains(live, "compact") {
-		t.Errorf("the compaction line should be gone once it has finished: %q", live)
-	}
-
-	if _, cmd := m.Update(compactPhaseMsg("writing")); cmd != nil {
-		t.Error("a stale phase message should not re-arm the reader")
-	}
-	if live := ansi.Strip(m.live()); strings.Contains(live, "compact") {
-		t.Fatalf("a phase arriving after completion came back: %q", live)
+		t.Error("the end of a compaction should leave the live area idle")
 	}
 }
 

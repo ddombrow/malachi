@@ -196,15 +196,17 @@ func TestNeedsCompactionFalseWhenNothingCanBeFolded(t *testing.T) {
 	}
 }
 
-func TestAutoCompactIsANoOpWhenNotNeeded(t *testing.T) {
-	fp := &overflowProvider{}
+// A conversation too short to fold is sent as is: compacting it would cost a
+// model call and could not make it smaller.
+func TestNoCompactionWhenNotNeeded(t *testing.T) {
+	fp := &overflowProvider{reply: "ok"}
 	s := newTestSession(t, 100_000, fp)
-	s.Harness.ReplaceMessages(longTranscript(3))
-	if _, err := s.AutoCompact(context.Background(), nil); err == nil {
-		t.Fatal("expected an error rather than a pointless compaction")
+	seedHistory(t, s, longTranscript(3))
+	if err := s.Prompt(context.Background(), "next"); err != nil {
+		t.Fatal(err)
 	}
-	if len(fp.requests) != 0 {
-		t.Errorf("a no-op compaction made %d provider calls", len(fp.requests))
+	if len(fp.requests) != 1 {
+		t.Errorf("want only the prompt's request, got %d provider calls", len(fp.requests))
 	}
 }
 

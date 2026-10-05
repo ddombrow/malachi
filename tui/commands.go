@@ -54,9 +54,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "help", "?":
 		return m.printDim(helpText)
 	case "quit", "exit", "q":
-		if m.running {
+		if m.busy() {
 			m.quitting = true
-			m.s.Harness.Cancel()
+			m.s.Abort()
 			return nil
 		}
 		return tea.Quit
@@ -189,49 +189,71 @@ func (m *model) showTrustNotice() {
 }
 
 func (m *model) compactCommand(arg string) tea.Cmd {
-	if m.running {
+	// Refuse here rather than only in the goroutine, so the message names the
+	// situation in the TUI's own words.
+	if st := m.s.State(); st.Running {
 		return m.printErr(errors.New("compact cannot run while the agent is working"))
-	}
-	if m.summarizing {
+	} else if st.Compacting {
 		return m.printErr(errors.New("a compaction is already running"))
 	}
-	m.pendingPrompt = ""
-	return tea.Batch(
-		m.summarize("compact", func(ctx context.Context, phases func(string)) (*coding.SummarizeResult, error) {
-			return m.s.Summarize(ctx, arg, phases)
-		}),
-		waitForPhase(m.phaseCh), compactTick())
+	// Progress, the summary and failures all arrive as session events; only a
+	// refusal that raced the check above is left to report from here.
+	s := m.s
+	return func() tea.Msg {
+		if _, err := s.Compact(context.Background(), arg); errors.Is(err, coding.ErrBusy) {
+			return compactErrMsg{err}
+		}
+		return nil
+	}
 }
 
-// summarize runs a compaction, arming the phase channel and the ticker that
-// keeps the progress line moving. head is shown until the model produces
-// bytes of its own, so the first moments of a long wait are not a blank line.
-// run is the compaction itself: the manual command and the automatic one
-// summarize differently, and both show progress the same way.
-func (m *model) summarize(head string, run func(context.Context, func(string)) (*coding.SummarizeResult, error)) tea.Cmd {
-	phases := make(chan string, 8)
-	// The run context belongs to the harness; a summarisation gets its own so esc can
-	// stop it without touching an agent run.
-	ctx, cancel := context.WithCancel(context.Background())
-	m.compacting, m.summarizing = true, true
-	m.phase, m.phaseStart = head, time.Now()
-	m.phaseCh, m.cancelPhase = phases, cancel
-	return func() tea.Msg {
-		defer close(phases)
-		res, err := run(ctx, func(phase string) {
-			select {
-			case phases <- phase:
-			case <-ctx.Done():
-			}
-		})
-		// A result means the transcript was replaced, even if esc arrived
-		// while it was being written; reporting that as cancelled would hide
-		// a compaction that happened.
-		if res == nil && ctx.Err() != nil {
-			return compactDoneMsg{err: context.Canceled}
-		}
-		return compactDoneMsg{result: res, err: err}
+// compactErrMsg reports a compaction that could not start.
+type compactErrMsg struct{ err error }
+
+// compactionHead is the progress line shown before the model has produced
+// anything, by why the compaction is happening.
+func compactionHead(reason coding.CompactionReason) string {
+	switch reason {
+	case coding.CompactionThreshold:
+		return "auto · compacting to fit the context window"
+	case coding.CompactionOverflow:
+		return "auto · compacting after the provider rejected the request for size"
 	}
+	return "compact"
+}
+
+// compactionEnded reports how a compaction finished. An aborted one hands
+// back any prompt that was waiting for it, rather than sending or dropping it.
+func (m *model) compactionEnded(ev coding.CompactionEndEvent) tea.Cmd {
+	m.clearPhase()
+	// The transcript the gauge measured has been replaced.
+	if st := m.s.ContextStats(); st.PromptEstimated() {
+		m.context, m.contextEstimated = st.EffectivePrompt(), true
+	}
+	var cmds []tea.Cmd
+	switch {
+	case ev.Aborted:
+		if ev.HeldPrompt != "" && strings.TrimSpace(m.input.Value()) == "" {
+			m.input.SetValue(ev.HeldPrompt)
+			cmds = append(cmds, m.printDim("compaction cancelled — your prompt is back in the input"))
+		} else {
+			cmds = append(cmds, m.printDim("compaction cancelled"))
+		}
+	case ev.ErrorMessage != "":
+		cmds = append(cmds, m.printErr(errors.New(ev.ErrorMessage)))
+	case ev.Result != nil:
+		m.compactSummary(ev.Result)
+		switch ev.Reason {
+		case coding.CompactionThreshold:
+			cmds = append(cmds, m.printDim("compacted automatically to fit the context window"))
+		case coding.CompactionOverflow:
+			cmds = append(cmds, m.printDim("compacted after the provider rejected the request for size; retrying"))
+		}
+	}
+	if m.quitting && !m.busy() {
+		cmds = append(cmds, tea.Quit)
+	}
+	return tea.Sequence(cmds...)
 }
 
 // compactTickMsg repaints the compaction line while a summarisation runs.
@@ -245,18 +267,6 @@ func compactTick() tea.Cmd {
 	return func() tea.Msg {
 		time.Sleep(250 * time.Millisecond)
 		return compactTickMsg{}
-	}
-}
-
-// waitForPhase re-reads the summarisation's progress channel. Each return is
-// re-armed by the handler, so one command reports every step.
-func waitForPhase(ch <-chan string) tea.Cmd {
-	return func() tea.Msg {
-		phase, ok := <-ch
-		if !ok {
-			return nil
-		}
-		return compactPhaseMsg(phase)
 	}
 }
 
@@ -323,12 +333,6 @@ func (m *model) modelCommand(arg string) tea.Cmd {
 			}}
 		}
 	}
-	if m.running {
-		return m.printErr(fmt.Errorf("wait for the current run to finish (or esc) before switching models"))
-	}
-	if m.summarizing {
-		return m.printErr(fmt.Errorf("wait for the compaction to finish (or esc) before switching models"))
-	}
 	if err := m.s.SetModel(arg); err != nil {
 		return m.printErr(err)
 	}
@@ -371,12 +375,6 @@ func (m *model) resumeCommand(arg string) tea.Cmd {
 
 // reopen swaps in a fresh (resume == "") or resumed session.
 func (m *model) reopen(resume string) tea.Cmd {
-	if m.running {
-		return m.printErr(fmt.Errorf("wait for the current run to finish (or esc) first"))
-	}
-	if m.summarizing {
-		return m.printErr(fmt.Errorf("wait for the compaction to finish (or esc) first"))
-	}
 	next, err := m.s.Reopen(resume)
 	if err != nil {
 		return m.printErr(err)

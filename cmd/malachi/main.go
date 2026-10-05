@@ -171,17 +171,22 @@ func printRun(s *coding.Session, prompt, mode string) int {
 	})
 
 	// A conversation past the configured window is compacted before it is
-	// sent. The one-shot path reports it plainly rather than waiting in
-	// silence, since there is no status line to show progress on.
-	if estimated, threshold, needed := s.NeedsCompaction(); needed {
+	// sent; Prompt does that. The one-shot path says so plainly, since there
+	// is no status line to show progress on.
+	_, _, compacting := s.NeedsCompaction()
+	compacting = compacting && s.AutoCompactionEnabled()
+	if compacting {
+		estimated, threshold, _ := s.NeedsCompaction()
 		fmt.Fprintf(os.Stderr, "malachi: compacting %d tokens over %d before sending\n", estimated, threshold)
-		if _, err := s.AutoCompact(ctx, nil); err != nil {
-			fmt.Fprintf(os.Stderr, "malachi: auto-compaction failed, sending anyway: %v\n", err)
-		}
 	}
 	if err := s.Prompt(ctx, prompt); err != nil {
 		fmt.Fprintln(os.Stderr, "malachi:", err)
 		return 1
+	}
+	if msgs := s.Harness.Messages(); compacting && len(msgs) > 0 {
+		if _, ok := msgs[0].(*agent.CompactionSummaryMessage); !ok {
+			fmt.Fprintln(os.Stderr, "malachi: auto-compaction failed; the prompt was sent anyway (see /session for the log)")
+		}
 	}
 	if err := s.PersistError(); err != nil {
 		fmt.Fprintln(os.Stderr, "malachi:", err)
