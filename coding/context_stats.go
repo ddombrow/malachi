@@ -70,12 +70,17 @@ type ContextStats struct {
 	// Window is the context window the session is configured against, filled
 	// in by the session so a readout can catch it being wrong.
 	Window int
+	// Stale is set when a compaction replaced the conversation the last
+	// measurement describes. Until the provider measures again, the estimate
+	// is the honest figure: the measurement is of a conversation that no
+	// longer exists.
+	Stale bool
 }
 
 // EffectivePrompt is the context figure to show: what the provider charged for
 // once it has said, and the local estimate before that.
 func (c ContextStats) EffectivePrompt() int64 {
-	if c.Samples > 0 {
+	if c.Samples > 0 && !c.Stale {
 		return c.PromptTokens
 	}
 	return c.EstimatedPrompt
@@ -83,7 +88,9 @@ func (c ContextStats) EffectivePrompt() int64 {
 
 // PromptEstimated reports that EffectivePrompt is a local estimate, so a
 // readout can say so rather than implying the provider agreed.
-func (c ContextStats) PromptEstimated() bool { return c.Samples == 0 && c.EstimatedPrompt > 0 }
+func (c ContextStats) PromptEstimated() bool {
+	return (c.Samples == 0 || c.Stale) && c.EstimatedPrompt > 0
+}
 
 // ToolTokens is the tool output in the last request, converted with the
 // measured ratio. Before anything has been measured it falls back to a
@@ -135,6 +142,7 @@ func (sm *ctxSampler) observe(m *agent.AssistantMessage, toolBytes int, trimSeq 
 	}
 
 	sm.stats.Samples++
+	sm.stats.Stale = false
 	sm.stats.PromptTokens = prompt
 	sm.stats.ToolBytes = toolBytes
 	sm.stats.Trimmed = trimmed
@@ -169,6 +177,14 @@ func (sm *ctxSampler) estimate(prompt, toolBytes int64) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.stats.EstimatedPrompt, sm.stats.EstimatedToolByte = prompt, int(toolBytes)
+}
+
+// compacted marks the last measurement as describing a conversation that a
+// compaction has since replaced.
+func (sm *ctxSampler) compacted() {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.stats.Stale = sm.stats.Samples > 0
 }
 
 func (sm *ctxSampler) get() ContextStats {
@@ -322,7 +338,7 @@ func exceedsConfiguredWindow(c ContextStats) bool {
 
 // ContextLine renders the measurement for /ctx in the TUI's plain style.
 func ContextLine(model string, c ContextStats) string {
-	if c.Samples == 0 {
+	if c.Samples == 0 || c.Stale {
 		if !c.PromptEstimated() {
 			return "no usage reported yet — this provider does not send token counts"
 		}

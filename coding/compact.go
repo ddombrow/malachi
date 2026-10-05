@@ -184,7 +184,7 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 	report("writing")
 	result := &SummarizeResult{
 		Summary:      summary,
-		TokensBefore: int(stats.PromptTokens),
+		TokensBefore: int(stats.EffectivePrompt()),
 		Replaced:     len(prefix),
 		Kept:         len(tail),
 		Usage:        usage,
@@ -218,6 +218,7 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 	s.trims.reset()
 	// The gauge would otherwise keep showing the size of a conversation that no
 	// longer exists, right up until the next reply.
+	s.ctxSampler.compacted()
 	s.estimateContext()
 	s.diag.LogCompaction(summary, result.Replaced, result.Kept, usage)
 	return result, nil

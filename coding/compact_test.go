@@ -632,3 +632,51 @@ func TestCompactBoundaryKeepsTheWholeWindowFromATurnBoundary(t *testing.T) {
 		t.Fatalf("kept %d messages starting with %T", len(messages)-keepFrom, messages[keepFrom])
 	}
 }
+
+// replyWithUsage answers with text and reports a measured prompt size.
+func replyWithUsage(text string, promptTokens int64) fake.Script {
+	return func(_ context.Context, _ agent.Request, b *ai.Builder) {
+		b.Text(text)
+		b.Message().Usage = agent.Usage{Input: promptTokens, TotalTokens: promptTokens}
+		b.Done(agent.StopStop)
+	}
+}
+
+// After a compaction the last measurement describes a conversation that no
+// longer exists. The gauge, NeedsCompaction and a later compaction's "before"
+// figure must use the fresh estimate until the provider measures again.
+func TestCompactionMakesTheLastMeasurementStale(t *testing.T) {
+	p := fake.New(replyWithUsage("ok", 900_000), fake.Text(goodSummary), replyWithUsage("next", 1234))
+	s, err := Open(Options{Cwd: t.TempDir(), Home: t.TempDir(), Settings: &Settings{}, Provider: p, NoSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Harness.ReplaceMessages(longConversation(15))
+	if err := s.Prompt(context.Background(), "measure me"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ContextStats().EffectivePrompt(); got != 900_000 {
+		t.Fatalf("measured prompt = %d", got)
+	}
+
+	if _, err := s.Summarize(context.Background(), "", nil); err != nil {
+		t.Fatal(err)
+	}
+	stats := s.ContextStats()
+	if !stats.PromptEstimated() || stats.EffectivePrompt() >= 900_000 {
+		t.Fatalf("after compaction the gauge still shows the old measurement: %d (estimated=%v)", stats.EffectivePrompt(), stats.PromptEstimated())
+	}
+	if _, _, needed := s.NeedsCompaction(); needed {
+		t.Fatal("a just-compacted conversation reads as needing compaction")
+	}
+	if line := ContextLine("m", stats); !strings.Contains(line, "estimated") {
+		t.Fatalf("/ctx should say the figure is an estimate:\n%s", line)
+	}
+
+	if err := s.Prompt(context.Background(), "again"); err != nil {
+		t.Fatal(err)
+	}
+	if st := s.ContextStats(); st.Stale || st.EffectivePrompt() != 1234 {
+		t.Fatalf("a new measurement should replace the estimate: %+v", st)
+	}
+}
