@@ -2,7 +2,6 @@ package coding
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/ddombrow/malachi/agent"
@@ -74,7 +73,7 @@ func (s *Session) AutoCompact(ctx context.Context, phases func(string)) (*Summar
 // authentication failure, a malformed request, or a cancelled run would only
 // fail again, more slowly.
 func (s *Session) recoverOverflow(ctx context.Context, req agent.Request, failed *agent.AssistantMessage) (agent.Request, []agent.Message, bool) {
-	if ctx.Err() != nil || !isContextLimit(failed) {
+	if ctx.Err() != nil || !isContextLimit(failed) || !s.AutoCompactionEnabled() {
 		return req, nil, false
 	}
 	if _, err := compactBoundary(s.Harness.Messages()); err != nil {
@@ -84,13 +83,12 @@ func (s *Session) recoverOverflow(ctx context.Context, req agent.Request, failed
 		s.diag.LogOverflowRecoveryFailed(err)
 		return req, nil, false
 	}
-	// Phases are not reported: the provider call this is recovering from is
-	// still in flight, and a frontend is showing the error, not a compaction.
-	result, err := s.Summarize(ctx, "The conversation exceeded the model's context window and is being compacted so the request can be retried.", nil)
+	result, aborted, err := s.compactDuring(ctx,
+		CompactionOverflow, "The conversation exceeded the model's context window and is being compacted so the request can be retried.", "")
+	if aborted {
+		return req, nil, false
+	}
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return req, nil, false
-		}
 		s.diag.LogOverflowRecoveryFailed(err)
 		return req, nil, false
 	}

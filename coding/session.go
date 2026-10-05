@@ -84,6 +84,21 @@ type Session struct {
 	runtime agent.Provider
 	// bus delivers agent and session events to Subscribe listeners.
 	bus *eventBus
+
+	// Run state; see run.go. runMu guards these and nothing else, so it is
+	// never held across a call into the harness or a listener.
+	runMu          sync.Mutex
+	running        bool
+	compacting     bool
+	held           string
+	runCancel      context.CancelFunc
+	compactCancel  context.CancelFunc
+	autoCompactOff bool
+	lastQueue      string
+	// life is cancelled by Close: work the session starts on its own, such
+	// as a prompt held through a compaction, ends with the session.
+	life       context.Context
+	lifeCancel context.CancelFunc
 	// sessionID is the routing and prompt-cache hint the loop sends. Anything
 	// else calling the provider directly has to send it too: a gateway that
 	// requires the header answers 400 when it is missing.
@@ -275,7 +290,17 @@ func Open(opts Options) (*Session, error) {
 	// Frontends hear about agent events last, through the session's own
 	// queue, after persistence and measurement have run.
 	s.bus = newEventBus()
-	s.Harness.Subscribe(func(e agent.Event) { s.bus.publish(e) })
+	s.Harness.Subscribe(func(e agent.Event) {
+		s.bus.publish(e)
+		// The harness takes queued messages off the queue as it injects them;
+		// report the change, after the message itself.
+		if end, ok := e.(*agent.MessageEndEvent); ok {
+			if _, isUser := end.Message.(*agent.UserMessage); isUser {
+				s.emitQueue()
+			}
+		}
+	})
+	s.life, s.lifeCancel = context.WithCancel(context.Background())
 	// A resumed session is already large, and the gauge that exists to say so
 	// used to stay blank until the first reply arrived. Size it locally now,
 	// once the sampler it feeds exists.
@@ -458,12 +483,6 @@ func (s *Session) recordSetting(e *session.Entry) {
 	s.append(e)
 }
 
-// Prompt sends a user message and runs the agent to completion.
-func (s *Session) Prompt(ctx context.Context, text string) error {
-	s.diag.NewRun()
-	return s.Harness.Prompt(ctx, agent.NewUserText(text))
-}
-
 // Diagnostics is the failure log for this session's home.
 func (s *Session) Diagnostics() *Diagnostics { return s.diag }
 
@@ -533,6 +552,9 @@ func (s *Session) ForceTrim(budget int) bool {
 
 // SetModel switches provider/model for subsequent turns.
 func (s *Session) SetModel(ref string) error {
+	if err := s.busy(); err != nil {
+		return err
+	}
 	pc, model, err := s.settings.ResolveModel(ref)
 	if err != nil {
 		return err
@@ -557,6 +579,7 @@ func (s *Session) SetModel(ref string) error {
 	s.recordSetting(session.NewModelChange(pc.Name, model))
 	if changedLevel {
 		s.recordSetting(session.NewThinkingLevelChange(level))
+		s.emit(ThinkingLevelChangedEvent{Level: level})
 	}
 	return nil
 }
@@ -574,6 +597,7 @@ func (s *Session) SetThinkingLevel(level string) error {
 	s.thinking = level
 	s.mu.Unlock()
 	s.recordSetting(session.NewThinkingLevelChange(level))
+	s.emit(ThinkingLevelChangedEvent{Level: level})
 	return nil
 }
 
@@ -643,11 +667,13 @@ func (s *Session) PersistError() error {
 	return s.persistErr
 }
 
-// Close detaches persistence and stops event delivery.
+// Close detaches persistence, ends work the session started on its own, and
+// stops event delivery.
 func (s *Session) Close() {
 	if s.unsub != nil {
 		s.unsub()
 	}
+	s.lifeCancel()
 	s.bus.close()
 }
 
@@ -658,6 +684,9 @@ func (s *Session) Close() {
 // The receiver keeps working if Reopen fails; on success it is closed and
 // must no longer be used.
 func (s *Session) Reopen(resume string) (*Session, error) {
+	if err := s.busy(); err != nil {
+		return nil, err
+	}
 	opts := Options{Cwd: s.cwd, Home: s.home, Settings: s.settings, Resume: resume}
 	opts.Trust = s.TrustOverride
 	if resume == "" {
