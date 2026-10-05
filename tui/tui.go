@@ -135,11 +135,20 @@ type model struct {
 	// pendingPrompt is a prompt held while the session compacts itself, so a
 	// conversation that outgrows the window does not cost the user their turn.
 	pendingPrompt string
-	phaseStart    time.Time
-	phaseCh       <-chan string
-	cancelPhase   context.CancelFunc
-	quitting      bool
-	initial       string
+	// summarizing is true from the moment a summarisation starts until its
+	// goroutine reports back. Unlike compacting, which drives the progress
+	// line and is cleared as soon as esc is pressed, it stays set until the
+	// work has really stopped, because Summarize replaces the transcript and
+	// nothing may start a run on the transcript it is about to replace.
+	summarizing bool
+	// autoCompacting marks a summarisation the session started itself to fit
+	// the context window, as opposed to the user's /compact.
+	autoCompacting bool
+	phaseStart     time.Time
+	phaseCh        <-chan string
+	cancelPhase    context.CancelFunc
+	quitting       bool
+	initial        string
 }
 
 // Run starts the interactive UI. initialPrompt, if non-empty, is sent first.
@@ -420,15 +429,22 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 
 	case compactDoneMsg:
 		m.clearPhase()
-		// A compaction the session started itself carries a prompt through it.
-		// That prompt is sent either way: failing to send it would mean
-		// retyping the turn because the session got long.
+		auto := m.autoCompacting
+		m.summarizing, m.autoCompacting = false, false
+		// A prompt held through the compaction (the one that triggered an
+		// automatic compaction, or one typed during /compact) is sent either
+		// way: failing to send it would mean retyping the turn.
 		prompt := m.pendingPrompt
 		m.pendingPrompt = ""
 		if msg.err != nil {
 			if errors.Is(msg.err, context.Canceled) {
 				if prompt != "" {
-					return m.printErr(errors.New("compaction cancelled — prompt not sent"))
+					// The user stopped the compaction, not the prompt; give it
+					// back rather than sending it or dropping it.
+					if strings.TrimSpace(m.input.Value()) == "" {
+						m.input.SetValue(prompt)
+					}
+					return m.printDim("compaction cancelled — your prompt is back in the input")
 				}
 				return nil // already reported by esc
 			}
@@ -439,7 +455,10 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		}
 		m.compactSummary(msg.result)
 		if prompt != "" {
-			return tea.Batch(m.printDim("compacted automatically to fit the context window"), m.startRun(prompt))
+			if auto {
+				return tea.Batch(m.printDim("compacted automatically to fit the context window"), m.startRun(prompt))
+			}
+			return m.startRun(prompt)
 		}
 		return nil
 
@@ -540,6 +559,16 @@ func (m *model) submit(text string) tea.Cmd {
 		m.s.Harness.Steer(agent.NewUserText(text))
 		return m.printDim("queued — will be sent after the current step")
 	}
+	// A run started now would work on a transcript the summary is about to
+	// replace. Hold the prompt and send it once the compaction is done.
+	if m.summarizing {
+		if m.pendingPrompt != "" {
+			m.input.SetValue(text)
+			return m.printErr(errors.New("a prompt is already waiting for the compaction; send this one after it"))
+		}
+		m.pendingPrompt = text
+		return m.printDim("held — will be sent when the compaction finishes")
+	}
 	// A conversation past the configured window is compacted before it is
 	// sent, rather than sent and rejected. The prompt waits for the summary
 	// rather than being queued, so the model sees it in the order it was typed.
@@ -555,6 +584,7 @@ func (m *model) submit(text string) tea.Cmd {
 func (m *model) autoCompact(text string) tea.Cmd {
 	estimated, threshold, _ := m.s.NeedsCompaction()
 	m.pendingPrompt = text
+	m.autoCompacting = true
 	head := fmt.Sprintf("auto · compacting %s over %s", tokens(int64(estimated)), tokens(int64(threshold)))
 	return tea.Batch(m.summarize(head, m.s.AutoCompact), waitForPhase(m.phaseCh), compactTick())
 }

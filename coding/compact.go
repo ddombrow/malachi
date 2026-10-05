@@ -167,6 +167,12 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 		return nil, errors.New("compact: the model returned an empty summary; nothing was changed")
 	}
 
+	// Last point at which cancelling leaves the session untouched: past
+	// here the entry is written and the transcript replaced.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	report("writing")
 	result := &SummarizeResult{
 		Summary:      summary,

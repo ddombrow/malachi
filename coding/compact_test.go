@@ -2,6 +2,7 @@ package coding
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"slices"
@@ -495,5 +496,24 @@ func TestSummarizeRequestIncludesUserMessages(t *testing.T) {
 	sent := agent.MessageText(p.Requests[0].Messages[0])
 	if !strings.Contains(sent, "please fix the parser in internal/scan.go") {
 		t.Fatalf("the user's request never reached the summariser:\n%s", sent)
+	}
+}
+
+// Cancelling after the summary arrived but before it was written changes
+// nothing, like cancelling at any earlier point.
+func TestSummarizeCancelledBeforeWritingChangesNothing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	s := summarizeFixture(t, fake.Text(goodSummary))
+	before := len(s.Harness.Messages())
+	_, err := s.Summarize(ctx, "", func(phase string) {
+		if phase == "validating" {
+			cancel()
+		}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(s.Harness.Messages()) != before {
+		t.Fatal("a cancelled compaction replaced the transcript")
 	}
 }

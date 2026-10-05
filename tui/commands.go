@@ -192,7 +192,7 @@ func (m *model) compactCommand(arg string) tea.Cmd {
 	if m.running {
 		return m.printErr(errors.New("compact cannot run while the agent is working"))
 	}
-	if m.phase != "" {
+	if m.summarizing {
 		return m.printErr(errors.New("a compaction is already running"))
 	}
 	m.pendingPrompt = ""
@@ -213,7 +213,7 @@ func (m *model) summarize(head string, run func(context.Context, func(string)) (
 	// The run context belongs to the harness; a summarisation gets its own so esc can
 	// stop it without touching an agent run.
 	ctx, cancel := context.WithCancel(context.Background())
-	m.compacting = true
+	m.compacting, m.summarizing = true, true
 	m.phase, m.phaseStart = head, time.Now()
 	m.phaseCh, m.cancelPhase = phases, cancel
 	return func() tea.Msg {
@@ -224,7 +224,10 @@ func (m *model) summarize(head string, run func(context.Context, func(string)) (
 			case <-ctx.Done():
 			}
 		})
-		if ctx.Err() != nil {
+		// A result means the transcript was replaced, even if esc arrived
+		// while it was being written; reporting that as cancelled would hide
+		// a compaction that happened.
+		if res == nil && ctx.Err() != nil {
 			return compactDoneMsg{err: context.Canceled}
 		}
 		return compactDoneMsg{result: res, err: err}
@@ -323,6 +326,9 @@ func (m *model) modelCommand(arg string) tea.Cmd {
 	if m.running {
 		return m.printErr(fmt.Errorf("wait for the current run to finish (or esc) before switching models"))
 	}
+	if m.summarizing {
+		return m.printErr(fmt.Errorf("wait for the compaction to finish (or esc) before switching models"))
+	}
 	if err := m.s.SetModel(arg); err != nil {
 		return m.printErr(err)
 	}
@@ -367,6 +373,9 @@ func (m *model) resumeCommand(arg string) tea.Cmd {
 func (m *model) reopen(resume string) tea.Cmd {
 	if m.running {
 		return m.printErr(fmt.Errorf("wait for the current run to finish (or esc) first"))
+	}
+	if m.summarizing {
+		return m.printErr(fmt.Errorf("wait for the compaction to finish (or esc) first"))
 	}
 	next, err := m.s.Reopen(resume)
 	if err != nil {
