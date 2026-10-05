@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,5 +165,31 @@ func TestDiagnosticsFollowModelSwitch(t *testing.T) {
 	last := recs[len(recs)-1]
 	if last["provider"] != "b" || last["model"] != "model-b" {
 		t.Fatalf("record attributed to %v/%v", last["provider"], last["model"])
+	}
+}
+
+func TestDiagnosticsLogRotates(t *testing.T) {
+	old := maxLogBytes
+	maxLogBytes = 2048
+	t.Cleanup(func() { maxLogBytes = old })
+
+	d := NewDiagnostics(t.TempDir())
+	for i := 0; i < 100; i++ {
+		d.LogPersistError(fmt.Errorf("failure %d %s", i, strings.Repeat("x", 100)))
+	}
+	cur, err := os.Stat(d.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := os.Stat(d.Path() + ".1")
+	if err != nil {
+		t.Fatal("no backup after the log passed its cap")
+	}
+	if cur.Size() > maxLogBytes+512 || backup.Size() > maxLogBytes+512 {
+		t.Fatalf("log %d bytes, backup %d bytes; cap %d", cur.Size(), backup.Size(), maxLogBytes)
+	}
+	recs := readLog(t, d.Path())
+	if last := recs[len(recs)-1]["error"].(string); !strings.HasPrefix(last, "failure 99 ") {
+		t.Fatalf("the newest record was lost: %q", last)
 	}
 }

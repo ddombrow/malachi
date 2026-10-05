@@ -57,6 +57,10 @@ func (d *Diagnostics) Bind(sessionPath, provider, model string) {
 	d.ctx["model"] = model
 }
 
+// maxLogBytes is the size at which the log is rotated. A variable so tests
+// can rotate without writing megabytes.
+var maxLogBytes int64 = 8 << 20
+
 // runSeq keeps run ids distinct within a millisecond.
 var runSeq atomic.Uint64
 
@@ -235,6 +239,13 @@ func (d *Diagnostics) record(kind string, fields map[string]any) {
 	}
 	if err := os.MkdirAll(filepath.Dir(d.path), 0o700); err != nil {
 		return
+	}
+	// The log is shared by every session and records a sample per reply, so
+	// it is capped: past maxLogBytes the file becomes the single backup and a
+	// new one starts. Disk use stays under twice the cap, and the most recent
+	// history is always kept.
+	if info, err := os.Stat(d.path); err == nil && info.Size() >= maxLogBytes {
+		_ = os.Rename(d.path, d.path+".1")
 	}
 	fh, err := os.OpenFile(d.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
