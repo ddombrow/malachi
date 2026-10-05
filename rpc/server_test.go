@@ -255,13 +255,22 @@ func TestFramingSplitsOnlyOnLFAndAcceptsCRLF(t *testing.T) {
 
 func TestOversizedRecordIsRejectedAndReadingContinues(t *testing.T) {
 	c := serve(t, openSession(t, fake.New()))
-	go c.send(`{"id":"huge","type":"get_state","pad":"`+strings.Repeat("x", maxRecordBytes)+`"}`, `{"id":"after","type":"get_state"}`)
+	// 16 MiB fills the pipe, so write from a goroutine and report back here:
+	// t.Fatal belongs to the test's own goroutine.
+	written := make(chan error, 1)
+	go func() {
+		_, err := io.WriteString(c.in, `{"id":"huge","type":"get_state","pad":"`+strings.Repeat("x", maxRecordBytes)+"\"}\n"+`{"id":"after","type":"get_state"}`+"\n")
+		written <- err
+	}()
 	r := c.next("the size error", func(r record) bool { return r["type"] == "response" })
 	if r["success"] != false || !strings.Contains(fmt.Sprint(r["error"]), "16 MiB") {
 		t.Fatalf("oversized record: %v", r)
 	}
 	if r := c.response("after"); r["success"] != true {
 		t.Fatalf("record after the oversized one: %v", r)
+	}
+	if err := <-written; err != nil {
+		t.Fatal(err)
 	}
 	c.close()
 }
