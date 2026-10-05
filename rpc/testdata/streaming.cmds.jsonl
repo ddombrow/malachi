@@ -1,0 +1,6 @@
+{"id": "p", "type": "prompt", "message": "start"}
+{"__wait": 0.2}
+{"id": "again", "type": "prompt", "message": "no behavior"}
+{"id": "s", "type": "steer", "message": "steer this"}
+{"id": "f", "type": "prompt", "message": "after", "streamingBehavior": "followUp"}
+{"__wait": 2.0}

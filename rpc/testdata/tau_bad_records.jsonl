@@ -1,0 +1,5 @@
+{"type":"response","command":"parse","success":false,"error":"Failed to parse command: Expecting value"}
+{"type":"response","command":"parse","success":false,"error":"Command must be a JSON object"}
+{"type":"response","command":"parse","success":false,"error":"Command requires a string 'type'","id":1}
+{"type":"response","command":"nope","success":false,"error":"Unknown command: nope","id":2}
+{"type":"response","command":"get_state","success":true,"id":3,"data":{"model":{"id":"fake","name":"fake","api":"openai-completions","provider":"openai","baseUrl":"","reasoning":true,"input":["text"],"contextWindow":128000,"maxTokens":16384,"cost":{"input":0.0,"output":0.0,"cacheRead":0.0,"cacheWrite":0.0}},"thinkingLevel":"medium","isStreaming":false,"isCompacting":false,"steeringMode":"one-at-a-time","followUpMode":"one-at-a-time","sessionFile":"/var/folders/8h/58t46wgj5pq3smjjkdxjzf8c0000gn/T/tmpi5sqq73g/session.jsonl","sessionId":"","sessionName":null,"autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}}

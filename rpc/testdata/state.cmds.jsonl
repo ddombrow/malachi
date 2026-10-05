@@ -1,0 +1,5 @@
+{"id": "state", "type": "get_state"}
+{"id": "models", "type": "get_available_models"}
+{"id": "levels", "type": "get_available_thinking_levels"}
+{"id": "thinking", "type": "set_thinking_level", "level": "off"}
+{"id": "state2", "type": "get_state"}

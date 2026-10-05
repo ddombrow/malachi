@@ -1,0 +1,1 @@
+{"type":"response","command":"compact","success":true,"id":"compact","data":{"summary":"real summary","firstKeptEntryId":"e7a15da52b2d4dca89c49dfc8afe9b18","tokensBefore":60835,"estimatedTokensAfter":20740,"details":{}}}

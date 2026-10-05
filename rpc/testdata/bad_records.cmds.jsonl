@@ -1,0 +1,5 @@
+{"__raw": "not-json"}
+{"__raw": "[1]"}
+{"__raw": "{\"id\":1}"}
+{"id": 2, "type": "nope"}
+{"id": 3, "type": "get_state"}

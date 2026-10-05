@@ -1,0 +1,5 @@
+{"id": "p", "type": "prompt", "message": "question"}
+{"__wait": 1.0}
+{"id": "stats", "type": "get_session_stats"}
+{"id": "messages", "type": "get_messages"}
+{"id": "last", "type": "get_last_assistant_text"}
