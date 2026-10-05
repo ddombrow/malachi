@@ -385,6 +385,28 @@ func byteCount(n int) string {
 	return fmt.Sprintf("%d B", n)
 }
 
+// toolDefinitionBytes is the size of the tool definitions as a request
+// carries them. agent.Tool itself cannot be marshalled (Execute is a func),
+// so this encodes the part that goes on the wire: name, description and
+// parameter schema, in the function envelope the provider sends.
+func toolDefinitionBytes(tools []*agent.Tool) int {
+	n := 0
+	for _, t := range tools {
+		raw, err := json.Marshal(map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        t.Name,
+				"description": t.Description,
+				"parameters":  t.Parameters,
+			},
+		})
+		if err == nil {
+			n += len(raw)
+		}
+	}
+	return n
+}
+
 // estimatePromptTokens sizes a request that has not been sent. Everything the
 // wire would carry is counted — system prompt, tool definitions, conversation —
 // and converted with the measured tokens-per-byte once one exists, falling back
@@ -398,9 +420,7 @@ func estimatePromptTokens(system string, tools []*agent.Tool, messages []agent.M
 	var total, tool int
 	count := func(raw []byte) { total += len(raw) }
 	count([]byte(system))
-	if raw, err := json.Marshal(tools); err == nil {
-		total += len(raw)
-	}
+	total += toolDefinitionBytes(tools)
 	for _, m := range messages {
 		raw, err := json.Marshal(m)
 		if err != nil {

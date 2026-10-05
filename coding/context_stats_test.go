@@ -332,3 +332,22 @@ func TestEstimateGrowsWithTheConversation(t *testing.T) {
 		t.Errorf("doubling the conversation did not grow the estimate: %d then %d", before, after)
 	}
 }
+
+// Tool definitions ride along with every request, so they are part of the
+// prompt. agent.Tool cannot be marshalled whole (Execute is a func); the
+// estimate must still count the schemas the provider receives.
+func TestEstimateCountsToolDefinitions(t *testing.T) {
+	tools := CodingTools(t.TempDir())
+	schemas := toolDefinitionBytes(tools)
+	if schemas < 2000 {
+		t.Fatalf("tool definitions measured as %d bytes; the built-in schemas are several kB", schemas)
+	}
+	const ratio = 0.25 // tokens per byte
+	without, _ := estimatePromptTokens("sys", nil, nil, ratio)
+	with, _ := estimatePromptTokens("sys", tools, nil, ratio)
+	// The estimate truncates the combined total, so allow one token of
+	// rounding against the schemas measured alone.
+	if got, want := with-without, int64(float64(schemas)*ratio); got < want-1 || got > want+1 {
+		t.Fatalf("tools added %d tokens to the estimate, want about %d", got, want)
+	}
+}
