@@ -207,3 +207,21 @@ func TestAutoCompactIsANoOpWhenNotNeeded(t *testing.T) {
 		t.Errorf("a no-op compaction made %d provider calls", len(fp.requests))
 	}
 }
+
+// A rejection compaction cannot rescue is logged as what it is, not as a
+// failure to write the session file.
+func TestFailedOverflowRecoveryIsLoggedAsSuch(t *testing.T) {
+	fp := &overflowProvider{failFirst: true}
+	s := newTestSession(t, 100_000, fp)
+	seedHistory(t, s, longTranscript(2)) // too short to compact
+	if err := s.Prompt(context.Background(), "go on"); err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]int{}
+	for _, rec := range readLog(t, s.Diagnostics().Path()) {
+		kinds[rec["kind"].(string)]++
+	}
+	if kinds["overflow_recovery_failed"] != 1 || kinds["persist_error"] != 0 {
+		t.Fatalf("log kinds = %v", kinds)
+	}
+}

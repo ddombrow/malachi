@@ -81,7 +81,7 @@ func (s *Session) recoverOverflow(ctx context.Context, req agent.Request, failed
 		// Too little history to fold. Summarizing cannot shrink a conversation
 		// that is already short, so the request is genuinely as small as it
 		// will get and a retry would be pointless.
-		s.diag.LogPersistError(fmt.Errorf("overflow recovery: %w", err))
+		s.diag.LogOverflowRecoveryFailed(err)
 		return req, nil, false
 	}
 	// Phases are not reported: the provider call this is recovering from is
@@ -91,7 +91,7 @@ func (s *Session) recoverOverflow(ctx context.Context, req agent.Request, failed
 		if errors.Is(err, context.Canceled) {
 			return req, nil, false
 		}
-		s.diag.LogPersistError(fmt.Errorf("overflow recovery: %w", err))
+		s.diag.LogOverflowRecoveryFailed(err)
 		return req, nil, false
 	}
 	// Continue from the compacted transcript, not the loop's copy, and rebuild

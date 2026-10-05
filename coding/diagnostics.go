@@ -151,6 +151,15 @@ func (d *Diagnostics) LogOverflowRecovery(replaced, kept int, u agent.Usage) {
 	})
 }
 
+// LogOverflowRecoveryFailed records a context-window rejection that could not
+// be rescued by compacting. It is its own kind so it is not mistaken for a
+// session-file failure, which is a different problem with a different fix.
+func (d *Diagnostics) LogOverflowRecoveryFailed(err error) {
+	d.record("overflow_recovery_failed", map[string]any{
+		"error": truncate(err.Error(), 2000),
+	})
+}
+
 // LogTrust records a project-trust decision, by path and outcome only. Which
 // directories were trusted is the thing worth being able to audit later.
 func (d *Diagnostics) LogTrust(t TrustState) {
