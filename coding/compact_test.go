@@ -576,3 +576,39 @@ func TestSummarizeFollowsModelSwitch(t *testing.T) {
 		t.Fatalf("summary went to a=%v b=%v; want only b, as model-b", gotA, gotB)
 	}
 }
+
+// One long agentic turn has no user message near the end. The tail must still
+// open where a turn can be resumed, not on a result whose call was summarized.
+func TestCompactBoundaryNeverOrphansAToolResult(t *testing.T) {
+	messages := []agent.Message{agent.NewUserText("refactor everything")}
+	for i := 0; i < 30; i++ {
+		a := agent.NewAssistantMessage("m")
+		a.StopReason = agent.StopToolUse
+		a.Content = []agent.Content{
+			&agent.ToolCall{ID: fmt.Sprintf("c%d-a", i), Name: "read", Arguments: map[string]any{}},
+			&agent.ToolCall{ID: fmt.Sprintf("c%d-b", i), Name: "read", Arguments: map[string]any{}},
+		}
+		messages = append(messages, a,
+			&agent.ToolResultMessage{ToolCallID: fmt.Sprintf("c%d-a", i), ToolName: "read"},
+			&agent.ToolResultMessage{ToolCallID: fmt.Sprintf("c%d-b", i), ToolName: "read"})
+	}
+	// With 91 messages the naive cut (91-20) lands on a tool result.
+	if _, ok := messages[len(messages)-compactKeepMessages].(*agent.ToolResultMessage); !ok {
+		t.Fatal("fixture no longer exercises the orphan case")
+	}
+
+	keepFrom, err := compactBoundary(messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := messages[keepFrom].(*agent.ToolResultMessage); ok {
+		t.Fatalf("tail opens on an orphaned tool result at %d", keepFrom)
+	}
+	tail := messages[keepFrom:]
+	if got := agent.ProviderContext(tail); len(got) != len(tail) {
+		t.Fatalf("the tail needed repair before sending (%d -> %d messages)", len(tail), len(got))
+	}
+	if len(tail) < compactKeepMessages {
+		t.Fatalf("tail shrank to %d messages; stepping back should only ever keep more", len(tail))
+	}
+}
