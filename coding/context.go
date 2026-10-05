@@ -22,11 +22,11 @@ const (
 	maxLedgerFieldBytes     = 240
 )
 
-// Compaction is the state of the request view. Results is how many tool
+// TrimEvent is the state of the request view. Results is how many tool
 // results are currently kept out of it; NewResults is how many the latest
 // pass newly trimmed. Seq moves only when that grows, so a UI can tell a fresh
 // trim from a pass that merely re-applied the same markers.
-type Compaction struct {
+type TrimEvent struct {
 	Results int
 	// NewResults is what a pass newly trimmed. The transcript is never
 	// rewritten, so every pass re-applies the same markers; only this counts
@@ -38,23 +38,23 @@ type Compaction struct {
 	Seq           uint64
 }
 
-type compactionLog struct {
+type trimLog struct {
 	mu sync.Mutex
-	Compaction
+	TrimEvent
 }
 
 // reset clears the reported state, for when the transcript it described has
 // been replaced.
-func (l *compactionLog) reset() {
+func (l *trimLog) reset() {
 	if l == nil {
 		return
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.Compaction = Compaction{}
+	l.TrimEvent = TrimEvent{}
 }
 
-func (l *compactionLog) note(results, newResults, before, after, ledgerEntries int) {
+func (l *trimLog) note(results, newResults, before, after, ledgerEntries int) {
 	if l == nil || results == 0 {
 		return
 	}
@@ -72,13 +72,13 @@ func (l *compactionLog) note(results, newResults, before, after, ledgerEntries i
 	l.Seq++
 }
 
-func (l *compactionLog) get() Compaction {
+func (l *trimLog) get() TrimEvent {
 	if l == nil {
-		return Compaction{}
+		return TrimEvent{}
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.Compaction
+	return l.TrimEvent
 }
 
 type toolResultSize struct {
@@ -93,7 +93,7 @@ type codingContextPreparer struct {
 	mu sync.Mutex
 
 	cwd       string
-	log       *compactionLog
+	log       *trimLog
 	prefix    []agent.Message
 	calls     map[string]*agent.ToolCall
 	records   []string
@@ -113,7 +113,7 @@ type codingContextPreparer struct {
 // and uses copy-on-write for compacted results. It is used serially by
 // Harness.Run; the mutex also keeps it safe when request preparation is invoked
 // directly from another goroutine, as /compact does.
-func newCodingContextPreparer(cwd string, log *compactionLog) *codingContextPreparer {
+func newCodingContextPreparer(cwd string, log *trimLog) *codingContextPreparer {
 	return &codingContextPreparer{cwd: cwd, log: log, calls: map[string]*agent.ToolCall{}, trimmed: map[int]bool{}}
 }
 
@@ -122,9 +122,9 @@ func (c *codingContextPreparer) prepare(req agent.Request) agent.Request {
 	defer c.mu.Unlock()
 
 	c.update(req.Messages)
-	compacted, results, fresh, before, after := compactToolResultsWithSizes(req.Messages, c.results, c.trimmed, c.totalSize, c.budgetLocked())
+	trimmed, results, fresh, before, after := trimToolResultsWithSizes(req.Messages, c.results, c.trimmed, c.totalSize, c.budgetLocked())
 	if results > 0 {
-		req.Messages = compacted
+		req.Messages = trimmed
 		entries := 0
 		if ledger := ledgerText(c.records); ledger != "" {
 			req.Messages = insertBeforeLastAssistant(req.Messages, &agent.UserMessage{Content: agent.UserContent{Text: ledger}})
@@ -284,10 +284,10 @@ func sameMessage(a, b agent.Message) bool {
 	return aValue.Type() == bValue.Type() && aValue.Kind() == reflect.Pointer && aValue.Pointer() == bValue.Pointer()
 }
 
-// compactToolResults keeps tool-call/result pairs intact while replacing old
+// trimToolResults keeps tool-call/result pairs intact while replacing old
 // result payloads until their combined context-visible content fits the byte
 // budget. The most recent result is retained even when it alone exceeds it.
-func compactToolResults(messages []agent.Message, budget int) ([]agent.Message, int, int, int, int) {
+func trimToolResults(messages []agent.Message, budget int) ([]agent.Message, int, int, int, int) {
 	var results []toolResultSize
 	total := 0
 	for i, m := range messages {
@@ -297,17 +297,17 @@ func compactToolResults(messages []agent.Message, budget int) ([]agent.Message, 
 			total += n
 		}
 	}
-	return compactToolResultsWithSizes(messages, results, map[int]bool{}, total, budget)
+	return trimToolResultsWithSizes(messages, results, map[int]bool{}, total, budget)
 }
 
-// compactToolResultsWithSizes replaces old result payloads with markers until
+// trimToolResultsWithSizes replaces old result payloads with markers until
 // the context-visible bytes fit the budget, keeping tool-call/result pairs
 // intact and the most recent result whole. The transcript is never rewritten,
 // so every pass re-applies the same markers; trimmed records which result
 // indexes have already been replaced so a pass can report only what it newly
-// trimmed. It returns the compacted view, how many results are trimmed out of
+// trimmed. It returns the trimmed view, how many results are trimmed out of
 // it, how many were newly trimmed, and the byte totals either side.
-func compactToolResultsWithSizes(messages []agent.Message, results []toolResultSize, trimmed map[int]bool, total, budget int) (out []agent.Message, count, fresh int, before, after int) {
+func trimToolResultsWithSizes(messages []agent.Message, results []toolResultSize, trimmed map[int]bool, total, budget int) (out []agent.Message, count, fresh int, before, after int) {
 	if budget < 0 {
 		budget = 0
 	}

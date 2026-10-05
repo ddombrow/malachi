@@ -117,9 +117,9 @@ type model struct {
 	last      *lastTool
 	usage     agent.Usage
 	context   int64 // tokens in the most recent request
-	// compactionSeq is the last compaction counter rendered as a transcript
-	// marker; a newer one means a request pass replaced tool output.
-	compactionSeq uint64
+	// trimSeq is the last trim counter rendered as a transcript marker; a
+	// newer one means a request pass replaced tool output.
+	trimSeq uint64
 	// contextEstimated marks the gauge as sized locally rather than reported by
 	// the provider, so it is drawn with a sign that says so.
 	contextEstimated bool
@@ -252,13 +252,13 @@ func (m *model) applyInputStyles() {
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmd := m.update(msg)
-	m.noteCompaction()
+	m.noteTrim()
 	m.refresh()
 	return m, cmd
 }
 
-// noteCompaction appends a marker line when a request pass has replaced tool
-// output since the last time the UI looked. Compaction is otherwise invisible:
+// noteTrim appends a marker line when a request pass has replaced tool
+// output since the last time the UI looked. Trimming is otherwise invisible:
 // the transcript and the session file are left alone on purpose.
 // compactPhaseMsg reports which step of a summarisation is running.
 type compactPhaseMsg string
@@ -276,18 +276,18 @@ func (m *model) clearPhase() {
 	m.compacting = false
 }
 
-func (m *model) noteCompaction() {
-	c := m.s.Compaction()
+func (m *model) noteTrim() {
+	c := m.s.Trim()
 	// A summary replaced the transcript, so the previous figures no longer
 	// describe anything: drop them silently rather than reporting zeroes.
 	if c.Seq == 0 {
-		m.compactionSeq = 0
+		m.trimSeq = 0
 		return
 	}
-	if c.Seq == m.compactionSeq {
+	if c.Seq == m.trimSeq {
 		return
 	}
-	m.compactionSeq = c.Seq
+	m.trimSeq = c.Seq
 	word := "results"
 	if c.NewResults == 1 {
 		word = "result"
@@ -746,7 +746,7 @@ func (m *model) statusLine() string {
 	}
 	// Compaction trims what the provider sees without touching the transcript,
 	// so the bar is the only always-visible trace of it.
-	if c := m.s.Compaction(); c.Seq > 0 {
+	if c := m.s.Trim(); c.Seq > 0 {
 		parts = append(parts, "cmp "+tokens(int64(c.After)))
 	}
 	steer, follow := m.s.Harness.Queued()

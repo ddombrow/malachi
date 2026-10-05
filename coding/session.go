@@ -61,7 +61,7 @@ type Session struct {
 	diag       *Diagnostics
 	unsub      func()
 	liveModels map[string][]string // provider name -> fetched model ids
-	compaction *compactionLog
+	trims      *trimLog
 	preparer   *codingContextPreparer
 	ctxSampler *ctxSampler
 	// trust records whether the working directory's instruction files were
@@ -221,8 +221,8 @@ func Open(opts Options) (*Session, error) {
 		sessionID = strings.TrimSuffix(filepath.Base(s.file.Path()), ".jsonl")
 	}
 	s.sessionID = sessionID
-	s.compaction = &compactionLog{}
-	s.preparer = newCodingContextPreparer(cwd, s.compaction)
+	s.trims = &trimLog{}
+	s.preparer = newCodingContextPreparer(cwd, s.trims)
 	s.runtime = provider
 	s.system, s.tools = s.buildPrompt(tools), tools
 	s.Harness = agent.NewHarness(agent.HarnessConfig{
@@ -451,9 +451,9 @@ func (s *Session) Prompt(ctx context.Context, text string) error {
 // Diagnostics is the failure log for this session's home.
 func (s *Session) Diagnostics() *Diagnostics { return s.diag }
 
-// Compaction reports the latest request-view tool-output reduction. Seq is 0
-// until compaction has fired. The saved transcript is not rewritten.
-func (s *Session) Compaction() Compaction { return s.compaction.get() }
+// Trim reports the latest request-view tool-output reduction. Seq is 0 until
+// trimming has fired. The saved transcript is not rewritten.
+func (s *Session) Trim() TrimEvent { return s.trims.get() }
 
 // ContextStats reports what the provider actually charged for each request,
 // so the cost of tool output can be derived instead of guessed.
@@ -473,7 +473,7 @@ func (s *Session) observeContext(e agent.Event) {
 	if !ok {
 		return
 	}
-	seq := s.compaction.get().Seq
+	seq := s.trims.get().Seq
 	s.ctxSampler.observe(m, s.preparer.toolBytes(), seq)
 	stats := s.ctxSampler.get()
 	s.diag.LogContextSample(m.Model, stats)
@@ -502,10 +502,10 @@ func (s *Session) toolOutputBudget(c ContextStats) int {
 
 // Compact asks for the next provider request to trim tool output harder than
 // the default ceiling: everything above budget bytes is replaced by a marker
-// and the ledger is refreshed. A budget of 0 compacts as much as possible.
-// It reports whether there was anything left to compact, so a caller can say
-// so instead of silently doing nothing.
-func (s *Session) Compact(budget int) bool {
+// and the ledger is refreshed. A budget of 0 trims as much as possible. It
+// reports whether there was anything left to trim, so a caller can say so
+// instead of silently doing nothing.
+func (s *Session) ForceTrim(budget int) bool {
 	if budget < 0 {
 		budget = 0
 	}

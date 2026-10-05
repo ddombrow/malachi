@@ -177,7 +177,7 @@ func (d *Diagnostics) LogContextSample(model string, c ContextStats) {
 		"promptTokens": c.PromptTokens,
 		"toolBytes":    c.ToolBytes,
 		"samples":      c.Samples,
-		"compacted":    c.Compacted,
+		"trimmed":      c.Trimmed,
 	}
 	if c.Ratio > 0 {
 		fields["tokensPerByte"] = c.Ratio

@@ -40,7 +40,7 @@ const (
 type ctxSample struct {
 	PromptTokens int64
 	ToolBytes    int
-	Compacted    bool
+	Trimmed      bool
 }
 
 // ContextStats reports the measured shape of a session's context. Every field
@@ -54,8 +54,8 @@ type ContextStats struct {
 	PromptTokens int64
 	PeakPrompt   int64   // highest prompt size seen
 	ToolBytes    int     // tool-result bytes carried by the last request
-	Compacted    bool    // whether the last request was compacted
-	Compactions  uint64  // passes so far
+	Trimmed      bool    // whether the last request trimmed tool output
+	Trims        uint64  // passes so far
 	Ratio        float64 // measured tokens per byte of tool output; 0 until known
 	Ratios       int     // how many deltas the ratio is based on
 	LimitErrors  int     // requests rejected for exceeding the context window
@@ -109,7 +109,7 @@ type ctxSampler struct {
 	mu      sync.Mutex
 	ring    []ctxSample
 	stats   ContextStats
-	lastSeq uint64 // compaction Seq already accounted for
+	lastSeq uint64 // trim Seq already accounted for
 }
 
 func newCtxSampler() *ctxSampler { return &ctxSampler{ring: make([]ctxSample, 0, ctxSampleRing)} }
@@ -118,18 +118,18 @@ func newCtxSampler() *ctxSampler { return &ctxSampler{ring: make([]ctxSample, 0,
 // synchronously from the harness dispatch, before the next request is
 // prepared, so the preparer's tool bytes belong to the request the usage
 // describes.
-func (sm *ctxSampler) observe(m *agent.AssistantMessage, toolBytes int, compactionSeq uint64) {
+func (sm *ctxSampler) observe(m *agent.AssistantMessage, toolBytes int, trimSeq uint64) {
 	if m.Usage.PromptTokens() <= 0 {
 		return // providers that report no usage give us nothing to measure
 	}
-	compacted := compactionSeq > sm.lastSeq
-	sm.lastSeq = compactionSeq
+	trimmed := trimSeq > sm.lastSeq
+	sm.lastSeq = trimSeq
 
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
 	prompt := m.Usage.PromptTokens()
-	sm.ring = append(sm.ring, ctxSample{PromptTokens: prompt, ToolBytes: toolBytes, Compacted: compacted})
+	sm.ring = append(sm.ring, ctxSample{PromptTokens: prompt, ToolBytes: toolBytes, Trimmed: trimmed})
 	if len(sm.ring) > ctxSampleRing {
 		sm.ring = sm.ring[len(sm.ring)-ctxSampleRing:]
 	}
@@ -137,8 +137,8 @@ func (sm *ctxSampler) observe(m *agent.AssistantMessage, toolBytes int, compacti
 	sm.stats.Samples++
 	sm.stats.PromptTokens = prompt
 	sm.stats.ToolBytes = toolBytes
-	sm.stats.Compacted = compacted
-	sm.stats.Compactions = compactionSeq
+	sm.stats.Trimmed = trimmed
+	sm.stats.Trims = trimSeq
 	if prompt > sm.stats.PeakPrompt {
 		sm.stats.PeakPrompt = prompt
 	}
@@ -348,14 +348,14 @@ func ContextLine(model string, c ContextStats) string {
 		fmt.Fprintf(&b, "\n  measured       not yet — need %s of tool output between two requests",
 			byteCount(minRatioDeltaBytes))
 	}
-	compactions := "none"
-	if c.Compactions > 0 {
-		compactions = fmt.Sprintf("%d passes", c.Compactions)
-		if c.Compacted {
-			compactions += " (the last request was one)"
+	trims := "none"
+	if c.Trims > 0 {
+		trims = fmt.Sprintf("%d passes", c.Trims)
+		if c.Trimmed {
+			trims += " (the last request was one)"
 		}
 	}
-	fmt.Fprintf(&b, "\n  compaction     %s", compactions)
+	fmt.Fprintf(&b, "\n  trims          %s", trims)
 	fmt.Fprintf(&b, "\n  limit errors   %d", c.LimitErrors)
 	fmt.Fprintf(&b, "\n  requests       %d measured", c.Samples)
 	if exceedsConfiguredWindow(c) {

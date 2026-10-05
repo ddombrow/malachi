@@ -80,11 +80,11 @@ func TestContextSamplerUsesMedian(t *testing.T) {
 }
 
 // Compaction and limit errors are counted as they pass through.
-func TestContextSamplerTracksCompactionAndLimitErrors(t *testing.T) {
+func TestContextSamplerTracksTrimsAndLimitErrors(t *testing.T) {
 	sm := newCtxSampler()
 	sm.observe(assistant(1000), 10, 0)
 	sm.observe(assistant(2000), 20, 3) // a pass fired before this request
-	if got := sm.get(); !got.Compacted || got.Compactions != 3 {
+	if got := sm.get(); !got.Trimmed || got.Trims != 3 {
 		t.Errorf("compaction not recorded: %+v", got)
 	}
 
@@ -212,7 +212,7 @@ func TestContextLineRendersBothStates(t *testing.T) {
 	}
 	line := ContextLine("kimi-k2.7-code", ContextStats{
 		Samples: 5, PromptTokens: 40_000, PeakPrompt: 41_000, ToolBytes: 163_840,
-		Ratio: 0.25, Ratios: 4, Compactions: 3, LimitErrors: 0,
+		Ratio: 0.25, Ratios: 4, Trims: 3, LimitErrors: 0,
 	})
 	for _, want := range []string{"kimi-k2.7-code", "40.0k", "peak 41.0k", "160.0 kB", "40.0k", "0.25 tokens per byte", "3 passes", "limit errors   0"} {
 		if !strings.Contains(line, want) {

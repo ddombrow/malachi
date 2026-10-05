@@ -11,7 +11,7 @@ import (
 	"github.com/ddombrow/malachi/ai/fake"
 )
 
-func TestCodingRequestCompactsOldResultsWithoutChangingTranscript(t *testing.T) {
+func TestCodingRequestTrimsOldResultsWithoutChangingTranscript(t *testing.T) {
 	cwd := t.TempDir()
 	oldText, recentText := strings.Repeat("old", 15_000), strings.Repeat("new", 15_000)
 	oldCall := &agent.ToolCall{ID: "old-call", Name: "read", Arguments: map[string]any{"path": "old.go"}}
@@ -173,7 +173,7 @@ func TestCompactionDoesNotRewriteSavedSession(t *testing.T) {
 	}
 }
 
-func TestCompactionPreservesErrorsAndImagesAreCounted(t *testing.T) {
+func TestTrimPreservesErrorsAndImagesAreCounted(t *testing.T) {
 	tooLarge := strings.Repeat("x", defaultToolResultBudget+100)
 	errorResult := &agent.ToolResultMessage{
 		ToolCallID: "error", ToolName: "bash", IsError: true,
@@ -186,28 +186,28 @@ func TestCompactionPreservesErrorsAndImagesAreCounted(t *testing.T) {
 	errorMessages := []agent.Message{errorResult, &agent.ToolResultMessage{
 		ToolCallID: "recent", ToolName: "read", Content: []agent.Content{&agent.TextContent{Text: "recent"}},
 	}}
-	compactedErrors, n, _, _, _ := compactToolResults(errorMessages, 1024)
+	trimmedErrors, n, _, _, _ := trimToolResults(errorMessages, 1024)
 	if n == 0 {
 		t.Fatal("oversized error should compact")
 	}
-	gotError := compactedErrors[0].(*agent.ToolResultMessage)
+	gotError := trimmedErrors[0].(*agent.ToolResultMessage)
 	if !gotError.IsError || !strings.Contains(gotError.Text(), "trimmed bash tool error") {
 		t.Fatalf("error status lost during compaction: %+v", gotError)
 	}
 	imageMessages := []agent.Message{imageResult, &agent.ToolResultMessage{
 		ToolCallID: "recent", ToolName: "read", Content: []agent.Content{&agent.TextContent{Text: "recent"}},
 	}}
-	compactedImages, n, _, _, _ := compactToolResults(imageMessages, 1024)
+	trimmedImages, n, _, _, _ := trimToolResults(imageMessages, 1024)
 	if n == 0 {
 		t.Fatal("oversized image should compact")
 	}
-	gotImage := compactedImages[0].(*agent.ToolResultMessage)
+	gotImage := trimmedImages[0].(*agent.ToolResultMessage)
 	if !strings.Contains(gotImage.Text(), "trimmed read tool output") {
 		t.Fatalf("image bytes must count toward budget: %q", gotImage.Text())
 	}
 }
 
-func TestCompactionRetainsOversizedMostRecentResult(t *testing.T) {
+func TestTrimRetainsOversizedMostRecentResult(t *testing.T) {
 	old := &agent.ToolResultMessage{
 		ToolCallID: "old", ToolName: "read",
 		Content: []agent.Content{&agent.TextContent{Text: strings.Repeat("o", 1024)}},
@@ -217,7 +217,7 @@ func TestCompactionRetainsOversizedMostRecentResult(t *testing.T) {
 		ToolCallID: "recent", ToolName: "read",
 		Content: []agent.Content{&agent.TextContent{Text: recentText}},
 	}
-	compacted, n, _, _, _ := compactToolResults([]agent.Message{old, recent}, defaultToolResultBudget)
+	compacted, n, _, _, _ := trimToolResults([]agent.Message{old, recent}, defaultToolResultBudget)
 	if n == 0 {
 		t.Fatal("older result should compact")
 	}
@@ -231,9 +231,9 @@ func TestCompactionRetainsOversizedMostRecentResult(t *testing.T) {
 
 // Compaction is reported to the UI even though nothing is persisted, and a
 // forced pass applies to exactly one request.
-func TestCompactionStatsAndForcedBudget(t *testing.T) {
+func TestTrimStatsAndForcedBudget(t *testing.T) {
 	cwd := t.TempDir()
-	log := &compactionLog{}
+	log := &trimLog{}
 	p := newCodingContextPreparer(cwd, log)
 
 	small := agent.NewAssistantMessage("fake")
@@ -297,7 +297,7 @@ func TestCompactionStatsAndForcedBudget(t *testing.T) {
 // never rewritten, so every request trims the same results again. Reporting
 // that once per request produced pairs of identical markers.
 func TestRepeatedPassesReportOnlyNewlyTrimmedResults(t *testing.T) {
-	log := &compactionLog{}
+	log := &trimLog{}
 	p := newCodingContextPreparer(t.TempDir(), log)
 
 	var messages []agent.Message

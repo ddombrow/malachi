@@ -193,7 +193,7 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 	// The transcript the preparer measured is gone, so its caches and its
 	// reported figures no longer describe anything.
 	s.preparer.reset()
-	s.compaction.reset()
+	s.trims.reset()
 	// The gauge would otherwise keep showing the size of a conversation that no
 	// longer exists, right up until the next reply.
 	s.estimateContext()

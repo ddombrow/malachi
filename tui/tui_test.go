@@ -384,7 +384,7 @@ func TestInputPromptMatchesUserGutter(t *testing.T) {
 
 // Compaction never touches the transcript, so the status bar and a transcript
 // marker are the only way the user learns the model's view was trimmed.
-func TestCompactionIsVisible(t *testing.T) {
+func TestTrimmingIsVisible(t *testing.T) {
 	m := newTestModel(t)
 	if strings.Contains(ansi.Strip(m.statusLine()), "cmp ") {
 		t.Fatal("status bar shows cmp before anything has compacted")
@@ -411,7 +411,7 @@ func TestCompactionIsVisible(t *testing.T) {
 	}
 	m.Update(nil)
 
-	c := m.s.Compaction()
+	c := m.s.Trim()
 	if c.Seq == 0 {
 		t.Fatal("a provider request with 80 kB of tool output must compact")
 	}

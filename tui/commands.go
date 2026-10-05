@@ -22,7 +22,7 @@ const helpText = `Commands:
   /trim [bytes]      trim old tool output before the next request
   /trust [yes|no]    load this directory's AGENTS.md into the prompt
   /trust parent    do the same for every directory beneath the parent
-  /ctx               measured context: tokens, tool output share, compactions
+  /ctx               measured context: tokens, tool output share, trim passes
   /new                start a fresh session
   /resume [n|name]    list recent sessions, or resume one
   /copy               copy the latest assistant response
@@ -285,8 +285,8 @@ func (m *model) trimCommand(arg string) tea.Cmd {
 		}
 		budget = n
 	}
-	if !m.s.Compact(budget) {
-		c := m.s.Compaction()
+	if !m.s.ForceTrim(budget) {
+		c := m.s.Trim()
 		return m.printDim(fmt.Sprintf("nothing to trim: %s of tool output, already within the limit",
 			bytesHuman(c.Before)))
 	}
