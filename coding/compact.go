@@ -274,22 +274,25 @@ func compactBoundary(messages []agent.Message) (int, error) {
 	return keepFrom, nil
 }
 
-// transcriptJSON renders the conversation for the summariser. Tool calls and
-// tool results are omitted: the ledger already carries that, and sending it
-// again invites the model to restate it.
+// transcriptJSON renders the conversation for the summariser: what the user
+// asked and what the assistant said. Tool calls and tool results are omitted:
+// the ledger already carries that, and sending it again invites the model to
+// restate it. An assistant turn that called tools still contributes its text,
+// which is usually where the reasoning about those calls is.
 func transcriptJSON(messages []agent.Message) string {
 	var b strings.Builder
 	b.WriteString("```json\n[")
 	first := true
 	for _, m := range messages {
-		if _, ok := m.(*agent.ToolResultMessage); ok {
-			continue
-		}
-		a, ok := m.(*agent.AssistantMessage)
-		if !ok {
-			continue
-		}
-		if a.StopReason == agent.StopToolUse {
+		var role string
+		switch m.(type) {
+		case *agent.UserMessage:
+			role = "user"
+		case *agent.AssistantMessage:
+			role = "assistant"
+		default:
+			// Tool results, and a previous summary, which is passed on
+			// separately as the previous handover.
 			continue
 		}
 		text := agent.MessageText(m)
@@ -300,10 +303,6 @@ func transcriptJSON(messages []agent.Message) string {
 			b.WriteString(",")
 		}
 		first = false
-		role := "assistant"
-		if _, ok := m.(*agent.UserMessage); ok {
-			role = "user"
-		}
 		fmt.Fprintf(&b, "\n{\"role\": %s, \"text\": %s}", quoteJSON(role), quoteJSON(text))
 	}
 	b.WriteString("\n]\n```")

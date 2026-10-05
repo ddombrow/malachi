@@ -453,3 +453,47 @@ func TestSummarizeAfterResumeKeepsTailOnDisk(t *testing.T) {
 		}
 	}
 }
+
+// The summariser is asked for the user's goal, so it has to see the user.
+func TestSummarizerSeesUserAndAssistantText(t *testing.T) {
+	toolTurn := agent.NewAssistantMessage("m")
+	toolTurn.Content = []agent.Content{
+		&agent.TextContent{Text: "the bug is a missing lookahead; patching"},
+		&agent.ToolCall{ID: "c1", Name: "edit", Arguments: map[string]any{"path": "SECRET-ARG"}},
+	}
+	toolTurn.StopReason = agent.StopToolUse
+	body := transcriptJSON([]agent.Message{
+		&agent.CompactionSummaryMessage{Summary: "PREVIOUS-SUMMARY"},
+		agent.NewUserText("please fix trailing commas"),
+		toolTurn,
+		&agent.ToolResultMessage{ToolCallID: "c1", ToolName: "edit", Content: []agent.Content{&agent.TextContent{Text: "TOOL-OUTPUT"}}},
+		assistantText("done"),
+	})
+	for _, want := range []string{`"role": "user", "text": "please fix trailing commas"`, "missing lookahead", `"text": "done"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("summariser input is missing %q:\n%s", want, body)
+		}
+	}
+	for _, leak := range []string{"TOOL-OUTPUT", "SECRET-ARG", "PREVIOUS-SUMMARY"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("summariser input should not contain %q", leak)
+		}
+	}
+}
+
+// The request Summarize actually sends carries the user's words.
+func TestSummarizeRequestIncludesUserMessages(t *testing.T) {
+	p := fake.New(fake.Text(goodSummary))
+	s, err := Open(Options{Cwd: t.TempDir(), Home: t.TempDir(), Settings: &Settings{}, Provider: p, NoSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Harness.ReplaceMessages(longConversation(15))
+	if _, err := s.Summarize(context.Background(), "", nil); err != nil {
+		t.Fatal(err)
+	}
+	sent := agent.MessageText(p.Requests[0].Messages[0])
+	if !strings.Contains(sent, "please fix the parser in internal/scan.go") {
+		t.Fatalf("the user's request never reached the summariser:\n%s", sent)
+	}
+}
