@@ -1,9 +1,11 @@
 """Record tau's RPC mode responding to fixed command scripts.
 
 malachi's rpc golden test replays the same scripts against its own server and
-compares the structure of what comes back. Regenerate with:
+compares the structure of what comes back. Run it from the root of a
+checkout of tau (https://github.com/huggingface/tau), so tau and its test
+helpers are importable:
 
-    cd ~/src/tau && uv run python ~/src/malachi/rpc/testdata/gen_tau.py
+    cd <tau checkout> && uv run python <malachi checkout>/rpc/testdata/gen_tau.py
 
 Each scenario writes <name>.cmds.jsonl (the input, with {"__wait": seconds}
 pauses) and tau_<name>.jsonl (tau's output, one record per line).
@@ -21,8 +23,12 @@ from pathlib import Path
 
 import anyio
 
-TAU = Path(__file__).resolve()
-sys.path.insert(0, str(Path.home() / "src/tau/tests"))
+# tau's event helpers live in its tests directory, which is not installed;
+# the script runs from the root of a tau checkout, so find them there.
+TAU_TESTS = Path.cwd() / "tests"
+if not (TAU_TESTS / "pi_event_helpers.py").is_file():
+    sys.exit("gen_tau.py: run this from the root of a tau checkout (no tests/pi_event_helpers.py here)")
+sys.path.insert(0, str(TAU_TESTS))
 
 from pi_event_helpers import assistant_done, assistant_start, text_delta  # noqa: E402
 from tau_agent import AssistantMessage, Usage, UserMessage  # noqa: E402

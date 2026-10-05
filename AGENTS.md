@@ -1,6 +1,7 @@
 # Malachi Agent Instructions
 
-Malachi is a Go coding-agent harness modeled on tau (`~/src/tau`), itself a
+Malachi is a Go coding-agent harness modeled on tau
+(https://github.com/huggingface/tau; keep a checkout of it at hand), itself a
 Python port of Pi. Keep Pi's separation of concerns:
 
 ```text
