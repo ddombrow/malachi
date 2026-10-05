@@ -401,7 +401,7 @@ func distinctiveIdentifiers(messages []agent.Message) []string {
 	var out []string
 	for _, m := range messages {
 		for _, match := range identifierish.FindAllString(agent.MessageText(m), -1) {
-			id := strings.Trim(strings.Trim(match, "`"), "")
+			id := strings.Trim(match, "`")
 			if len(id) < 4 || seen[id] {
 				continue
 			}

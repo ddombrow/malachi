@@ -47,8 +47,8 @@ func TestResolveTrustDefaultsToWithholding(t *testing.T) {
 }
 
 func TestResolveTrustTrustsProjectWithNoInstructions(t *testing.T) {
-	home, cwd := project(t)
-	cwd = t.TempDir() // no AGENTS.md here
+	home, _ := project(t)
+	cwd := t.TempDir() // no AGENTS.md here
 	state := ResolveTrust(home, cwd, TrustAsk, "")
 	if !state.Trusted() {
 		t.Error("a project with no instruction files is not a question worth asking")

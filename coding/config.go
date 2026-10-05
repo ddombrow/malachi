@@ -74,9 +74,9 @@ const defaultContextWindow = 128_000
 
 // ContextWindowTokens is the provider's context window, or the default when
 // the configuration does not say.
-func (c ProviderConfig) ContextWindowTokens() int {
-	if c.ContextWindow > 0 {
-		return c.ContextWindow
+func (pc ProviderConfig) ContextWindowTokens() int {
+	if pc.ContextWindow > 0 {
+		return pc.ContextWindow
 	}
 	return defaultContextWindow
 }

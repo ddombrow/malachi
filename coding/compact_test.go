@@ -79,7 +79,7 @@ func TestSummarizeReplacesPrefixKeepsTail(t *testing.T) {
 	}
 
 	after := s.Harness.Messages()
-	if len(after) != res.Replaced-res.Replaced+res.Kept+1 {
+	if len(after) != res.Kept+1 {
 		t.Fatalf("want 1 summary + %d kept, got %d messages", res.Kept, len(after))
 	}
 	summary, ok := after[0].(*agent.CompactionSummaryMessage)

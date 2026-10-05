@@ -80,8 +80,9 @@ type TrustState struct {
 // Trusted reports whether project instructions were folded into the prompt.
 func (t TrustState) Trusted() bool { return t.Decision == TrustTrusted }
 
-// trustEntry is one saved decision. Only exact paths are saved: a decision
-// about one directory should not silently extend to a sibling.
+// trustEntry is one saved decision, recorded against one exact directory. It
+// is inherited by that directory's descendants (see nearest) but never
+// extends to a sibling.
 type trustEntry struct {
 	Decision TrustDecision `json:"decision"`
 	At       time.Time     `json:"at"`
@@ -137,7 +138,7 @@ func (s *TrustStore) nearest(path string) (string, trustEntry, bool) {
 	}
 }
 
-// SaveTrust writes a decision for one directory. The file is rewritten whole,
+// Save writes a decision for one directory. The file is rewritten whole,
 // which is fine at the scale of directories a person works in.
 func (s *TrustStore) Save(home, path string, decision TrustDecision) error {
 	if s.Entries == nil {

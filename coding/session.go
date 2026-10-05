@@ -510,7 +510,7 @@ func (s *Session) toolOutputBudget(c ContextStats) int {
 	return toolOutputBudgetBytes(s.ContextWindow(), int(c.PromptTokens), int(c.ToolTokens()), c.Ratio)
 }
 
-// Compact asks for the next provider request to trim tool output harder than
+// ForceTrim asks for the next provider request to trim tool output harder than
 // the default ceiling: everything above budget bytes is replaced by a marker
 // and the ledger is refreshed. A budget of 0 trims as much as possible. It
 // reports whether there was anything left to trim, so a caller can say so

@@ -126,7 +126,8 @@ or ignored; it is not a filesystem, network, or tool sandbox.
 
 Failures with nowhere else to go — panics, provider errors, and failures to
 write the session file — are appended to `~/.malachi/logs/agent.jsonl`, one
-JSON object per line, tagged with the session and run. `/session` prints the
+JSON object per line, tagged with the session and run. At 8 MB it rotates to
+`agent.jsonl.1`, so it never takes more than about 16 MB. `/session` prints the
 path. Provider errors and tool errors also live in the session file itself, as
 messages.
 
