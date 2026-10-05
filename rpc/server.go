@@ -59,36 +59,79 @@ func (sv *Server) Session() *coding.Session {
 	return sv.s
 }
 
-// Run serves commands until in reaches EOF or ctx ends. On the way out it
-// stops whatever the session is doing and delivers every event that work
-// produced, so a client reading until the stream closes misses nothing.
+// Run serves commands until in reaches EOF, reading in fails, or ctx ends.
+// However it ends, it stops whatever the session is doing and delivers every
+// event that work produced before returning, so a client reading until the
+// stream closes misses nothing. It returns nil at EOF, the read error, or
+// ctx.Err().
+//
+// Reading happens on its own goroutine so that ctx can end Run while the
+// input is idle. Run does not own in and does not close it, so if ctx ends
+// while a Read is blocked, that goroutine exits when the Read returns; it
+// never touches the session again. Close in to release it sooner.
 func (sv *Server) Run(ctx context.Context) error {
 	sv.ctx = ctx
 	sv.attach(sv.Session())
 
-	r := bufio.NewReaderSize(sv.in, 64*1024)
-	for ctx.Err() == nil {
-		line, tooLong, err := readRecord(r)
-		if tooLong {
-			sv.fail(nil, "parse", "RPC record exceeds 16 MiB")
-		} else if len(bytes.TrimSpace(line)) > 0 {
-			sv.handle(line)
-		}
-		if err != nil {
-			if err == io.EOF {
-				break
+	type read struct {
+		line    []byte
+		tooLong bool
+		err     error
+	}
+	reads := make(chan read)
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		r := bufio.NewReaderSize(sv.in, 64*1024)
+		for {
+			line, tooLong, err := readRecord(r)
+			select {
+			case reads <- read{line, tooLong, err}:
+			case <-stop:
+				return
 			}
-			return err
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	var runErr error
+loop:
+	for {
+		select {
+		case <-ctx.Done():
+			runErr = ctx.Err()
+			break loop
+		case rd := <-reads:
+			// Records are dispatched here, on Run's goroutine, in order.
+			if rd.tooLong {
+				sv.fail(nil, "parse", "RPC record exceeds 16 MiB")
+			} else if len(bytes.TrimSpace(rd.line)) > 0 {
+				sv.handle(rd.line)
+			}
+			if rd.err != nil {
+				if rd.err != io.EOF {
+					runErr = rd.err
+				}
+				break loop
+			}
 		}
 	}
 
+	sv.shutdown()
+	return runErr
+}
+
+// shutdown stops the session's work, waits for it and for commands still
+// being answered, delivers the remaining events, and detaches.
+func (sv *Server) shutdown() {
 	s := sv.Session()
 	s.Abort()
 	waitIdle(s)
 	sv.bg.Wait()
 	s.Flush()
 	sv.detach()
-	return nil
 }
 
 // readRecord reads one LF-terminated record, without the LF or a trailing CR.
@@ -188,6 +231,12 @@ func (sv *Server) handle(line []byte) {
 	var v any
 	if err := dec.Decode(&v); err != nil {
 		sv.fail(nil, "parse", "Failed to parse command: "+parseError(err))
+		return
+	}
+	// A record is exactly one JSON value: trailing data, including a second
+	// object, makes the whole record malformed, as a full parse would.
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		sv.fail(nil, "parse", "Failed to parse command: unexpected data after the JSON value")
 		return
 	}
 	cmd, ok := v.(map[string]any)

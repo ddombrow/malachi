@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -45,11 +46,16 @@ type conn struct {
 
 func serve(t *testing.T, s *coding.Session) *conn {
 	t.Helper()
+	return serveCtx(t, s, context.Background())
+}
+
+func serveCtx(t *testing.T, s *coding.Session, ctx context.Context) *conn {
+	t.Helper()
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	c := &conn{t: t, sv: New(s, inR, outW), in: inW, recs: make(chan record, 4096), done: make(chan error, 1)}
 	go func() {
-		c.done <- c.sv.Run(context.Background())
+		c.done <- c.sv.Run(ctx)
 		outW.Close()
 	}()
 	go func() {
@@ -401,4 +407,95 @@ func TestCompactAnswersWithTheResultAndReportsEvents(t *testing.T) {
 	}
 	c.event("compaction_end")
 	c.close()
+}
+
+// drain reads everything left until the server closes its output, and
+// returns Run's result.
+func (c *conn) drain() ([]record, error) {
+	c.t.Helper()
+	var rest []record
+	timeout := time.After(10 * time.Second)
+	for {
+		select {
+		case r, ok := <-c.recs:
+			if !ok {
+				return rest, <-c.done
+			}
+			c.seen = append(c.seen, r)
+			rest = append(rest, r)
+		case <-timeout:
+			c.t.Fatal("server did not stop")
+		}
+	}
+}
+
+// A record is exactly one JSON value. Trailing garbage or a second object
+// makes it malformed, as a full parse (tau's json.loads) would.
+func TestTrailingDataMakesARecordMalformed(t *testing.T) {
+	c := serve(t, openSession(t, fake.New()))
+	c.send(`{"id":1,"type":"get_state"} garbage`,
+		`{"id":2,"type":"get_state"}{"id":3,"type":"get_state"}`,
+		`{"id":4,"type":"get_state"}   `)
+	for i := 0; i < 2; i++ {
+		r := c.next("a parse error", func(r record) bool { return r["type"] == "response" })
+		if r["success"] != false || r["command"] != "parse" || r["id"] != nil {
+			t.Fatalf("record with trailing data was not rejected: %v", r)
+		}
+	}
+	if r := c.response(4); r["success"] != true {
+		t.Fatalf("trailing whitespace should be fine: %v", r)
+	}
+	rest := c.close()
+	for _, r := range append(c.seen, rest...) {
+		if id := fmt.Sprint(r["id"]); id == "1" || id == "2" || id == "3" {
+			t.Fatalf("a malformed record was dispatched: %v", r)
+		}
+	}
+}
+
+// Cancelling Run's context ends it even while the input is open and idle,
+// with the same cleanup as EOF: work stopped, events delivered.
+func TestCancelEndsAnIdleServerCleanly(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	s := openSession(t, fake.New(blocking(release, "never")))
+	ctx, cancel := context.WithCancel(context.Background())
+	c := serveCtx(t, s, ctx)
+	c.send(`{"id":"p","type":"prompt","message":"long job"}`)
+	c.event("agent_start")
+
+	cancel() // the input stays open
+	rest, err := c.drain()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run returned %v, want context.Canceled", err)
+	}
+	if got := types(rest); len(got) == 0 || got[len(got)-1] != "agent_settled" {
+		t.Fatalf("the run's last events were not delivered: %v", got)
+	}
+	if st := s.State(); st.Running || st.Compacting {
+		t.Fatalf("session still busy: %+v", st)
+	}
+}
+
+// A failed read goes through the same shutdown as EOF, then is returned.
+func TestReadErrorStillCleansUp(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	s := openSession(t, fake.New(blocking(release, "never")))
+	c := serve(t, s)
+	c.send(`{"id":"p","type":"prompt","message":"long job"}`)
+	c.event("agent_start")
+
+	boom := errors.New("disk read failed")
+	c.in.CloseWithError(boom)
+	rest, err := c.drain()
+	if !errors.Is(err, boom) {
+		t.Fatalf("Run returned %v, want the read error", err)
+	}
+	if got := types(rest); len(got) == 0 || got[len(got)-1] != "agent_settled" {
+		t.Fatalf("the run's last events were not delivered: %v", got)
+	}
+	if st := s.State(); st.Running || st.Compacting {
+		t.Fatalf("session still busy: %+v", st)
+	}
 }
