@@ -540,6 +540,9 @@ func (s *Session) SetModel(ref string) error {
 	s.mu.Lock()
 	changedLevel := level != s.thinking
 	s.provider, s.model, s.thinking = pc, model, level
+	// Summarisation talks to the provider directly; it must follow the switch
+	// or it would send the new model's name to the old endpoint.
+	s.runtime = provider
 	s.mu.Unlock()
 	s.recordSetting(session.NewModelChange(pc.Name, model))
 	if changedLevel {

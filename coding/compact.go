@@ -157,8 +157,14 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 		}
 	}
 
+	// One consistent view of what the session talks to: a /model switch
+	// mid-summary must not pair one model's name with another's endpoint.
+	s.mu.Lock()
+	runtime, model, providerName := s.runtime, s.model, s.provider.Name
+	s.mu.Unlock()
+
 	report("summarizing")
-	summary, usage, err := s.summarizeOnce(ctx, s.runtime, body, instructions, previous != "", progress)
+	summary, usage, err := s.summarizeOnce(ctx, runtime, model, body, instructions, previous != "", progress)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +202,7 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 			return nil, errors.New("compact: the retained messages are not in the session file yet; nothing was changed")
 		}
 		if !s.append(session.NewCompactionEntry(summary, result.FirstKeptID,
-			result.TokensBefore, usage, s.provider.Name, s.model)) {
+			result.TokensBefore, usage, providerName, model)) {
 			return nil, errors.New("compact: could not write the compaction to the session file; nothing was changed")
 		}
 	}
@@ -220,7 +226,7 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 // summarizeOnce runs the summarisation request and returns the text.
 // progress, when non-nil, is called with the running count of characters the
 // model has produced so far.
-func (s *Session) summarizeOnce(ctx context.Context, provider agent.Provider, body, instructions string, folding bool, progress func(int)) (string, agent.Usage, error) {
+func (s *Session) summarizeOnce(ctx context.Context, provider agent.Provider, model, body, instructions string, folding bool, progress func(int)) (string, agent.Usage, error) {
 	if instructions != "" {
 		body = "Pay particular attention to: " + instructions + "\n\n" + body
 	}
@@ -228,7 +234,7 @@ func (s *Session) summarizeOnce(ctx context.Context, provider agent.Provider, bo
 		body = "A previous handover document is included above. Carry it forward: keep what still holds, correct what has changed, and do not simply repeat it.\n\n" + body
 	}
 	req := agent.Request{
-		Model:  s.model,
+		Model:  model,
 		System: summarizationSystem,
 		// The same routing and prompt-cache hint the loop sends. A gateway
 		// that requires the session header rejects the request without it,

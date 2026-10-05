@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -534,5 +536,43 @@ func TestSummarizerInputIsValidJSON(t *testing.T) {
 	}
 	if strings.Contains(raw, `\u003c`) {
 		t.Error("HTML escaping obscures code for the model")
+	}
+}
+
+// summaryServer is an OpenAI-compatible endpoint that answers every request
+// with goodSummary and records the model it was asked for.
+func summaryServer(t *testing.T, models *[]string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Model string }
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		*models = append(*models, req.Model)
+		chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": goodSummary}, "finish_reason": "stop"}}})
+		fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", chunk)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestSummarizeFollowsModelSwitch(t *testing.T) {
+	var gotA, gotB []string
+	a, b := summaryServer(t, &gotA), summaryServer(t, &gotB)
+	settings := &Settings{DefaultProvider: "a", Providers: map[string]ProviderConfig{
+		"a": {BaseURL: a.URL, DefaultModel: "model-a"},
+		"b": {BaseURL: b.URL, DefaultModel: "model-b"},
+	}}
+	s, err := Open(Options{Cwd: t.TempDir(), Home: t.TempDir(), Settings: settings, NoSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Harness.ReplaceMessages(longConversation(15))
+	if err := s.SetModel("b/model-b"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Summarize(context.Background(), "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(gotA) != 0 || len(gotB) != 1 || gotB[0] != "model-b" {
+		t.Fatalf("summary went to a=%v b=%v; want only b, as model-b", gotA, gotB)
 	}
 }
