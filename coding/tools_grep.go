@@ -3,6 +3,7 @@ package coding
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -241,11 +242,25 @@ func searchRoot(cwd string, args map[string]any) (dir, single string, err error)
 
 // searchEach applies fn to every searchable file under dir, restricted to one
 // file when single is set and to matching filenames when filter is set.
+//
+// A named file is visited directly. Walking its directory to find it was slow
+// in a large tree, and ignore rules would silently skip a file the caller
+// asked for by name; an explicit path is not subject to .gitignore.
 func searchEach(dir, single, filter string, fn func(rel string, d fs.DirEntry) error) error {
-	return walkSearch(dir, func(rel string, d fs.DirEntry) error {
-		if single != "" && rel != single {
+	if single != "" {
+		if !matchFilter(filter, single) {
 			return nil
 		}
+		info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(single)))
+		if err != nil {
+			return err
+		}
+		if err := fn(single, fs.FileInfoToDirEntry(info)); err != nil && !errors.Is(err, errStopWalk) {
+			return err
+		}
+		return nil
+	}
+	return walkSearch(dir, func(rel string, d fs.DirEntry) error {
 		if !matchFilter(filter, rel) {
 			return nil
 		}

@@ -312,3 +312,22 @@ func TestSummarizeSearchCalls(t *testing.T) {
 		t.Errorf("glob summary: %q", got)
 	}
 }
+
+// A file named explicitly is searched even when .gitignore covers it, and
+// without walking its siblings.
+func TestGrepNamedFileIgnoresGitignoreAndSkipsTheWalk(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".gitignore", "*.log\n")
+	write(t, dir, "build.log", "ERROR: linker failed\n")
+	write(t, dir, "other.txt", "ERROR: should not be searched\n")
+	r, err := run(t, NewGrepTool(dir), map[string]any{"pattern": "ERROR", "path": "build.log"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.Text(), "build.log:1: ERROR: linker failed") {
+		t.Fatalf("named file not searched:\n%s", r.Text())
+	}
+	if strings.Contains(r.Text(), "other.txt") || r.Details.(map[string]any)["searched"] != 1 {
+		t.Fatalf("searched beyond the named file:\n%s", r.Text())
+	}
+}
