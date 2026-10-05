@@ -112,11 +112,16 @@ type model struct {
 	cancelRun context.CancelFunc
 	partial   *agent.AssistantMessage
 	lastReply string
-	tools     []*runningTool
-	toolArgs  map[string]map[string]any
-	last      *lastTool
-	usage     agent.Usage
-	context   int64 // tokens in the most recent request
+	sel       selection
+	// flash is a short confirmation (e.g. "copied selection") shown in the
+	// status bar until flashUntil.
+	flash      string
+	flashUntil time.Time
+	tools      []*runningTool
+	toolArgs   map[string]map[string]any
+	last       *lastTool
+	usage      agent.Usage
+	context    int64 // tokens in the most recent request
 	// trimSeq is the last trim counter rendered as a transcript marker; a
 	// newer one means a request pass replaced tool output.
 	trimSeq uint64
@@ -357,6 +362,7 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		}
 		m.r = newRenderer(m.width, m.isDark, m.s.Settings().Icons, m.s.Cwd())
 		m.applyInputStyles()
+		m.sel = selection{} // the transcript re-wraps; old positions are stale
 		return nil
 
 	case tea.BackgroundColorMsg:
@@ -445,6 +451,9 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		m.vp, cmd = m.vp.Update(msg)
 		return cmd
 
+	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
+		return m.handleMouse(msg.(tea.MouseMsg))
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
@@ -457,6 +466,7 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		return nil
 
 	case tea.KeyPressMsg:
+		m.sel = selection{} // typing dismisses a finished selection
 		switch msg.String() {
 		case "ctrl+c":
 			if m.input.Value() != "" {
@@ -666,9 +676,10 @@ func (m *model) View() tea.View {
 	// background separates it from the status text.
 	lower := m.r.st.dim.Render(strings.Repeat(lowRule, max(1, m.width)))
 	input := m.input.View()
-	body := m.vp.View() + "\n" + input
+	transcript := m.highlightSelection(m.vp.View())
+	body := transcript + "\n" + input
 	if m.chrome >= chromeRows {
-		body = m.vp.View() + "\n\n" + top + "\n" + input + "\n" + lower
+		body = transcript + "\n\n" + top + "\n" + input + "\n" + lower
 	}
 	v.Content = body + "\n" + m.statusLine()
 	return v
@@ -759,6 +770,9 @@ func (m *model) statusLine() string {
 	}
 	if !m.vp.AtBottom() {
 		right = "↓ more · ctrl+end"
+	}
+	if m.flash != "" && time.Now().Before(m.flashUntil) {
+		right = m.flash
 	}
 	lead, trail := statusPad, statusPad
 	if m.width < 2*lipgloss.Width(statusPad) {

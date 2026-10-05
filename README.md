@@ -33,8 +33,9 @@ bar. Each item gets an icon (❯ you, 💬 reply, 💭 thinking, 👀 read, 🔍
 🗂️ glob, ✏️ edit, 📝 write, >_ bash, ❌ error); set `"icons": "dots"` in
 settings for a Claude Code-style ⏺.
 The view follows new output unless you scroll up (mouse wheel, PgUp/PgDn,
-Shift+↑/↓, Ctrl+Home/End). Hold Shift (Option in iTerm2/Terminal) while
-dragging to select text. Type while the agent works to steer it, press `esc`
+Shift+↑/↓, Ctrl+Home/End). Drag over the transcript to select text; releasing
+copies it (via OSC 52 and the OS clipboard tool, so it works in terminals
+without OSC 52). Hold Shift while dragging for the terminal's own selection. Type while the agent works to steer it, press `esc`
 to cancel, and use `/help` for the full command list.
 
 | Command | Effect |

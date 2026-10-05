@@ -32,7 +32,8 @@ const helpText = `Commands:
 
 Keys: enter send · alt+enter newline · esc cancel run · ctrl+c clear/quit
 Scroll: mouse wheel · pgup/pgdown · shift+↑/↓ · ctrl+home/ctrl+end
-Select text: hold shift (option in iTerm2/Terminal) while dragging.
+Copy: drag over the transcript to select; releasing copies it.
+Hold shift while dragging to use the terminal's own selection instead.
 While the agent runs, enter queues a steering message.`
 
 func (m *model) printDim(s string) tea.Cmd {
@@ -68,7 +69,7 @@ func (m *model) command(line string) tea.Cmd {
 		if strings.TrimSpace(m.lastReply) == "" {
 			return m.printDim("no assistant response to copy yet")
 		}
-		return tea.Batch(tea.SetClipboard(m.lastReply), m.printDim("copied latest assistant response"))
+		return tea.Batch(m.copyText(m.lastReply, "copied latest response"), m.printDim("copied latest assistant response"))
 	case "last":
 		if m.last == nil {
 			return m.printDim("no tool has run yet")
