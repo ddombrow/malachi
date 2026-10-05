@@ -26,6 +26,7 @@ bin/malachi -c                   # continue the latest session in this directory
 bin/malachi --model glm-5.2 --thinking high
 bin/malachi -p "..." -mode json  # Pi event stream, one JSON object per line
 bin/malachi -list-models         # models the provider serves right now
+bin/malachi -mode rpc            # headless: JSON commands in, events out (see RPC mode)
 ```
 
 The TUI is full-screen: a scrollable transcript above a pinned input and status
@@ -53,6 +54,56 @@ to cancel, and use `/help` for the full command list.
 model-written summary of the conversation, `/trim` is the mechanical and
 lossless removal of tool output that has already served its purpose. Both
 happen automatically near the context window, which is also when they matter.
+
+## RPC mode
+
+`malachi -mode rpc` runs headless for another program to drive: a GUI, an
+editor plugin, a script. It reads one JSON command per line on stdin and
+writes one JSON object per line on stdout, either a response correlated by
+`id` or an event, and exits when stdin closes. The protocol is tau's RPC mode,
+which follows Pi's, so clients written for those should work here.
+
+```text
+→ {"id":1,"type":"prompt","message":"fix the failing test"}
+← {"type":"response","command":"prompt","success":true,"id":1}
+← {"type":"agent_start"}
+← {"type":"message_update","message":{…},"assistantMessageEvent":{"type":"text_delta","delta":"Looking…",…}}
+← {"type":"tool_execution_start","toolCallId":"…","toolName":"bash","args":{"command":"go test ./..."}}
+→ {"id":2,"type":"steer","message":"only the parser package"}
+← {"type":"response","command":"steer","success":true,"id":2}
+← {"type":"queue_update","steering":["only the parser package"],"followUp":[]}
+…
+← {"type":"agent_end","messages":[…],"willRetry":false}
+← {"type":"agent_settled"}
+```
+
+| Command | Data in the response |
+| --- | --- |
+| `prompt` (`message`, `streamingBehavior?`), `steer`, `follow_up` | — |
+| `abort` | — |
+| `get_state` | model, thinking level, `isStreaming`, `isCompacting`, session file and id, queue size, `projectTrust` |
+| `get_messages`, `get_last_assistant_text` | the transcript; the last reply's text |
+| `get_available_models`, `set_model` (`provider?`, `modelId`) | model descriptions |
+| `get_available_thinking_levels`, `set_thinking_level` (`level`) | `levels` |
+| `compact` (`customInstructions?`), `set_auto_compaction` (`enabled`) | the summary, `firstKeptEntryId`, token estimates before and after |
+| `new_session`, `switch_session` (`sessionPath` or `sessionId`) | `cancelled` |
+| `get_session_stats` | message and token counts, cost, context usage |
+| `set_trust` (`decision`: `trusted`/`untrusted`, `remember?`, `scope?: "parent"`) | the new `projectTrust` |
+
+A `prompt` while the agent is working must say what to do with it:
+`"streamingBehavior": "steer"` (inject before the next model call) or
+`"followUp"` (send when the run would otherwise stop). During a compaction a
+prompt is held and sent when it finishes. Besides the agent's events, the
+session reports `compaction_start`/`_progress`/`_end`, `queue_update`,
+`thinking_level_changed` and `agent_settled` (all work for a prompt is done).
+
+Differences from tau, checked by `rpc/golden_test.go`: `compact` and
+`get_available_models` are answered from a goroutine, so their responses can
+come after later ones (correlate by `id`; this keeps `abort` working during a
+long compaction). `set_trust` and `projectTrust` are malachi's: instruction
+files are withheld until a client decides, as in `-p`. Malformed or oversized
+records (over 16 MiB) are answered with `"command":"parse"` and reading
+continues.
 
 ## Configuration
 
