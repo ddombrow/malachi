@@ -164,6 +164,25 @@ func (b *eventBus) subscribe(l func(any)) (unsubscribe func()) {
 	}
 }
 
+// flushMarker is queued by flush; the loop closes done when it reaches it,
+// after every event published before it has been delivered.
+type flushMarker struct{ done chan struct{} }
+
+// flush waits until every event published so far has been delivered, or the
+// bus has stopped.
+func (b *eventBus) flush() {
+	m := flushMarker{done: make(chan struct{})}
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return
+	}
+	b.queue = append(b.queue, m)
+	b.cond.Signal()
+	b.mu.Unlock()
+	<-m.done
+}
+
 // close stops accepting events. Events already queued are still delivered;
 // close does not wait for that, so a stuck listener cannot hang a caller.
 func (b *eventBus) close() {
@@ -188,6 +207,10 @@ func (b *eventBus) loop() {
 		b.queue = b.queue[1:]
 		listeners := append([]*func(any){}, b.listeners...)
 		b.mu.Unlock()
+		if m, ok := e.(flushMarker); ok {
+			close(m.done)
+			continue
+		}
 		for _, l := range listeners {
 			(*l)(e)
 		}
@@ -201,6 +224,10 @@ func (b *eventBus) loop() {
 func (s *Session) Subscribe(l func(any)) (unsubscribe func()) {
 	return s.bus.subscribe(l)
 }
+
+// Flush waits until every event so far has reached the subscribers. A
+// frontend calls it before exiting so nothing queued is lost.
+func (s *Session) Flush() { s.bus.flush() }
 
 // emit publishes a session event.
 func (s *Session) emit(e any) { s.bus.publish(e) }
