@@ -266,9 +266,10 @@ func (s *Session) summarizeOnce(ctx context.Context, provider agent.Provider, mo
 }
 
 // compactBoundary picks where the retained tail begins: far enough back that
-// there is something to summarize, at a user message when one falls inside
-// the tail window, and never on a tool result, whose call would be summarized
-// away and leave the result orphaned.
+// there is something to summarize, at the earliest user message inside the
+// last compactKeepMessages so as much of the recent conversation as possible
+// stays verbatim from a turn boundary, and never on a tool result, whose call
+// would be summarized away and leave the result orphaned.
 //
 // A single long agentic turn (one user message, then many tool calls) has no
 // user message in the window; the tail then starts at the nearest assistant
@@ -279,11 +280,9 @@ func compactBoundary(messages []agent.Message) (int, error) {
 		return 0, ErrNothingToSummarize
 	}
 	keepFrom := len(messages) - compactKeepMessages
-	for i := len(messages) - 1; i > 0; i-- {
+	for i := keepFrom; i < len(messages); i++ {
 		if _, ok := messages[i].(*agent.UserMessage); ok {
-			if i > keepFrom {
-				keepFrom = i
-			}
+			keepFrom = i
 			break
 		}
 	}

@@ -612,3 +612,23 @@ func TestCompactBoundaryNeverOrphansAToolResult(t *testing.T) {
 		t.Fatalf("tail shrank to %d messages; stepping back should only ever keep more", len(tail))
 	}
 }
+
+// compactKeepMessages is how much stays verbatim: the tail starts at the
+// earliest user message inside that window, not the last one, which kept only
+// the latest exchange.
+func TestCompactBoundaryKeepsTheWholeWindowFromATurnBoundary(t *testing.T) {
+	messages := longConversation(20) // 40 alternating messages
+	keepFrom, err := compactBoundary(messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(messages) - keepFrom; got != compactKeepMessages {
+		t.Fatalf("kept %d messages, want %d", got, compactKeepMessages)
+	}
+	// Odd window: the earliest user message inside it, so one fewer.
+	messages = append(messages, agent.NewUserText("one more"))
+	keepFrom, _ = compactBoundary(messages)
+	if _, ok := messages[keepFrom].(*agent.UserMessage); !ok || len(messages)-keepFrom != compactKeepMessages-1 {
+		t.Fatalf("kept %d messages starting with %T", len(messages)-keepFrom, messages[keepFrom])
+	}
+}

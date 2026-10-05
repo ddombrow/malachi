@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/ddombrow/malachi/agent"
+	"github.com/ddombrow/malachi/agent/session"
 )
 
 // contextLimitError is what a provider returns when the prompt is too large.
@@ -73,10 +74,12 @@ func longTranscript(n int) []agent.Message {
 	return msgs
 }
 
+// newTestSession opens a file-backed session in a temporary home, so tests
+// never write sessions or logs into the developer's real ~/.malachi.
 func newTestSession(t *testing.T, window int, p agent.Provider) *Session {
 	t.Helper()
 	s, err := Open(Options{
-		Cwd: t.TempDir(), Settings: testSettings(window), Model: "test/m", Provider: p,
+		Cwd: t.TempDir(), Home: t.TempDir(), Settings: testSettings(window), Model: "test/m", Provider: p,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -84,10 +87,25 @@ func newTestSession(t *testing.T, window int, p agent.Provider) *Session {
 	return s
 }
 
+// seedHistory gives a file-backed session a history the way a real one has
+// it: written to the session file, with entry ids recorded. ReplaceMessages
+// alone would leave messages a compaction cannot anchor its tail to.
+func seedHistory(t *testing.T, s *Session, msgs []agent.Message) {
+	t.Helper()
+	for _, m := range msgs {
+		e := session.NewMessageEntry(m)
+		if !s.append(e) {
+			t.Fatalf("seeding history: %v", s.PersistError())
+		}
+		s.rememberEntry(m, e.ID)
+	}
+	s.Harness.ReplaceMessages(msgs)
+}
+
 func TestRecoverOverflowRetriesAfterCompacting(t *testing.T) {
 	fp := &overflowProvider{failFirst: true, reply: "SESSION SUMMARY\n## Goal\nkeep going\n"}
 	s := newTestSession(t, 100_000, fp)
-	s.Harness.ReplaceMessages(longTranscript(40))
+	seedHistory(t, s, longTranscript(40))
 
 	if err := s.Prompt(context.Background(), "go on"); err != nil {
 		t.Fatal(err)
@@ -119,7 +137,7 @@ func TestRecoverOverflowRetriesAfterCompacting(t *testing.T) {
 func TestRecoverOverflowDeclinesNonContextErrors(t *testing.T) {
 	fp := &rejectProvider{err: `401 {"error":{"message":"invalid api key"}}`}
 	s := newTestSession(t, 100_000, fp)
-	s.Harness.ReplaceMessages(longTranscript(40))
+	seedHistory(t, s, longTranscript(40))
 
 	if err := s.Prompt(context.Background(), "go on"); err != nil {
 		t.Fatal(err)
@@ -135,7 +153,7 @@ func TestRecoverOverflowIsNotAttemptedTwice(t *testing.T) {
 	// or a session whose window is genuinely too small loops forever.
 	fp := &rejectProvider{err: contextLimitError}
 	s := newTestSession(t, 100_000, fp)
-	s.Harness.ReplaceMessages(longTranscript(40))
+	seedHistory(t, s, longTranscript(40))
 
 	if err := s.Prompt(context.Background(), "go on"); err != nil {
 		t.Fatal(err)
