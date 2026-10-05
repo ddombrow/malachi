@@ -3,6 +3,7 @@ package coding
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,5 +143,26 @@ func TestDiagnosticsRunsAreDistinct(t *testing.T) {
 	recs := readLog(t, d.Path())
 	if recs[0]["runId"] != second {
 		t.Errorf("record tagged %v, want the latest run %q", recs[0]["runId"], second)
+	}
+}
+
+// After /model, failures are attributed to the model now in use.
+func TestDiagnosticsFollowModelSwitch(t *testing.T) {
+	settings := &Settings{DefaultProvider: "a", Providers: map[string]ProviderConfig{
+		"a": {BaseURL: "http://127.0.0.1:1", DefaultModel: "model-a"},
+		"b": {BaseURL: "http://127.0.0.1:1", DefaultModel: "model-b"},
+	}}
+	s, err := Open(Options{Cwd: t.TempDir(), Home: t.TempDir(), Settings: settings, NoSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetModel("b/model-b"); err != nil {
+		t.Fatal(err)
+	}
+	s.Diagnostics().LogPersistError(errors.New("disk full"))
+	recs := readLog(t, s.Diagnostics().Path())
+	last := recs[len(recs)-1]
+	if last["provider"] != "b" || last["model"] != "model-b" {
+		t.Fatalf("record attributed to %v/%v", last["provider"], last["model"])
 	}
 }

@@ -546,6 +546,8 @@ func (s *Session) SetModel(ref string) error {
 	// or it would send the new model's name to the old endpoint.
 	s.runtime = provider
 	s.mu.Unlock()
+	// Later log records describe the model the failure happened with.
+	s.diag.Bind(s.Path(), pc.Name, model)
 	s.recordSetting(session.NewModelChange(pc.Name, model))
 	if changedLevel {
 		s.recordSetting(session.NewThinkingLevelChange(level))
