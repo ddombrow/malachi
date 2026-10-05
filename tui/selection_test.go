@@ -12,7 +12,16 @@ import (
 
 func TestMain(m *testing.M) {
 	clipboardTools = nil // never touch the developer's real clipboard
-	os.Exit(m.Run())
+	// Nor their real ~/.malachi: sessions opened without an explicit Home
+	// land in a throwaway directory.
+	home, err := os.MkdirTemp("", "malachi-test-home-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("MALACHI_HOME", home)
+	code := m.Run()
+	os.RemoveAll(home)
+	os.Exit(code)
 }
 
 // fakeClipboard installs a clipboard tool that writes what it is given to a
