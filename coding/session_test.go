@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"testing"
@@ -297,5 +298,29 @@ func TestResponsesModelsPresetAndOverride(t *testing.T) {
 	}}).ProviderConfigs()["opencode-go"]
 	if !slices.Equal(over.ResponsesModels, []string{"gpt-7"}) || over.BaseURL == "" {
 		t.Fatalf("override: %+v", over.ResponsesModels)
+	}
+}
+
+func TestResolveVersion(t *testing.T) {
+	built := func(v string) *debug.BuildInfo { return &debug.BuildInfo{Main: debug.Module{Version: v}} }
+	cases := []struct {
+		stamped string
+		info    *debug.BuildInfo
+		ok      bool
+		want    string
+	}{
+		{"v1.2.3-4-gabc", built("v0.1.0"), true, "v1.2.3-4-gabc"}, // the Taskfile's stamp wins
+		{"", built("v0.1.0"), true, "v0.1.0"},                     // go install …@v0.1.0
+		{"", built("v0.1.1-0.20261005-abcdef123456+dirty"), true, "v0.1.1-0.20261005-abcdef123456+dirty"},
+		{"", built("(devel)"), true, "dev"}, // no version information at all
+		{"", nil, false, "dev"},
+	}
+	for _, c := range cases {
+		if got := resolveVersion(c.stamped, c.info, c.ok); got != c.want {
+			t.Errorf("resolveVersion(%q, %v) = %q, want %q", c.stamped, c.info, got, c.want)
+		}
+	}
+	if UserAgent != "malachi/"+Version || Version == "" {
+		t.Fatalf("UserAgent %q, Version %q", UserAgent, Version)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"strings"
@@ -140,15 +141,38 @@ func BuiltinProviders() map[string]ProviderConfig {
 	}
 }
 
-// Version is malachi's version, sent in the User-Agent. Release builds set
-// it from git (see Taskfile.yml):
+// Version is malachi's version, shown by -version and sent in the
+// User-Agent. In order of precedence it comes from:
 //
-//	-ldflags "-X github.com/ddombrow/malachi/coding.Version=..."
-var Version = "dev"
+//   - the linker, as the Taskfile builds it from git describe:
+//     -ldflags "-X github.com/ddombrow/malachi/coding.Version=..."
+//   - the Go build info: the module version for go install ...@v0.1.0, or a
+//     VCS-derived version for a build inside a checkout;
+//   - "dev", when neither is available.
+var Version = ""
 
 // UserAgent identifies malachi to providers, as gateways like OpenCode Go
 // require a client-specific agent rather than a generic HTTP library name.
-var UserAgent = "malachi/" + Version
+var UserAgent string
+
+func init() {
+	info, ok := debug.ReadBuildInfo()
+	Version = resolveVersion(Version, info, ok)
+	UserAgent = "malachi/" + Version
+}
+
+// resolveVersion picks the version to report; see Version.
+func resolveVersion(stamped string, info *debug.BuildInfo, ok bool) string {
+	if stamped != "" {
+		return stamped
+	}
+	// "(devel)" is what Go reports when it knows nothing: a build outside
+	// any module version and without VCS information.
+	if ok && info != nil && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "dev"
+}
 
 // Home returns malachi's state directory: $MALACHI_HOME or ~/.malachi.
 func Home() string {

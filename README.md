@@ -25,10 +25,21 @@ ai/           providers over raw net/http + SSE (openai-compatible today)
 agent/        portable brain: messages, events, loop, harness, session tree
 ```
 
+## Install
+
+With Go 1.27 or newer:
+
+```sh
+go install github.com/ddombrow/malachi/cmd/malachi@latest
+```
+
+`malachi -version` reports the release it was installed from. To build from a
+checkout instead, see [Development](#development).
+
 ## Usage
 
 ```sh
-go tool task install                      # build, install to ~/.local/bin as `malachi`
+go tool task install                      # from a checkout: build, install to ~/.local/bin as `malachi`
 go tool task uninstall                    # remove it again
 go tool task install PREFIX=/usr/local    # elsewhere (may need sudo)
 echo 'OPENCODE_API_KEY=...' >> ~/.malachi/.env   # default provider: OpenCode Go
