@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ddombrow/malachi/agent"
@@ -55,10 +56,18 @@ type Config struct {
 	MaxRetries     int           // default 3; negative disables retries
 	MaxRetryDelay  time.Duration // default 30s
 	HTTPClient     *http.Client  // default: no overall timeout (streams are long)
+	// ResponsesModels are served over /responses rather than
+	// /chat/completions. A model the gateway refuses on chat for protocol is
+	// also moved there, once, and remembered.
+	ResponsesModels []string
 }
 
-// Provider streams chat completions.
-type Provider struct{ cfg Config }
+// Provider streams chat completions, or Responses for the models that need
+// it.
+type Provider struct {
+	cfg     Config
+	learned sync.Map // model -> struct{}: refused on chat for protocol
+}
 
 // New returns a provider for cfg.
 func New(cfg Config) *Provider {
@@ -83,6 +92,32 @@ func New(cfg Config) *Provider {
 	return &Provider{cfg: cfg}
 }
 
+// failRequest ends the stream for a request that never produced a response.
+func (p *Provider) failRequest(ctx context.Context, b *ai.Builder, err error) {
+	if ctx.Err() != nil {
+		b.Error(agent.StopAborted, "Operation aborted")
+		return
+	}
+	var he *httpError
+	if errors.As(err, &he) {
+		msg := b.Message()
+		msg.Diagnostics = append(msg.Diagnostics, agent.Diagnostic{
+			Type:      "http_error",
+			Timestamp: agent.NowMillis(),
+			Error:     &agent.DiagnosticError{Name: "HTTPError", Message: he.body, Code: he.status},
+		})
+	}
+	b.Error(agent.StopError, err.Error())
+}
+
+// isProtocolMismatch reports a gateway refusing a model on this endpoint
+// because it is served over the other one.
+func isProtocolMismatch(err error) bool {
+	var he *httpError
+	return errors.As(err, &he) && he.status == http.StatusBadRequest &&
+		strings.Contains(strings.ToLower(errorText(he.body)), protocolMismatch)
+}
+
 // Stream implements agent.Provider.
 func (p *Provider) Stream(ctx context.Context, req agent.Request) iter.Seq[agent.AssistantEvent] {
 	return func(yield func(agent.AssistantEvent) bool) {
@@ -90,26 +125,25 @@ func (p *Provider) Stream(ctx context.Context, req agent.Request) iter.Seq[agent
 		msg.API, msg.Provider = API, p.cfg.Name
 		b := ai.NewBuilder(msg, yield)
 
+		if p.usesResponses(req.Model) {
+			p.streamResponses(ctx, req, b)
+			return
+		}
 		body, err := json.Marshal(p.buildPayload(req))
 		if err != nil {
 			b.Error(agent.StopError, "encode request: "+err.Error())
 			return
 		}
-		resp, err := p.post(ctx, body, req.SessionID)
+		resp, err := p.post(ctx, "/chat/completions", body, req.SessionID)
 		if err != nil {
-			if ctx.Err() != nil {
-				b.Error(agent.StopAborted, "Operation aborted")
+			// A model the gateway serves only over /responses: move it there
+			// for the rest of the session and try again, once.
+			if isProtocolMismatch(err) {
+				p.learned.Store(req.Model, struct{}{})
+				p.streamResponses(ctx, req, b)
 				return
 			}
-			var he *httpError
-			if errors.As(err, &he) {
-				msg.Diagnostics = append(msg.Diagnostics, agent.Diagnostic{
-					Type:      "http_error",
-					Timestamp: agent.NowMillis(),
-					Error:     &agent.DiagnosticError{Name: "HTTPError", Message: he.body, Code: he.status},
-				})
-			}
-			b.Error(agent.StopError, err.Error())
+			p.failRequest(ctx, b, err)
 			return
 		}
 		defer resp.Body.Close()
@@ -161,8 +195,8 @@ func isTransient(status int) bool {
 
 // post sends the request, retrying transient failures that happen before
 // any of the response body has been consumed.
-func (p *Provider) post(ctx context.Context, body []byte, sessionID string) (*http.Response, error) {
-	url := strings.TrimRight(p.cfg.BaseURL, "/") + "/chat/completions"
+func (p *Provider) post(ctx context.Context, path string, body []byte, sessionID string) (*http.Response, error) {
+	url := strings.TrimRight(p.cfg.BaseURL, "/") + path
 	for attempt := 0; ; attempt++ {
 		hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {

@@ -52,6 +52,9 @@ func modelOf(pc coding.ProviderConfig, model string) modelWire {
 	if api == "" {
 		api = "openai-completions"
 	}
+	if slices.Contains(pc.ResponsesModels, model) {
+		api = "openai-responses"
+	}
 	input := []string{"text"}
 	if slices.Contains(pc.VisionModels, model) {
 		input = append(input, "image")

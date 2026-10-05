@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -275,5 +276,26 @@ func TestFailedWriteIsNotRecordedAsPersisted(t *testing.T) {
 	}
 	if s.entryIDFor(msgs[0]) == "" {
 		t.Fatal("messages written before the failure should still be recorded")
+	}
+}
+
+// OpenCode Go serves its GPT, Grok and Muse models only over /responses; the
+// preset says so, and settings can change the list.
+func TestResponsesModelsPresetAndOverride(t *testing.T) {
+	pcs := (&Settings{}).ProviderConfigs()
+	go_ := pcs["opencode-go"]
+	for _, m := range []string{"gpt-6-luna", "grok-4.7", "muse-spark-1.3-contributor"} {
+		if !slices.Contains(go_.ResponsesModels, m) {
+			t.Errorf("opencode-go preset does not route %s to /responses", m)
+		}
+	}
+	if slices.Contains(go_.ResponsesModels, "kimi-k2.7-code") {
+		t.Error("chat models must stay on /chat/completions")
+	}
+	over := (&Settings{Providers: map[string]ProviderConfig{
+		"opencode-go": {ResponsesModels: []string{"gpt-7"}},
+	}}).ProviderConfigs()["opencode-go"]
+	if !slices.Equal(over.ResponsesModels, []string{"gpt-7"}) || over.BaseURL == "" {
+		t.Fatalf("override: %+v", over.ResponsesModels)
 	}
 }

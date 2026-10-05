@@ -134,6 +134,13 @@ providers. Built-in providers are `opencode-go`, `openai`, `openrouter`, and `ol
 status gauge measure against it, and a window that is too large will not warn
 you before the provider rejects a request.
 
+Some models are served only over the OpenAI Responses API (`/responses`)
+rather than `/chat/completions`; on OpenCode Go that is the GPT, Grok and Muse
+models, which the built-in preset routes there. A provider's
+`responsesModels` lists them. A model the gateway refuses on chat with "does
+not support this protocol" is moved to `/responses` automatically for the rest
+of the session, so newly added models work before they are listed.
+
 Requests carry `User-Agent: malachi/<version>`. A provider's `sessionHeader`
 sends the session id (stable across `-c`/resume) on every request; OpenCode Go
 requires `x-opencode-session`, which the built-in preset sets.

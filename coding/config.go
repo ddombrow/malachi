@@ -20,21 +20,25 @@ import (
 // ProviderConfig describes one model endpoint. Built-in presets can be
 // overridden or extended field-by-field from settings.json.
 type ProviderConfig struct {
-	Name            string            `json:"-"`
-	DisplayName     string            `json:"displayName,omitempty"`
-	API             string            `json:"api,omitempty"` // only "openai-completions" today
-	BaseURL         string            `json:"baseUrl,omitempty"`
-	APIKey          string            `json:"apiKey,omitempty"`
-	APIKeyEnv       string            `json:"apiKeyEnv,omitempty"`
-	Headers         map[string]string `json:"headers,omitempty"`
-	SessionHeader   string            `json:"sessionHeader,omitempty"` // header carrying the session id
-	Models          []string          `json:"models,omitempty"`
-	DefaultModel    string            `json:"defaultModel,omitempty"`
-	VisionModels    []string          `json:"visionModels,omitempty"`
-	ThinkingFormat  string            `json:"thinkingFormat,omitempty"`
-	ThinkingLevels  []string          `json:"thinkingLevels,omitempty"`
-	DefaultThinking string            `json:"defaultThinking,omitempty"`
-	MaxTokens       int               `json:"maxTokens,omitempty"`
+	Name          string            `json:"-"`
+	DisplayName   string            `json:"displayName,omitempty"`
+	API           string            `json:"api,omitempty"` // only "openai-completions" today
+	BaseURL       string            `json:"baseUrl,omitempty"`
+	APIKey        string            `json:"apiKey,omitempty"`
+	APIKeyEnv     string            `json:"apiKeyEnv,omitempty"`
+	Headers       map[string]string `json:"headers,omitempty"`
+	SessionHeader string            `json:"sessionHeader,omitempty"` // header carrying the session id
+	// ResponsesModels are served over the OpenAI Responses API (/responses)
+	// instead of /chat/completions. A model the gateway refuses on chat with
+	// "does not support this protocol" is moved there automatically too.
+	ResponsesModels []string `json:"responsesModels,omitempty"`
+	Models          []string `json:"models,omitempty"`
+	DefaultModel    string   `json:"defaultModel,omitempty"`
+	VisionModels    []string `json:"visionModels,omitempty"`
+	ThinkingFormat  string   `json:"thinkingFormat,omitempty"`
+	ThinkingLevels  []string `json:"thinkingLevels,omitempty"`
+	DefaultThinking string   `json:"defaultThinking,omitempty"`
+	MaxTokens       int      `json:"maxTokens,omitempty"`
 	// ContextWindow is the model's context window in tokens. It is the
 	// denominator for the context gauge and the derived tool-output ceiling,
 	// so /ctx shows the resulting budget: a wrong value here shows up as a
@@ -92,6 +96,11 @@ func BuiltinProviders() map[string]ProviderConfig {
 			// Required by OpenCode Go for routing and prompt caching:
 			// https://opencode.ai/docs/go/#where-can-i-use-it
 			SessionHeader: "x-opencode-session",
+			// Served only over /responses, per https://opencode.ai/docs/go/.
+			ResponsesModels: []string{
+				"gpt-6-luna", "gpt-5.6-luna", "grok-4.7", "grok-4.6",
+				"muse-spark-1.3-contributor", "muse-spark-1.2-contributor",
+			},
 			Models: []string{
 				"deepseek-v4-flash", "deepseek-v4-pro", "glm-5.1", "glm-5.2", "kimi-k2.6", "kimi-k2.7-code",
 				"mimo-v2.5", "mimo-v2.5-pro", "minimax-m2.7", "minimax-m3", "qwen3.6-plus", "qwen3.7-max", "qwen3.7-plus",
@@ -207,6 +216,9 @@ func mergeProvider(dst *ProviderConfig, o ProviderConfig) {
 	if o.VisionModels != nil {
 		dst.VisionModels = o.VisionModels
 	}
+	if o.ResponsesModels != nil {
+		dst.ResponsesModels = o.ResponsesModels
+	}
 	if o.ThinkingLevels != nil {
 		dst.ThinkingLevels = o.ThinkingLevels
 	}
@@ -291,15 +303,16 @@ func (pc ProviderConfig) NewProvider(model string) (agent.Provider, error) {
 	switch pc.API {
 	case "", openai.API:
 		return openai.New(openai.Config{
-			Name:           pc.Name,
-			BaseURL:        pc.BaseURL,
-			APIKey:         key,
-			Headers:        pc.Headers,
-			SessionHeader:  pc.SessionHeader,
-			UserAgent:      UserAgent,
-			ThinkingFormat: pc.ThinkingFormat,
-			MaxTokens:      pc.MaxTokens,
-			SupportsImages: slices.Contains(pc.VisionModels, model),
+			Name:            pc.Name,
+			BaseURL:         pc.BaseURL,
+			APIKey:          key,
+			Headers:         pc.Headers,
+			SessionHeader:   pc.SessionHeader,
+			ResponsesModels: pc.ResponsesModels,
+			UserAgent:       UserAgent,
+			ThinkingFormat:  pc.ThinkingFormat,
+			MaxTokens:       pc.MaxTokens,
+			SupportsImages:  slices.Contains(pc.VisionModels, model),
 		}), nil
 	}
 	return nil, fmt.Errorf("provider %s: unsupported api %q", pc.Name, pc.API)
