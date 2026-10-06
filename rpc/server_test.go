@@ -507,3 +507,27 @@ func TestReadErrorStillCleansUp(t *testing.T) {
 		t.Fatalf("session still busy: %+v", st)
 	}
 }
+
+// get_state reports the sandbox, a malachi extension.
+func TestGetStateReportsTheSandbox(t *testing.T) {
+	c := serve(t, openSession(t, fake.New()))
+	c.send(`{"id":"s","type":"get_state"}`)
+	r := c.response("s")
+	sb, ok := r["data"].(map[string]any)["sandbox"].(map[string]any)
+	if !ok {
+		t.Fatalf("no sandbox in get_state: %v", r)
+	}
+	if sb["enabled"] != true || sb["network"] != true {
+		t.Fatalf("sandbox: %v", sb)
+	}
+	if roots, _ := sb["writableRoots"].([]any); len(roots) == 0 {
+		t.Fatalf("no writable roots: %v", sb)
+	}
+	if hidden, _ := sb["hiddenPaths"].([]any); len(hidden) == 0 {
+		t.Fatalf("no hidden paths: %v", sb)
+	}
+	if avail := sandbox.Available(); (avail == nil) != (sb["available"] == true) {
+		t.Fatalf("available=%v but Available() = %v", sb["available"], avail)
+	}
+	c.close()
+}

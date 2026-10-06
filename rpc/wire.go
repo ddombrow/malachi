@@ -108,19 +108,53 @@ func trustOf(t coding.TrustState) trustWire {
 
 // stateWire is get_state: tau's twelve keys plus projectTrust.
 type stateWire struct {
-	Model                 modelWire `json:"model"`
-	ThinkingLevel         string    `json:"thinkingLevel"`
-	IsStreaming           bool      `json:"isStreaming"`
-	IsCompacting          bool      `json:"isCompacting"`
-	SteeringMode          string    `json:"steeringMode"`
-	FollowUpMode          string    `json:"followUpMode"`
-	SessionFile           *string   `json:"sessionFile"`
-	SessionID             string    `json:"sessionId"`
-	SessionName           *string   `json:"sessionName"`
-	AutoCompactionEnabled bool      `json:"autoCompactionEnabled"`
-	MessageCount          int       `json:"messageCount"`
-	PendingMessageCount   int       `json:"pendingMessageCount"`
-	ProjectTrust          trustWire `json:"projectTrust"`
+	Model                 modelWire   `json:"model"`
+	ThinkingLevel         string      `json:"thinkingLevel"`
+	IsStreaming           bool        `json:"isStreaming"`
+	IsCompacting          bool        `json:"isCompacting"`
+	SteeringMode          string      `json:"steeringMode"`
+	FollowUpMode          string      `json:"followUpMode"`
+	SessionFile           *string     `json:"sessionFile"`
+	SessionID             string      `json:"sessionId"`
+	SessionName           *string     `json:"sessionName"`
+	AutoCompactionEnabled bool        `json:"autoCompactionEnabled"`
+	MessageCount          int         `json:"messageCount"`
+	PendingMessageCount   int         `json:"pendingMessageCount"`
+	ProjectTrust          trustWire   `json:"projectTrust"`
+	Sandbox               sandboxWire `json:"sandbox"`
+}
+
+// sandboxWire is a malachi extension to get_state: what sandboxed commands
+// and file tools may touch. available is false, with a reason, when the
+// sandbox is on but cannot confine commands here (they then fail).
+type sandboxWire struct {
+	Enabled       bool     `json:"enabled"`
+	Available     bool     `json:"available"`
+	Reason        string   `json:"reason,omitempty"`
+	Network       bool     `json:"network"`
+	WritableRoots []string `json:"writableRoots"`
+	HiddenPaths   []string `json:"hiddenPaths"`
+}
+
+func sandboxOf(st coding.SandboxState) sandboxWire {
+	w := sandboxWire{
+		Enabled: st.Enabled, Available: st.Unavailable == nil, Network: st.Network,
+		WritableRoots: st.Writable, HiddenPaths: st.Hidden,
+	}
+	if st.Unavailable != nil {
+		w.Reason = st.Unavailable.Error()
+	}
+	if !st.Enabled {
+		// Off, nothing is confined: the lists would only mislead.
+		w.Network, w.WritableRoots, w.HiddenPaths = true, nil, nil
+	}
+	if w.WritableRoots == nil {
+		w.WritableRoots = []string{}
+	}
+	if w.HiddenPaths == nil {
+		w.HiddenPaths = []string{}
+	}
+	return w
 }
 
 func stateOf(s *coding.Session) stateWire {
@@ -146,6 +180,7 @@ func stateOf(s *coding.Session) stateWire {
 		MessageCount:          len(s.Harness.Messages()),
 		PendingMessageCount:   pending,
 		ProjectTrust:          trustOf(s.TrustState()),
+		Sandbox:               sandboxOf(s.Sandbox()),
 	}
 }
 

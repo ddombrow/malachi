@@ -197,6 +197,7 @@ func newModel(s *coding.Session, initialPrompt string) *model {
 	// After the banner, so a withheld project file is the first thing a new
 	// session says about itself.
 	m.showTrustNotice()
+	m.showSandboxNotice()
 	return m
 }
 
@@ -680,6 +681,10 @@ func (m *model) live() string {
 
 func (m *model) statusLine() string {
 	parts := []string{m.s.Provider().Name + "/" + m.s.Model()}
+	// Second, so a narrow bar drops usage figures before it drops this.
+	if mark := m.s.Sandbox().Marker(); mark != "" {
+		parts = append(parts, mark)
+	}
 	if lvl := m.s.ThinkingLevel(); lvl != "" && lvl != "off" {
 		parts = append(parts, "thinking "+lvl)
 	}

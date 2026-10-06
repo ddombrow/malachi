@@ -644,3 +644,31 @@ func TestIconSetsAreUniformWidth(t *testing.T) {
 		}
 	}
 }
+
+func TestSandboxCommandAndMarker(t *testing.T) {
+	m := newTestModel(t)
+	m.command("/sandbox")
+	if out := m.tr.text(m.r); !strings.Contains(out, "writable:") || !strings.Contains(out, "hidden") {
+		t.Fatalf("/sandbox printed:\n%s", out)
+	}
+	if strings.Contains(m.statusLine(), "unsandboxed") {
+		t.Fatal("marker shown with the sandbox on")
+	}
+
+	s, err := coding.Open(coding.Options{
+		Cwd: t.TempDir(), Home: t.TempDir(), Settings: &coding.Settings{},
+		Provider: fake.New(), NoSession: true, Sandbox: "off",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	off := newModel(s, "")
+	off.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	if !strings.Contains(off.statusLine(), "unsandboxed") {
+		t.Fatalf("status without marker: %q", off.statusLine())
+	}
+	if !strings.Contains(off.tr.text(off.r), "Sandbox off") {
+		t.Fatalf("no startup notice:\n%s", off.tr.text(off.r))
+	}
+}

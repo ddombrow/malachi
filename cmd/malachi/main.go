@@ -60,6 +60,7 @@ func run() int {
 		listModels = flag.Bool("list-models", false, "list the models the provider currently serves and exit")
 		version    = flag.Bool("version", false, "print the version and exit")
 		trustFlag  = flag.String("trust", "", `project trust for this run: "yes" to load this directory's instruction files, "no" to withhold them`)
+		sandboxSet = flag.String("sandbox", "", `"on" or "off" for this run (default from settings: on). Off lets commands and file tools reach everything you can`)
 	)
 	flag.BoolVar(cont, "continue", false, "same as -c")
 	flag.Usage = func() {
@@ -92,6 +93,7 @@ func run() int {
 		Resume:        *resume,
 		NoSession:     *noSession,
 		Trust:         *trustFlag,
+		Sandbox:       *sandboxSet,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "malachi:", err)
@@ -110,6 +112,9 @@ func run() int {
 		if notice := s.TrustState().TrustNotice(); notice != "" {
 			fmt.Fprintln(os.Stderr, notice)
 			fmt.Fprintln(os.Stderr, "  pass -trust yes to load them, or set projectTrust in settings.json")
+		}
+		if notice := s.Sandbox().Notice(); notice != "" {
+			fmt.Fprintln(os.Stderr, notice)
 		}
 	}
 

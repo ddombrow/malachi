@@ -22,6 +22,7 @@ const helpText = `Commands:
   /trim [bytes]      trim old tool output before the next request
   /trust [yes|no]    load this directory's AGENTS.md into the prompt
   /trust parent    do the same for every directory beneath the parent
+  /sandbox            show what commands and file tools may touch
   /ctx               measured context: tokens, tool output share, trim passes
   /new                start a fresh session
   /resume [n|name]    list recent sessions, or resume one
@@ -99,6 +100,8 @@ func (m *model) command(line string) tea.Cmd {
 		return m.trimCommand(arg)
 	case "trust":
 		return m.trustCommand(arg)
+	case "sandbox":
+		return m.printDim(m.s.Sandbox().Describe())
 	case "compact":
 		return m.compactCommand(arg)
 	case "ctx":
@@ -184,6 +187,16 @@ func (m *model) showTrustNotice() {
 	if notice := m.s.TrustState().TrustNotice(); notice != "" {
 		m.tr.add(func(r *renderer) string {
 			return item(r.st.toolErr.Render(notice))
+		})
+	}
+}
+
+// showSandboxNotice says so at startup when the sandbox protects nothing:
+// turned off, or unable to confine commands here.
+func (m *model) showSandboxNotice() {
+	if notice := m.s.Sandbox().Notice(); notice != "" {
+		m.tr.add(func(r *renderer) string {
+			return item(r.st.toolErr.Render(notice + " (/sandbox for details)"))
 		})
 	}
 }
