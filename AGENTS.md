@@ -15,7 +15,9 @@ TUI, RPC = frontends                  (tui/, rpc/)
 ```text
 agent/     messages, events, tools, loop, harness, session primitives. Imports nothing else in this module.
 ai/...     providers (raw net/http + SSE). Import agent for message/stream types.
-coding/    coding tools, system prompt, config, coding.Session. Imports agent and ai.
+sandbox/   what commands and file tools may touch, and the OS backends that
+           confine commands. Imports nothing else in this module.
+coding/    coding tools, system prompt, config, coding.Session. Imports agent, ai and sandbox.
 tui/       Bubble Tea frontend. Consumes coding.Session events and state.
 rpc/       headless JSONL protocol (tau/Pi RPC mode). Consumes coding.Session events and state.
 cmd/       entrypoints.
@@ -28,6 +30,10 @@ a compaction, refusing a session swap mid-run) belong to `coding.Session`
 (`Submit`, `Compact`, `State`), never to a frontend: a rule in `tui/` is one
 that `rpc/` silently bypasses. Frontends send input through the session and
 react to its events (`Session.Subscribe`).
+
+The sandbox policy is decided by the user, never by the model: settings
+(read only from malachi's home, which the sandbox hides), flags, and user
+commands. No tool may widen it.
 
 ## Conventions
 
