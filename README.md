@@ -238,9 +238,13 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   `~/.azure`, `~/.kube`, `~/.docker/config.json`, `~/.config/gh`,
   `~/.config/gcloud`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`,
   `~/.pypirc`, cargo and Terraform credentials, and the macOS keychains.
-- **The network** is off by default: commands cannot open IP connections,
-  so downloads (`go mod download`, `npm install`, `git fetch`) fail until
-  you turn it on with `/network on`, `-network on`, or `"network": true`.
+- **The network** is off by default: commands cannot open IP connections or
+  resolve names (which would carry hostnames out as DNS queries), and on
+  Linux cannot create sockets of any family but Unix and netlink. Downloads
+  (`go mod download`, `npm install`, `git fetch`) fail until you turn it on
+  with `/network on`, `-network on`, or `"network": true`. This is about
+  commands only: malachi itself still sends the conversation, tool output
+  included, to your model provider.
 - **Local daemons are out of reach.** Commands cannot connect to Unix sockets
   such as Docker's or ssh-agent's. Through those a command could act outside
   the sandbox: start a container with your home directory mounted, or push
@@ -294,7 +298,12 @@ What it does not stop:
   That includes `.git/hooks`, which run with no sandbox when *you* next use
   git.
 - **Anything readable and not hidden** can be read, and with the network on
-  it can be sent somewhere.
+  it can be sent somewhere. Whatever a tool returns is sent to the model
+  provider, network on or off.
+- **On macOS, other programs acting for a command.** The profile allows by
+  default and confines files, IP and Unix sockets, but a command can still
+  ask system services for things, such as opening a URL in your browser
+  (`open`), which then runs outside the sandbox.
 - **On Linux**, the names inside a hidden directory can be listed, though not
   their contents.
 - **On Linux**, a writable directory that itself contains a hidden path (say,

@@ -184,3 +184,54 @@ func TestSandboxedUnixSockets(t *testing.T) {
 		t.Fatalf("Unix sockets allowed but connect failed: %s", out)
 	}
 }
+
+// With the network off nothing may carry data out: on Linux every socket
+// family but netlink (and Unix, if allowed) is refused by our filter
+// (EPERM, not merely unsupported); on macOS the name resolver is closed, so
+// hostnames cannot leave as DNS queries.
+func TestNetworkOffClosesSideChannels(t *testing.T) {
+	requireBackend(t)
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("no python3")
+	}
+	p, project, _, _, _ := fixture(t)
+	p.Network = false
+	switch runtime.GOOS {
+	case "linux":
+		script := py + ` -c "
+import errno, socket
+for name, fam in [('inet',2),('inet6',10),('packet',17),('can',29),('bluetooth',31),('alg',38),('vsock',40),('unix',1)]:
+    try:
+        socket.socket(fam, socket.SOCK_DGRAM if fam in (29,31) else socket.SOCK_STREAM if fam != 17 else socket.SOCK_RAW).close()
+        print(name, 'open')
+    except OSError as e:
+        print(name, 'EPERM' if e.errno == errno.EPERM else 'other')
+try:
+    socket.socket(16, socket.SOCK_RAW, 0).close(); print('netlink open')
+except OSError as e:
+    print('netlink', e)
+"`
+		out, _ := sh(t, p, project, script)
+		for _, fam := range []string{"inet", "inet6", "packet", "can", "bluetooth", "alg", "vsock", "unix"} {
+			if !strings.Contains(out, fam+" EPERM") {
+				t.Errorf("%s not refused by the filter:\n%s", fam, out)
+			}
+		}
+		if !strings.Contains(out, "netlink open") {
+			t.Errorf("netlink refused:\n%s", out)
+		}
+	case "darwin":
+		connect := py + ` -c "import socket; socket.socket(socket.AF_UNIX).connect('/private/var/run/mDNSResponder')"`
+		for _, unix := range []bool{false, true} {
+			p.UnixSockets = unix
+			if out, ok := sh(t, p, project, connect); ok {
+				t.Errorf("unixSockets=%v: reached the resolver with the network off: %s", unix, out)
+			}
+		}
+		p.Network, p.UnixSockets = true, false
+		if out, ok := sh(t, p, project, connect); !ok {
+			t.Errorf("resolver closed with the network on: %s", out)
+		}
+	}
+}

@@ -40,4 +40,18 @@ func TestProfile(t *testing.T) {
 	if strings.Contains(Profile(p), "unix-socket") {
 		t.Error("Unix sockets restricted when allowed")
 	}
+
+	// With the network off the resolver is closed, even when Unix sockets
+	// are otherwise allowed: it would carry hostnames out as DNS queries.
+	const resolver = `(literal "/private/var/run/mDNSResponder")`
+	for _, unix := range []bool{false, true} {
+		off := Policy{Enabled: true, UnixSockets: unix, Writable: []string{"/w"}}
+		prof := Profile(off)
+		if strings.Contains(prof, "(allow network-outbound (remote unix-socket "+resolver+"))") {
+			t.Errorf("unixSockets=%v: resolver allowed with the network off", unix)
+		}
+		if unix && !strings.Contains(prof, "(deny network-outbound (remote unix-socket "+resolver+"))") {
+			t.Error("resolver open with the network off and Unix sockets allowed")
+		}
+	}
 }

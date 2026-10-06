@@ -70,34 +70,39 @@ func restrictFS(p Policy) error {
 }
 
 // denySockets installs a seccomp filter making socket(2) fail with EPERM
-// for the families p does not allow: IP and raw packet sockets (and
-// io_uring, which can create sockets without socket(2)) with the network
-// off; Unix sockets unless allowed. Landlock cannot restrict connecting to
-// a Unix socket by path before ABI 9, which few kernels have, so on Linux
-// commands cannot create Unix sockets at all; socketpair(2) still works.
+// for what p does not allow.
+//
+// With the network off, every family is denied except netlink (kernel-local:
+// listing interfaces, which many tools do at startup, needs it) and, if
+// allowed, Unix: a default-deny list, so families such as Bluetooth, CAN or
+// VSOCK cannot carry data out either. io_uring, which can create sockets
+// without socket(2), is denied too.
+//
+// Unix sockets are denied unless allowed: Landlock cannot restrict
+// connecting to one by path before ABI 9, which few kernels have.
+// socketpair(2) still works.
 func denySockets(p Policy) error {
-	var families []uint64
-	var names []string
+	var groups []seccomp.SyscallGroup
 	if !p.Network {
-		families = append(families, syscall.AF_INET, syscall.AF_INET6, syscall.AF_PACKET)
-		names = append(names, "io_uring_setup")
+		allowed := []uint64{syscall.AF_NETLINK}
+		if p.UnixSockets {
+			allowed = append(allowed, syscall.AF_UNIX)
+		}
+		var notAllowed seccomp.ArgumentConditions // all must hold: ANDed
+		for _, family := range allowed {
+			notAllowed = append(notAllowed, seccomp.Condition{Argument: 0, Operation: seccomp.NotEqual, Value: family})
+		}
+		groups = append(groups,
+			seccomp.SyscallGroup{Action: seccomp.ActionErrno, NamesWithCondtions: []seccomp.NameWithConditions{{Name: "socket", Conditions: notAllowed}}},
+			seccomp.SyscallGroup{Action: seccomp.ActionErrno, Names: []string{"io_uring_setup"}},
+		)
+	} else if !p.UnixSockets {
+		groups = append(groups, seccomp.SyscallGroup{Action: seccomp.ActionErrno, NamesWithCondtions: []seccomp.NameWithConditions{{
+			Name: "socket", Conditions: seccomp.ArgumentConditions{{Argument: 0, Operation: seccomp.Equal, Value: syscall.AF_UNIX}},
+		}}})
 	}
-	if !p.UnixSockets {
-		families = append(families, syscall.AF_UNIX)
-	}
-	if len(families) == 0 && len(names) == 0 {
+	if len(groups) == 0 {
 		return nil
-	}
-	var conds []seccomp.NameWithConditions
-	for _, family := range families {
-		conds = append(conds, seccomp.NameWithConditions{
-			Name:       "socket",
-			Conditions: seccomp.ArgumentConditions{{Argument: 0, Operation: seccomp.Equal, Value: family}},
-		})
-	}
-	groups := []seccomp.SyscallGroup{{Action: seccomp.ActionErrno, NamesWithCondtions: conds}}
-	if len(names) > 0 {
-		groups = append(groups, seccomp.SyscallGroup{Action: seccomp.ActionErrno, Names: names})
 	}
 	return seccomp.LoadFilter(seccomp.Filter{
 		NoNewPrivs: true,

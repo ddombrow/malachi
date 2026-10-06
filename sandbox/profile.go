@@ -27,6 +27,11 @@ func Profile(p Policy) string {
 	}
 	if !p.Network {
 		b.WriteString("(deny network* (remote ip))\n")
+		if p.UnixSockets {
+			// Unix sockets are otherwise unrestricted; the resolver must
+			// still be closed (see below).
+			b.WriteString(`(deny network-outbound (remote unix-socket (literal "/private/var/run/mDNSResponder")))` + "\n")
+		}
 	}
 	if !p.UnixSockets {
 		// Local daemons (Docker, ssh-agent, ...) would act outside the
@@ -42,7 +47,12 @@ func Profile(p Policy) string {
 		for _, w := range p.Writable {
 			allow("(subpath " + sbplString(w) + ")")
 		}
-		allow(`(literal "/private/var/run/mDNSResponder")`)
+		if p.Network {
+			// Name resolution. With the network off it is not needed, and
+			// would leave a channel out: the resolver forwards the
+			// command's chosen hostnames as DNS queries.
+			allow(`(literal "/private/var/run/mDNSResponder")`)
+		}
 		allow(`(literal "/private/var/run/syslog")`)
 	}
 	return b.String()
