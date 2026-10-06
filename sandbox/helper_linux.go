@@ -55,12 +55,15 @@ func restrictFS(p Policy) error {
 	}
 	rwDirs, rwFiles := partition(writable)
 
+	// Paths can vanish between listing them and Landlock opening them (temp
+	// directories churn constantly), so a missing one is skipped: it can no
+	// longer be accessed anyway.
 	rules := []landlock.Rule{
-		landlock.RODirs(roDirs...),
-		landlock.ROFiles(roFiles...),
-		landlock.PathAccess(ll.AccessFSReadDir, split...),
-		landlock.RWDirs(rwDirs...).WithRefer(),
-		landlock.RWFiles(rwFiles...),
+		landlock.RODirs(roDirs...).IgnoreIfMissing(),
+		landlock.ROFiles(roFiles...).IgnoreIfMissing(),
+		landlock.PathAccess(ll.AccessFSReadDir, split...).IgnoreIfMissing(),
+		landlock.RWDirs(rwDirs...).WithRefer().IgnoreIfMissing(),
+		landlock.RWFiles(rwFiles...).IgnoreIfMissing(),
 		landlock.RWFiles(devices...).IgnoreIfMissing(),
 	}
 	// Best effort over the ABIs this kernel lacks, never over Landlock
