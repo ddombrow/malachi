@@ -385,3 +385,27 @@ func TestReadReportsAnOversizedFirstLine(t *testing.T) {
 		t.Fatalf("got %q", r.Text())
 	}
 }
+
+// Commands do not inherit malachi's API keys: neither the variables its .env
+// set nor any provider's apiKeyEnv.
+func TestBashDoesNotInheritAPIKeys(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".env", "MALACHI_TEST_DOTENV_KEY=from-dotenv\n")
+	if err := LoadDotEnv(filepath.Join(dir, ".env")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Unsetenv("MALACHI_TEST_DOTENV_KEY") })
+	t.Setenv("MALACHI_TEST_PROVIDER_KEY", "from-shell")
+	t.Setenv("MALACHI_TEST_UNRELATED", "kept")
+
+	s := &Settings{Providers: map[string]ProviderConfig{"p": {APIKeyEnv: "MALACHI_TEST_PROVIDER_KEY"}}}
+	r, err := run(t, NewBashTool(dir, s.ToolOptions()), map[string]any{
+		"command": `echo "[$MALACHI_TEST_DOTENV_KEY][$MALACHI_TEST_PROVIDER_KEY][$MALACHI_TEST_UNRELATED]"`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(r.Text()); got != "[][][kept]" {
+		t.Fatalf("command saw %s", got)
+	}
+}

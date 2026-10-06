@@ -6,8 +6,24 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"strings"
+	"sync"
 )
+
+// dotEnvKeys records the variables LoadDotEnv set. They are malachi's own
+// secrets (API keys), so commands the model runs do not inherit them.
+var (
+	dotEnvMu   sync.Mutex
+	dotEnvKeys []string
+)
+
+// DotEnvKeys returns the names of the variables LoadDotEnv has set.
+func DotEnvKeys() []string {
+	dotEnvMu.Lock()
+	defer dotEnvMu.Unlock()
+	return slices.Clone(dotEnvKeys)
+}
 
 // LoadDotEnv sets environment variables from a KEY=VALUE file. Non-empty
 // variables already in the environment win, so a shell export always
@@ -46,6 +62,9 @@ func LoadDotEnv(path string) error {
 			if err := os.Setenv(key, value); err != nil {
 				return err
 			}
+			dotEnvMu.Lock()
+			dotEnvKeys = append(dotEnvKeys, key)
+			dotEnvMu.Unlock()
 		}
 	}
 	return sc.Err()

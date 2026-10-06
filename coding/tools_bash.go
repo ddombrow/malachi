@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,19 @@ type ToolOptions struct {
 	// SpillDir receives the full output of truncated commands. It is created
 	// on first use; empty means the system temp directory.
 	SpillDir string
+	// HideEnv names variables commands must not inherit: malachi's own API
+	// keys, whether from its .env or named by a provider's apiKeyEnv.
+	HideEnv []string
+}
+
+// commandEnv is the environment a command runs with: malachi's own, minus
+// hidden variables, plus settings that keep tools non-interactive.
+func commandEnv(hide []string) []string {
+	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return slices.Contains(hide, name)
+	})
+	return append(env, "PAGER=cat", "GIT_PAGER=cat", "TERM=dumb")
 }
 
 func (o ToolOptions) bashTimeout() time.Duration {
@@ -230,7 +244,7 @@ func executeBash(ctx context.Context, cwd string, opts ToolOptions, args map[str
 	cmd.Stdin = nil // /dev/null: keep interactive programs off our terminal
 	cmd.Stdout = out
 	cmd.Stderr = out
-	cmd.Env = append(os.Environ(), "PAGER=cat", "GIT_PAGER=cat", "TERM=dumb")
+	cmd.Env = commandEnv(opts.HideEnv)
 	configureProcessGroup(cmd)
 	cmd.WaitDelay = 2 * time.Second
 

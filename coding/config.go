@@ -240,7 +240,12 @@ func (s *Settings) SandboxConfig(cwd, home string) sandbox.Config {
 
 // ToolOptions turns settings into options for the coding tools.
 func (s *Settings) ToolOptions() ToolOptions {
-	var o ToolOptions
+	o := ToolOptions{HideEnv: DotEnvKeys()}
+	for _, pc := range s.ProviderConfigs() {
+		if pc.APIKeyEnv != "" {
+			o.HideEnv = append(o.HideEnv, pc.APIKeyEnv)
+		}
+	}
 	switch {
 	case s.BashTimeoutSeconds < 0:
 		o.BashTimeout = -1
