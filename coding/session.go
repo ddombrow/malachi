@@ -56,6 +56,7 @@ type Session struct {
 	model      string
 	thinking   string
 	file       *session.File // nil when NoSession
+	spillDir   string        // full output of truncated commands; removed on Close
 	header     []*session.Entry
 	persistErr error
 	diag       *Diagnostics
@@ -230,7 +231,6 @@ func Open(opts Options) (*Session, error) {
 	}
 	s.provider, s.model, s.thinking = pc, model, pc.ValidThinking(level)
 
-	tools := CodingTools(cwd, opts.Settings.ToolOptions())
 	// A stable per-conversation id: the session file name, or a random id
 	// for in-memory sessions. Providers use it for routing/prompt caching.
 	sessionID := session.NewID()
@@ -238,6 +238,14 @@ func Open(opts Options) (*Session, error) {
 		sessionID = strings.TrimSuffix(filepath.Base(s.file.Path()), ".jsonl")
 	}
 	s.sessionID = sessionID
+	// Spill files belong to this Session value, not the conversation: a
+	// reopened conversation gets its own directory, so closing the old value
+	// never deletes files the new one points at.
+	sweepSpill(spillRoot(), time.Now())
+	s.spillDir = filepath.Join(spillRoot(), sessionID+"-"+session.NewID()[:8])
+	toolOpts := opts.Settings.ToolOptions()
+	toolOpts.SpillDir = s.spillDir
+	tools := CodingTools(cwd, toolOpts)
 	s.trims = &trimLog{}
 	s.preparer = newCodingContextPreparer(cwd, s.trims)
 	s.runtime = provider
@@ -675,6 +683,7 @@ func (s *Session) Close() {
 	}
 	s.lifeCancel()
 	s.bus.close()
+	_ = os.RemoveAll(s.spillDir)
 }
 
 // Reopen replaces this session's state with a fresh or resumed one, keeping

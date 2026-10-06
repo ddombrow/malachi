@@ -35,6 +35,9 @@ type ToolOptions struct {
 	// BashTimeout applies when the model gives no timeout. Zero means
 	// DefaultBashTimeout; negative means none (an explicit choice).
 	BashTimeout time.Duration
+	// SpillDir receives the full output of truncated commands. It is created
+	// on first use; empty means the system temp directory.
+	SpillDir string
 }
 
 func (o ToolOptions) bashTimeout() time.Duration {
@@ -49,6 +52,7 @@ func (o ToolOptions) bashTimeout() time.Duration {
 // receives everything (up to MaxSpillBytes) and memory keeps only the last
 // tailBytesKept bytes plus counts.
 type outputSink struct {
+	dir       string // where the spill file goes; "" for the temp dir
 	mu        sync.Mutex
 	pending   []byte // all output, until the spill file exists
 	tail      []byte // last tailBytesKept bytes, once spilling
@@ -76,7 +80,7 @@ func (o *outputSink) Write(p []byte) (int, error) {
 			return len(p), nil
 		}
 		// Past the display limits: the full output now goes to a file.
-		f, err := os.CreateTemp("", "malachi-bash-*.log")
+		f, err := createSpill(o.dir)
 		if err != nil {
 			o.spillErr = err
 		} else {
@@ -90,6 +94,15 @@ func (o *outputSink) Write(p []byte) (int, error) {
 	o.writeSpill(p)
 	o.keepTail(p)
 	return len(p), nil
+}
+
+func createSpill(dir string) (*os.File, error) {
+	if dir != "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, err
+		}
+	}
+	return os.CreateTemp(dir, "malachi-bash-*.log")
 }
 
 func (o *outputSink) writeSpill(p []byte) {
@@ -210,7 +223,7 @@ func executeBash(ctx context.Context, cwd string, opts ToolOptions, args map[str
 		defer cancel()
 	}
 
-	out := &outputSink{}
+	out := &outputSink{dir: opts.SpillDir}
 	defer out.close()
 	cmd := exec.CommandContext(runCtx, shellPath(), "-c", command)
 	cmd.Dir = cwd
