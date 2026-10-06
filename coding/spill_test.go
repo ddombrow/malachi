@@ -14,7 +14,9 @@ import (
 // A truncated command's full output lives in the session's own directory,
 // which Close removes.
 func TestSpillFilesAreRemovedOnClose(t *testing.T) {
-	s, err := Open(Options{Cwd: t.TempDir(), Home: t.TempDir(), Settings: &Settings{}, Provider: fake.New(), NoSession: true})
+	// The sandbox is beside the point here, and cannot nest on macOS (this
+	// suite may itself run under malachi).
+	s, err := Open(Options{Cwd: t.TempDir(), Home: t.TempDir(), Settings: &Settings{}, Provider: fake.New(), NoSession: true, Sandbox: "off"})
 	if err != nil {
 		t.Fatal(err)
 	}
