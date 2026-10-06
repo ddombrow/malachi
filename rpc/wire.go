@@ -132,13 +132,14 @@ type sandboxWire struct {
 	Available     bool     `json:"available"`
 	Reason        string   `json:"reason,omitempty"`
 	Network       bool     `json:"network"`
+	UnixSockets   bool     `json:"unixSockets"`
 	WritableRoots []string `json:"writableRoots"`
 	HiddenPaths   []string `json:"hiddenPaths"`
 }
 
 func sandboxOf(st coding.SandboxState) sandboxWire {
 	w := sandboxWire{
-		Enabled: st.Enabled, Available: st.Unavailable == nil, Network: st.Network,
+		Enabled: st.Enabled, Available: st.Unavailable == nil, Network: st.Network, UnixSockets: st.UnixSockets,
 		WritableRoots: st.Writable, HiddenPaths: st.Hidden,
 	}
 	if st.Unavailable != nil {
@@ -146,7 +147,7 @@ func sandboxOf(st coding.SandboxState) sandboxWire {
 	}
 	if !st.Enabled {
 		// Off, nothing is confined: the lists would only mislead.
-		w.Network, w.WritableRoots, w.HiddenPaths = true, nil, nil
+		w.Network, w.UnixSockets, w.WritableRoots, w.HiddenPaths = true, true, nil, nil
 	}
 	if w.WritableRoots == nil {
 		w.WritableRoots = []string{}

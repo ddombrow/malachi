@@ -23,10 +23,16 @@ import (
 // Policy is what one sandboxed command or file tool may do. Paths are
 // absolute and canonical (symlinks resolved, as far as they exist).
 type Policy struct {
-	Enabled  bool
-	Network  bool     // outbound IP networking; Unix sockets always work
-	Writable []string // roots under which writes are allowed
-	Hidden   []string // neither readable nor writable; wins over Writable
+	Enabled bool
+	Network bool // outbound IP networking
+	// UnixSockets allows connecting to any Unix socket. Off, commands cannot
+	// reach local daemons such as Docker or ssh-agent, which would let them
+	// act outside the sandbox (a container mounting the home directory, a
+	// push with loaded keys). On macOS sockets under writable roots still
+	// work; on Linux no Unix sockets can be created.
+	UnixSockets bool
+	Writable    []string // roots under which writes are allowed
+	Hidden      []string // neither readable nor writable; wins over Writable
 }
 
 // Config is everything a Policy is built from: settings, per-project grants
@@ -36,6 +42,8 @@ type Config struct {
 	Cwd      string // the project; writable
 	Home     string // malachi's home (sessions, .env, settings); hidden
 	NoNet    bool
+	// UnixSockets allows connecting to any Unix socket; see Policy.
+	UnixSockets bool
 	// Writable and Hidden extend the defaults. Unhidden removes defaults:
 	// a hidden path equal to or under one of these is dropped.
 	Writable []string
@@ -46,7 +54,7 @@ type Config struct {
 // Build turns c into a Policy with the default writable roots and hidden
 // paths for this user and platform.
 func Build(c Config) Policy {
-	p := Policy{Enabled: !c.Disabled, Network: !c.NoNet}
+	p := Policy{Enabled: !c.Disabled, Network: !c.NoNet, UnixSockets: c.UnixSockets}
 	userHome, _ := os.UserHomeDir()
 	inHome := func(rel string) string {
 		if userHome == "" {

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -132,5 +133,54 @@ func TestSandboxedGoBuild(t *testing.T) {
 	script := "export GOTOOLCHAIN=local GOFLAGS=-mod=mod && " + gobin + ` mod init example.com/x && printf 'package main\nfunc main() { println("built") }\n' > main.go && ` + gobin + " run ."
 	if out, ok := sh(t, p, project, script); !ok || !strings.Contains(out, "built") {
 		t.Fatalf("go run under the sandbox failed: %s", out)
+	}
+}
+
+// Commands cannot reach local daemons over Unix sockets (Docker, ssh-agent):
+// they would act outside the sandbox. Checked against a listener of our own
+// outside the writable roots.
+func TestSandboxedUnixSockets(t *testing.T) {
+	requireBackend(t)
+	dir, err := os.MkdirTemp("", "us") // short: socket paths are limited to ~104 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	sock := filepath.Join(Canonical(dir), "s.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("no python3")
+	}
+	connect := py + ` -c "import socket; socket.socket(socket.AF_UNIX).connect('` + sock + `')"`
+
+	p, project, _, _, _ := fixture(t)
+	p = projectOnly(p, project) // the listener is outside
+	if out, ok := sh(t, p, project, connect); ok {
+		t.Fatalf("connected to an outside Unix socket: %s", out)
+	}
+	// On macOS a socket under a writable root (one the command could have
+	// made) works; on Linux commands cannot create Unix sockets at all.
+	inside := p
+	inside.Writable = append(slices.Clone(p.Writable), Canonical(dir))
+	if out, ok := sh(t, inside, project, connect); ok != (runtime.GOOS == "darwin") {
+		t.Fatalf("socket under a writable root: connected=%v on %s: %s", ok, runtime.GOOS, out)
+	}
+	p.UnixSockets = true
+	if out, ok := sh(t, p, project, connect); !ok {
+		t.Fatalf("Unix sockets allowed but connect failed: %s", out)
 	}
 }

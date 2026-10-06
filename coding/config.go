@@ -213,6 +213,7 @@ func LoadSettings(home string) (*Settings, error) {
 type SandboxSettings struct {
 	Enabled       *bool    `json:"enabled,omitempty"` // default true
 	Network       *bool    `json:"network,omitempty"` // default true
+	UnixSockets   bool     `json:"unixSockets,omitempty"`
 	WritableRoots []string `json:"writableRoots,omitempty"`
 	HiddenPaths   []string `json:"hiddenPaths,omitempty"`
 }
@@ -229,12 +230,13 @@ func (s *Settings) SandboxConfig(cwd, home string) sandbox.Config {
 		return out
 	}
 	return sandbox.Config{
-		Disabled: sb.Enabled != nil && !*sb.Enabled,
-		NoNet:    sb.Network != nil && !*sb.Network,
-		Cwd:      cwd,
-		Home:     home,
-		Writable: expand(sb.WritableRoots),
-		Hidden:   expand(sb.HiddenPaths),
+		Disabled:    sb.Enabled != nil && !*sb.Enabled,
+		NoNet:       sb.Network != nil && !*sb.Network,
+		UnixSockets: sb.UnixSockets,
+		Cwd:         cwd,
+		Home:        home,
+		Writable:    expand(sb.WritableRoots),
+		Hidden:      expand(sb.HiddenPaths),
 	}
 }
 

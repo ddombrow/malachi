@@ -47,7 +47,11 @@ func (st SandboxState) Describe() string {
 	if !st.Network {
 		network = "off"
 	}
-	fmt.Fprintf(&b, "  network: %s\n  writable:\n", network)
+	sockets := "only under writable directories (macOS); none (Linux)"
+	if st.UnixSockets {
+		sockets = "any (local daemons such as Docker are reachable)"
+	}
+	fmt.Fprintf(&b, "  network: %s\n  unix sockets: %s\n  writable:\n", network, sockets)
 	for _, w := range st.Writable {
 		b.WriteString("    " + w + "\n")
 	}

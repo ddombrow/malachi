@@ -5,7 +5,7 @@ import "strings"
 // Profile renders p as a Seatbelt (SBPL) profile. In SBPL the last matching
 // rule wins, so the order matters: allow everything, deny all writes,
 // re-allow writable roots, then deny hidden paths, which therefore beat
-// writable roots. Seatbelt matches resolved paths, which is why Policy paths
+// writable roots. Unix-socket connects are allowed only to an allow-list. Seatbelt matches resolved paths, which is why Policy paths
 // are canonical.
 func Profile(p Policy) string {
 	var b strings.Builder
@@ -26,8 +26,24 @@ func Profile(p Policy) string {
 		b.WriteString(")\n")
 	}
 	if !p.Network {
-		// IP only: Unix sockets (DNS via mDNSResponder, local daemons) work.
 		b.WriteString("(deny network* (remote ip))\n")
+	}
+	if !p.UnixSockets {
+		// Local daemons (Docker, ssh-agent, ...) would act outside the
+		// sandbox for the command. Sockets the command could have made
+		// itself, under writable roots, stay usable, as do name resolution
+		// and logging.
+		// One rule per path: several filters inside one (remote unix-socket)
+		// do not all apply (found by testing).
+		b.WriteString("(deny network-outbound (remote unix-socket))\n")
+		allow := func(filter string) {
+			b.WriteString("(allow network-outbound (remote unix-socket " + filter + "))\n")
+		}
+		for _, w := range p.Writable {
+			allow("(subpath " + sbplString(w) + ")")
+		}
+		allow(`(literal "/private/var/run/mDNSResponder")`)
+		allow(`(literal "/private/var/run/syslog")`)
 	}
 	return b.String()
 }

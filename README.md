@@ -239,7 +239,14 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   `~/.config/gcloud`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`,
   `~/.pypirc`, cargo and Terraform credentials, and the macOS keychains.
 - **The network** is on by default. Turn it off and commands cannot open IP
-  connections (Unix sockets still work).
+  connections.
+- **Local daemons are out of reach.** Commands cannot connect to Unix sockets
+  such as Docker's or ssh-agent's. Through those a command could act outside
+  the sandbox: start a container with your home directory mounted, or push
+  with your loaded keys. On macOS, sockets under writable directories, name
+  resolution and logging still work. On Linux, commands cannot create Unix
+  sockets at all. `"unixSockets": true` lifts this, along with that
+  protection.
 - **API keys** that malachi loaded from its `.env`, or that a provider's
   `apiKeyEnv` names, are removed from commands' environment. This holds even
   with the sandbox off.
@@ -249,6 +256,7 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   "sandbox": {
     "enabled": true,
     "network": true,
+    "unixSockets": false,
     "writableRoots": ["~/scratch"],
     "hiddenPaths": ["~/.config/my-token"]
   }

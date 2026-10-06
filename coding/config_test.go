@@ -51,13 +51,13 @@ func TestContextWindowFallsBackWhenUnset(t *testing.T) {
 
 func TestSandboxSettings(t *testing.T) {
 	var s Settings
-	if err := json.Unmarshal([]byte(`{"sandbox":{"network":false,"writableRoots":["~/scratch","rel"],"hiddenPaths":["/etc/secret"]}}`), &s); err != nil {
+	if err := json.Unmarshal([]byte(`{"sandbox":{"network":false,"unixSockets":true,"writableRoots":["~/scratch","rel"],"hiddenPaths":["/etc/secret"]}}`), &s); err != nil {
 		t.Fatal(err)
 	}
 	cwd, home := t.TempDir(), t.TempDir()
 	c := s.SandboxConfig(cwd, home)
 	userHome, _ := os.UserHomeDir()
-	if c.Disabled || !c.NoNet || c.Cwd != cwd || c.Home != home {
+	if c.Disabled || !c.NoNet || !c.UnixSockets || c.Cwd != cwd || c.Home != home {
 		t.Fatalf("config %+v", c)
 	}
 	if want := []string{filepath.Join(userHome, "scratch"), filepath.Join(cwd, "rel")}; !slices.Equal(c.Writable, want) {

@@ -32,10 +32,8 @@ func runHelper(raw string) error {
 	if err := restrictFS(s.Policy); err != nil {
 		return fmt.Errorf("landlock: %w", err)
 	}
-	if !s.Policy.Network {
-		if err := denyNetwork(); err != nil {
-			return fmt.Errorf("seccomp: %w", err)
-		}
+	if err := denySockets(s.Policy); err != nil {
+		return fmt.Errorf("seccomp: %w", err)
 	}
 	return syscall.Exec(path, append([]string{s.Name}, s.Args...), os.Environ())
 }
@@ -71,26 +69,39 @@ func restrictFS(p Policy) error {
 	return landlock.V5.BestEffort().RestrictPaths(rules...)
 }
 
-// denyNetwork makes creating IP and raw packet sockets fail with EPERM, and
-// io_uring (which can create sockets without socket(2)) unavailable. Unix
-// sockets keep working.
-func denyNetwork() error {
+// denySockets installs a seccomp filter making socket(2) fail with EPERM
+// for the families p does not allow: IP and raw packet sockets (and
+// io_uring, which can create sockets without socket(2)) with the network
+// off; Unix sockets unless allowed. Landlock cannot restrict connecting to
+// a Unix socket by path before ABI 9, which few kernels have, so on Linux
+// commands cannot create Unix sockets at all; socketpair(2) still works.
+func denySockets(p Policy) error {
+	var families []uint64
+	var names []string
+	if !p.Network {
+		families = append(families, syscall.AF_INET, syscall.AF_INET6, syscall.AF_PACKET)
+		names = append(names, "io_uring_setup")
+	}
+	if !p.UnixSockets {
+		families = append(families, syscall.AF_UNIX)
+	}
+	if len(families) == 0 && len(names) == 0 {
+		return nil
+	}
 	var conds []seccomp.NameWithConditions
-	for _, family := range []uint64{syscall.AF_INET, syscall.AF_INET6, syscall.AF_PACKET} {
+	for _, family := range families {
 		conds = append(conds, seccomp.NameWithConditions{
 			Name:       "socket",
 			Conditions: seccomp.ArgumentConditions{{Argument: 0, Operation: seccomp.Equal, Value: family}},
 		})
 	}
+	groups := []seccomp.SyscallGroup{{Action: seccomp.ActionErrno, NamesWithCondtions: conds}}
+	if len(names) > 0 {
+		groups = append(groups, seccomp.SyscallGroup{Action: seccomp.ActionErrno, Names: names})
+	}
 	return seccomp.LoadFilter(seccomp.Filter{
 		NoNewPrivs: true,
 		Flag:       seccomp.FilterFlagTSync,
-		Policy: seccomp.Policy{
-			DefaultAction: seccomp.ActionAllow,
-			Syscalls: []seccomp.SyscallGroup{
-				{Action: seccomp.ActionErrno, NamesWithCondtions: conds},
-				{Action: seccomp.ActionErrno, Names: []string{"io_uring_setup"}},
-			},
-		},
+		Policy:     seccomp.Policy{DefaultAction: seccomp.ActionAllow, Syscalls: groups},
 	})
 }
