@@ -60,11 +60,23 @@ func compactingModel(t *testing.T, release <-chan struct{}, after ...fake.Script
 	s.Harness.ReplaceMessages(longHistory())
 	m := newModel(s, "")
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		if cmd := m.command("/compact"); cmd != nil {
 			cmd()
 		}
 	}()
+	// Cleanups run last first, so this waits for the compaction (the test
+	// releases it on return) before the temp directories it writes to are
+	// removed.
+	t.Cleanup(func() {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("the compaction never finished")
+		}
+	})
 	waitUntil(t, "the compaction to start", func() bool { return s.State().Compacting })
 	return m
 }
