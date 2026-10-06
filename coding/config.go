@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/ai/openai"
@@ -49,11 +50,14 @@ type ProviderConfig struct {
 
 // Settings is ~/.malachi/settings.json.
 type Settings struct {
-	DefaultProvider    string                    `json:"defaultProvider,omitempty"`
-	DefaultModel       string                    `json:"defaultModel,omitempty"`
-	ThinkingLevel      string                    `json:"thinkingLevel,omitempty"`
-	AppendSystemPrompt string                    `json:"appendSystemPrompt,omitempty"`
-	Icons              string                    `json:"icons,omitempty"`        // TUI icon set: "emoji" (default) or "dots"
+	DefaultProvider    string `json:"defaultProvider,omitempty"`
+	DefaultModel       string `json:"defaultModel,omitempty"`
+	ThinkingLevel      string `json:"thinkingLevel,omitempty"`
+	AppendSystemPrompt string `json:"appendSystemPrompt,omitempty"`
+	Icons              string `json:"icons,omitempty"` // TUI icon set: "emoji" (default) or "dots"
+	// BashTimeoutSeconds bounds a command the model gives no timeout for:
+	// 0 means the default (600), -1 means no limit.
+	BashTimeoutSeconds int                       `json:"bashTimeoutSeconds,omitempty"`
 	ProjectTrust       string                    `json:"projectTrust,omitempty"` // "ask" (default), "always", or "never"
 	Providers          map[string]ProviderConfig `json:"providers,omitempty"`
 }
@@ -199,6 +203,18 @@ func LoadSettings(home string) (*Settings, error) {
 		return nil, fmt.Errorf("settings.json: %w", err)
 	}
 	return s, nil
+}
+
+// ToolOptions turns settings into options for the coding tools.
+func (s *Settings) ToolOptions() ToolOptions {
+	var o ToolOptions
+	switch {
+	case s.BashTimeoutSeconds < 0:
+		o.BashTimeout = -1
+	case s.BashTimeoutSeconds > 0:
+		o.BashTimeout = time.Duration(s.BashTimeoutSeconds) * time.Second
+	}
+	return o
 }
 
 // ProviderConfigs merges settings over the built-in presets.

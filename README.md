@@ -162,6 +162,11 @@ providers. Built-in providers are `opencode-go`, `openai`, `openrouter`, and `ol
 }
 ```
 
+`bashTimeoutSeconds` stops a command the model gave no timeout for after that
+many seconds (default 600; `-1` for no limit). A command's output beyond the
+display limit is saved to a temporary file, up to 64 MiB; anything past that
+is counted but not kept.
+
 `contextWindow` is a provider's context window in tokens, defaulting to
 128000. Set it to a real published figure when you have one: `/ctx` and the
 status gauge measure against it, and a window that is too large will not warn

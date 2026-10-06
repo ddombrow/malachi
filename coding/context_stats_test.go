@@ -337,7 +337,7 @@ func TestEstimateGrowsWithTheConversation(t *testing.T) {
 // prompt. agent.Tool cannot be marshalled whole (Execute is a func); the
 // estimate must still count the schemas the provider receives.
 func TestEstimateCountsToolDefinitions(t *testing.T) {
-	tools := CodingTools(t.TempDir())
+	tools := CodingTools(t.TempDir(), ToolOptions{})
 	schemas := toolDefinitionBytes(tools)
 	if schemas < 2000 {
 		t.Fatalf("tool definitions measured as %d bytes; the built-in schemas are several kB", schemas)

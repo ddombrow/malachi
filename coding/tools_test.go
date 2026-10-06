@@ -1,6 +1,7 @@
 package coding
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -187,7 +188,7 @@ func TestUnifiedDiff(t *testing.T) {
 
 func TestBash(t *testing.T) {
 	dir := t.TempDir()
-	bash := NewBashTool(dir)
+	bash := NewBashTool(dir, ToolOptions{})
 	r, err := run(t, bash, map[string]any{"command": "echo out; echo err >&2; pwd"})
 	if err != nil {
 		t.Fatal(err)
@@ -205,7 +206,7 @@ func TestBashTimeoutKillsProcessGroup(t *testing.T) {
 	dir := t.TempDir()
 	start := time.Now()
 	// The background child would keep the pipe open if only the shell died.
-	r, err := run(t, NewBashTool(dir), map[string]any{"command": "sleep 30 & sleep 30", "timeout": 0.3})
+	r, err := run(t, NewBashTool(dir, ToolOptions{}), map[string]any{"command": "sleep 30 & sleep 30", "timeout": 0.3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +219,7 @@ func TestBashTimeoutKillsProcessGroup(t *testing.T) {
 }
 
 func TestBashTruncatesAndSpills(t *testing.T) {
-	r, err := run(t, NewBashTool(t.TempDir()), map[string]any{"command": "seq 1 3000"})
+	r, err := run(t, NewBashTool(t.TempDir(), ToolOptions{}), map[string]any{"command": "seq 1 3000"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,11 +236,75 @@ func TestBashTruncatesAndSpills(t *testing.T) {
 func TestBashCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(200 * time.Millisecond); cancel() }()
-	r, err := NewBashTool(t.TempDir()).Execute(ctx, "c", map[string]any{"command": "sleep 30"}, func(agent.ToolResult) {})
+	r, err := NewBashTool(t.TempDir(), ToolOptions{}).Execute(ctx, "c", map[string]any{"command": "sleep 30"}, func(agent.ToolResult) {})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasSuffix(r.Text(), "Command cancelled") {
 		t.Fatalf("got %q", r.Text())
+	}
+}
+
+// Memory stays bounded however much a command prints: the sink keeps a tail,
+// and the spill file stops at MaxSpillBytes.
+func TestOutputSinkIsBounded(t *testing.T) {
+	o := &outputSink{}
+	defer func() { o.close(); os.Remove(o.spillPath) }()
+	line := []byte(strings.Repeat("x", 99) + "\n")
+	chunk := bytes.Repeat(line, 1000) // 100 kB
+	for i := 0; i < 1000; i++ {       // 100 MB in all
+		if _, err := o.Write(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if o.pending != nil || len(o.tail) > tailBytesKept {
+		t.Fatalf("kept %d pending and %d tail bytes; want none and at most %d", len(o.pending), len(o.tail), tailBytesKept)
+	}
+	if o.spilled != MaxSpillBytes || o.dropped != o.total-MaxSpillBytes {
+		t.Fatalf("spilled %d, dropped %d of %d", o.spilled, o.dropped, o.total)
+	}
+	if o.lines() != 1_000_000 {
+		t.Fatalf("lines = %d", o.lines())
+	}
+	if st, _ := os.Stat(o.spillPath); st.Size() != MaxSpillBytes {
+		t.Fatalf("spill file is %d bytes", st.Size())
+	}
+}
+
+func TestBashReportsTheSpillCap(t *testing.T) {
+	r, err := run(t, NewBashTool(t.TempDir(), ToolOptions{}), map[string]any{"command": "yes | head -c 80000000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := r.Details.(map[string]any)["full_output_path"].(string)
+	defer os.Remove(path)
+	if !strings.Contains(r.Text(), "First 64.0MB of 76.3MB saved to: "+path) {
+		t.Fatalf("tail: %q", r.Text()[max(0, len(r.Text())-200):])
+	}
+	if !strings.Contains(r.Text(), "of 40000000.") {
+		t.Fatalf("line total should count every line, not the kept tail: %q", r.Text()[max(0, len(r.Text())-200):])
+	}
+}
+
+func TestBashDefaultTimeout(t *testing.T) {
+	r, err := run(t, NewBashTool(t.TempDir(), ToolOptions{BashTimeout: 300 * time.Millisecond}), map[string]any{"command": "sleep 10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.Text(), "Command timed out after 0.3 seconds (the default limit") {
+		t.Fatalf("got %q", r.Text())
+	}
+	// An explicit timeout wins, and is reported without the note.
+	r, _ = run(t, NewBashTool(t.TempDir(), ToolOptions{BashTimeout: time.Hour}), map[string]any{"command": "sleep 10", "timeout": 0.2})
+	if !strings.HasSuffix(r.Text(), "Command timed out after 0.2 seconds") {
+		t.Fatalf("got %q", r.Text())
+	}
+}
+
+func TestBashTimeoutSetting(t *testing.T) {
+	for secs, want := range map[int]time.Duration{0: DefaultBashTimeout, 30: 30 * time.Second, -1: -1} {
+		if got := (&Settings{BashTimeoutSeconds: secs}).ToolOptions().bashTimeout(); got != want {
+			t.Errorf("bashTimeoutSeconds %d → %v, want %v", secs, got, want)
+		}
 	}
 }

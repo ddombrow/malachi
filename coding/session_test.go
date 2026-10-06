@@ -149,7 +149,7 @@ func TestContextFiles(t *testing.T) {
 	if strings.Join(got, ",") != "global,root rules,a rules" {
 		t.Fatalf("got %v", got)
 	}
-	prompt := BuildSystemPrompt(PromptOptions{Cwd: sub, Tools: CodingTools(sub), ContextFiles: files})
+	prompt := BuildSystemPrompt(PromptOptions{Cwd: sub, Tools: CodingTools(sub, ToolOptions{}), ContextFiles: files})
 	for _, want := range []string{
 		"- read: Read file contents",
 		"<project_context>",
@@ -168,7 +168,7 @@ func TestContextFiles(t *testing.T) {
 // tools exist to avoid.
 func TestSystemPromptHasNoConflictingSearchGuidance(t *testing.T) {
 	sub := t.TempDir()
-	prompt := BuildSystemPrompt(PromptOptions{Cwd: sub, Tools: CodingTools(sub)})
+	prompt := BuildSystemPrompt(PromptOptions{Cwd: sub, Tools: CodingTools(sub, ToolOptions{})})
 	if strings.Contains(prompt, "Use bash for file operations") {
 		t.Error("prompt tells the model to use bash to find things")
 	}

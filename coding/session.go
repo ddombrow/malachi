@@ -230,7 +230,7 @@ func Open(opts Options) (*Session, error) {
 	}
 	s.provider, s.model, s.thinking = pc, model, pc.ValidThinking(level)
 
-	tools := CodingTools(cwd)
+	tools := CodingTools(cwd, opts.Settings.ToolOptions())
 	// A stable per-conversation id: the session file name, or a random id
 	// for in-memory sessions. Providers use it for routing/prompt caching.
 	sessionID := session.NewID()
