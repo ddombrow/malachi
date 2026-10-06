@@ -132,8 +132,8 @@ func TestSandboxOptionIsValidated(t *testing.T) {
 
 func TestSetNetworkSwitchesCommandsNetwork(t *testing.T) {
 	s, _, _, _ := sandboxedSession(t, "")
-	if !s.Sandbox().Network {
-		t.Fatal("network off by default")
+	if s.Sandbox().Network {
+		t.Fatal("network on by default")
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -150,17 +150,20 @@ func TestSetNetworkSwitchesCommandsNetwork(t *testing.T) {
 		}
 	}()
 	connect := map[string]any{"command": "exec 3<>/dev/tcp/127.0.0.1/" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port) + " && echo connected"}
+	connects := func(s *Session) bool {
+		r, _ := run(t, tool(t, s, "bash"), connect)
+		return strings.Contains(r.Text(), "connected")
+	}
+	backend := sandbox.Available() == nil
 
-	if err := s.SetNetwork(false); err != nil {
+	if backend && connects(s) {
+		t.Fatal("connected with the network off by default")
+	}
+	if err := s.SetNetwork(true); err != nil {
 		t.Fatal(err)
 	}
-	if s.Sandbox().Network {
-		t.Fatal("still on after SetNetwork(false)")
-	}
-	if sandbox.Available() == nil {
-		if r, _ := run(t, tool(t, s, "bash"), connect); strings.Contains(r.Text(), "connected") {
-			t.Fatalf("connected with the network off: %s", r.Text())
-		}
+	if !s.Sandbox().Network || backend && !connects(s) {
+		t.Fatal("could not connect after /network on")
 	}
 	// The switch survives /new.
 	next, err := s.Reopen("")
@@ -168,20 +171,18 @@ func TestSetNetworkSwitchesCommandsNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer next.Close()
-	if next.Sandbox().Network {
-		t.Fatal("Reopen turned the network back on")
+	if !next.Sandbox().Network {
+		t.Fatal("Reopen turned the network back off")
 	}
-	if err := next.SetNetwork(true); err != nil {
+	if err := next.SetNetwork(false); err != nil {
 		t.Fatal(err)
 	}
-	if sandbox.Available() == nil {
-		if r, _ := run(t, tool(t, next, "bash"), connect); !strings.Contains(r.Text(), "connected") {
-			t.Fatalf("could not connect with the network back on: %s", r.Text())
-		}
+	if next.Sandbox().Network || backend && connects(next) {
+		t.Fatal("connected after /network off")
 	}
 
 	off, _, _, _ := sandboxedSession(t, "off")
-	if off.SetNetwork(false) == nil {
+	if off.SetNetwork(true) == nil {
 		t.Fatal("SetNetwork accepted with the sandbox off")
 	}
 }

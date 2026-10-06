@@ -43,7 +43,7 @@ type Options struct {
 	// Empty uses settings (on by default).
 	Sandbox string
 	// Network overrides the sandbox's network setting: "on" or "off".
-	// Empty uses settings (on by default).
+	// Empty uses settings (off by default).
 	Network string
 }
 

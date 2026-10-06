@@ -517,7 +517,7 @@ func TestGetStateReportsTheSandbox(t *testing.T) {
 	if !ok {
 		t.Fatalf("no sandbox in get_state: %v", r)
 	}
-	if sb["enabled"] != true || sb["network"] != true {
+	if sb["enabled"] != true || sb["network"] != false {
 		t.Fatalf("sandbox: %v", sb)
 	}
 	if roots, _ := sb["writableRoots"].([]any); len(roots) == 0 {
@@ -535,9 +535,9 @@ func TestGetStateReportsTheSandbox(t *testing.T) {
 func TestSetNetwork(t *testing.T) {
 	s := openSession(t, fake.New())
 	c := serve(t, s)
-	c.send(`{"id":"n","type":"set_network","enabled":false}`)
+	c.send(`{"id":"n","type":"set_network","enabled":true}`)
 	r := c.response("n")
-	if r["success"] != true || r["data"].(map[string]any)["network"] != false || s.Sandbox().Network {
+	if r["success"] != true || r["data"].(map[string]any)["network"] != true || !s.Sandbox().Network {
 		t.Fatalf("set_network: %v", r)
 	}
 	c.send(`{"id":"bad","type":"set_network","enabled":"no"}`)

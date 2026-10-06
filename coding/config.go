@@ -212,7 +212,7 @@ func LoadSettings(home string) (*Settings, error) {
 // cannot widen its own sandbox.
 type SandboxSettings struct {
 	Enabled       *bool    `json:"enabled,omitempty"` // default true
-	Network       *bool    `json:"network,omitempty"` // default true
+	Network       *bool    `json:"network,omitempty"` // default false
 	UnixSockets   bool     `json:"unixSockets,omitempty"`
 	WritableRoots []string `json:"writableRoots,omitempty"`
 	HiddenPaths   []string `json:"hiddenPaths,omitempty"`
@@ -231,7 +231,7 @@ func (s *Settings) SandboxConfig(cwd, home string) sandbox.Config {
 	}
 	return sandbox.Config{
 		Disabled:    sb.Enabled != nil && !*sb.Enabled,
-		NoNet:       sb.Network != nil && !*sb.Network,
+		NoNet:       sb.Network == nil || !*sb.Network, // off unless asked for
 		UnixSockets: sb.UnixSockets,
 		Cwd:         cwd,
 		Home:        home,

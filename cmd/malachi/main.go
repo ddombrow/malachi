@@ -60,6 +60,7 @@ func run() int {
 		listModels = flag.Bool("list-models", false, "list the models the provider currently serves and exit")
 		version    = flag.Bool("version", false, "print the version and exit")
 		trustFlag  = flag.String("trust", "", `project trust for this run: "yes" to load this directory's instruction files, "no" to withhold them`)
+		networkSet = flag.String("network", "", `"on" or "off": commands' network access in the sandbox for this run (default from settings: off)`)
 		sandboxSet = flag.String("sandbox", "", `"on" or "off" for this run (default from settings: on). Off lets commands and file tools reach everything you can`)
 	)
 	flag.BoolVar(cont, "continue", false, "same as -c")
@@ -94,6 +95,7 @@ func run() int {
 		NoSession:     *noSession,
 		Trust:         *trustFlag,
 		Sandbox:       *sandboxSet,
+		Network:       *networkSet,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "malachi:", err)

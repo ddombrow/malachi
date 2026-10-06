@@ -12,7 +12,7 @@ events, and sessions, and reads tau session files.
 > the project, temp and build-cache directories; no reading credentials
 > (`~/.ssh`, cloud and registry tokens) or malachi's own files. But it is a
 > fence, not a VM. Inside the project the model can still delete or rewrite
-> anything, the network is on, and whatever it can read it can send
+> anything, and if you turn the network on, whatever it can read it can send
 > somewhere. Use it on work you can recover (a version-controlled checkout,
 > committed first), and use a container or VM for repositories you do not
 > trust, whose files the model will read. The same applies in `-p` and RPC
@@ -238,8 +238,9 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   `~/.azure`, `~/.kube`, `~/.docker/config.json`, `~/.config/gh`,
   `~/.config/gcloud`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`,
   `~/.pypirc`, cargo and Terraform credentials, and the macOS keychains.
-- **The network** is on by default. Turn it off and commands cannot open IP
-  connections.
+- **The network** is off by default: commands cannot open IP connections,
+  so downloads (`go mod download`, `npm install`, `git fetch`) fail until
+  you turn it on with `/network on`, `-network on`, or `"network": true`.
 - **Local daemons are out of reach.** Commands cannot connect to Unix sockets
   such as Docker's or ssh-agent's. Through those a command could act outside
   the sandbox: start a container with your home directory mounted, or push
@@ -255,7 +256,7 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
 {
   "sandbox": {
     "enabled": true,
-    "network": true,
+    "network": false,
     "unixSockets": false,
     "writableRoots": ["~/scratch"],
     "hiddenPaths": ["~/.config/my-token"]
@@ -266,11 +267,12 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
 `writableRoots` and `hiddenPaths` add to the defaults. Settings are read only
 from `~/.malachi/settings.json`, which the sandbox hides, so a project cannot
 widen its own sandbox. `-sandbox off` turns the sandbox off for one run, and
-`-sandbox on` turns it on over a setting. `/network off` and `/network on`
+`-sandbox on` turns it on over a setting. `/network on` and `/network off`
 switch commands' network access for the rest of the session, from the next
-command; RPC clients send `set_network` with `{"enabled": false}`.
+command; `-network on` does it for one run, and RPC clients send
+`set_network` with `{"enabled": true}`.
 `/sandbox` shows what is in force.
-The status bar says `unsandboxed`, `sandbox unavailable` or `offline` when
+The status bar says `unsandboxed`, `sandbox unavailable` or `network on` when
 those apply. When a command fails in a way that looks like the sandbox, its
 result tells the model to ask you rather than work around it.
 

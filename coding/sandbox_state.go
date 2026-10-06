@@ -25,8 +25,8 @@ func (st SandboxState) Marker() string {
 		return "unsandboxed"
 	case st.Unavailable != nil:
 		return "sandbox unavailable"
-	case !st.Network:
-		return "offline"
+	case st.Network:
+		return "network on"
 	}
 	return ""
 }

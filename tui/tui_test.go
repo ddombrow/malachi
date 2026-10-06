@@ -675,12 +675,15 @@ func TestSandboxCommandAndMarker(t *testing.T) {
 
 func TestNetworkCommand(t *testing.T) {
 	m := newTestModel(t)
-	m.command("/network off")
-	if m.s.Sandbox().Network || !strings.Contains(m.statusLine(), "offline") {
-		t.Fatalf("network=%v status=%q", m.s.Sandbox().Network, m.statusLine())
+	if m.s.Sandbox().Network || strings.Contains(m.statusLine(), "network on") {
+		t.Fatalf("network on by default: status=%q", m.statusLine())
 	}
 	m.command("/network on")
-	if !m.s.Sandbox().Network || strings.Contains(m.statusLine(), "offline") {
+	if !m.s.Sandbox().Network || !strings.Contains(m.statusLine(), "network on") {
+		t.Fatalf("network=%v status=%q", m.s.Sandbox().Network, m.statusLine())
+	}
+	m.command("/network off")
+	if m.s.Sandbox().Network || strings.Contains(m.statusLine(), "network on") {
 		t.Fatalf("network=%v status=%q", m.s.Sandbox().Network, m.statusLine())
 	}
 	m.command("/network maybe")
