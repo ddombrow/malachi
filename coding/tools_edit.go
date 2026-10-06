@@ -16,7 +16,7 @@ const utf8BOM = "\uFEFF"
 type edit struct{ oldText, newText string }
 
 // NewEditTool returns the edit tool rooted at cwd.
-func NewEditTool(cwd string) *agent.Tool {
+func NewEditTool(cwd string, opts ToolOptions) *agent.Tool {
 	return &agent.Tool{
 		Name:  "edit",
 		Label: "Edit",
@@ -53,7 +53,7 @@ func NewEditTool(cwd string) *agent.Tool {
 			"additionalProperties": false,
 		},
 		Execute: func(_ context.Context, _ string, args map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
-			return executeEdit(cwd, args)
+			return executeEdit(cwd, opts, args)
 		},
 	}
 }
@@ -159,9 +159,12 @@ func ApplyEdits(content string, edits []edit, path string) (string, error) {
 	return out, nil
 }
 
-func executeEdit(cwd string, args map[string]any) (agent.ToolResult, error) {
+func executeEdit(cwd string, opts ToolOptions, args map[string]any) (agent.ToolResult, error) {
 	_, path, err := pathArg(args, cwd)
 	if err != nil {
+		return agent.ToolResult{}, err
+	}
+	if err := opts.policy().CheckWrite(path); err != nil {
 		return agent.ToolResult{}, err
 	}
 	edits, err := parseEdits(args)

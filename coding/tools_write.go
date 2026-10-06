@@ -21,7 +21,7 @@ func lockFile(path string) func() {
 }
 
 // NewWriteTool returns the write tool rooted at cwd.
-func NewWriteTool(cwd string) *agent.Tool {
+func NewWriteTool(cwd string, opts ToolOptions) *agent.Tool {
 	return &agent.Tool{
 		Name:  "write",
 		Label: "Write",
@@ -40,6 +40,9 @@ func NewWriteTool(cwd string) *agent.Tool {
 		Execute: func(_ context.Context, _ string, args map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
 			_, path, err := pathArg(args, cwd)
 			if err != nil {
+				return agent.ToolResult{}, err
+			}
+			if err := opts.policy().CheckWrite(path); err != nil {
 				return agent.ToolResult{}, err
 			}
 			content, err := strArg(args, "content")

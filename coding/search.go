@@ -8,6 +8,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/ddombrow/malachi/sandbox"
 )
 
 // errStopWalk aborts a walkSearch early without reporting an error, so tools
@@ -34,14 +36,20 @@ var skipDirs = map[string]bool{
 }
 
 // walkSearch visits every searchable file under root in lexical order,
-// skipping ignored directories. fn receives the slash-separated path relative
-// to root. Returning errStopWalk from fn ends the walk successfully. It
-// reports how many .gitignore rules were beyond the limits and not applied.
+// skipping ignored directories and paths the sandbox hides. fn receives the
+// slash-separated path relative to root. Returning errStopWalk from fn ends
+// the walk successfully. It reports what it left out.
 //
 // Symlinks are not followed: a link pointing at an ancestor would otherwise
 // make the walk unbounded.
-func walkSearch(root string, fn func(rel string, d fs.DirEntry) error) (skippedRules int, err error) {
+func walkSearch(root string, pol sandbox.Policy, fn func(rel string, d fs.DirEntry) error) (st walkStats, err error) {
 	ign := loadIgnores(root)
+	// The walk follows no symlinks, so below the canonical root every
+	// entry's canonical path is just root/rel: no per-file resolving.
+	canonRoot := ""
+	if pol.Enabled {
+		canonRoot = sandbox.Canonical(root)
+	}
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if d != nil && d.IsDir() {
@@ -54,6 +62,13 @@ func walkSearch(root string, fn func(rel string, d fs.DirEntry) error) (skippedR
 			return nil
 		}
 		if rel == "." {
+			return nil
+		}
+		if canonRoot != "" && pol.HiddenAtCanonical(filepath.Join(canonRoot, rel)) != "" {
+			st.hidden++
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
@@ -71,7 +86,23 @@ func walkSearch(root string, fn func(rel string, d fs.DirEntry) error) (skippedR
 	if errors.Is(err, errStopWalk) {
 		err = nil
 	}
-	return ign.skipped, err
+	st.skippedRules = ign.skipped
+	return st, err
+}
+
+// walkStats are what a search left out, for its footer.
+type walkStats struct {
+	skippedRules int // .gitignore rules beyond the limits
+	hidden       int // files and directories hidden by the sandbox
+}
+
+// note is the footer remark for what was left out, or "".
+func (st walkStats) note() string {
+	out := skippedRulesNote(st.skippedRules)
+	if st.hidden > 0 {
+		out += fmt.Sprintf(" (%d path(s) hidden by the sandbox were not searched)", st.hidden)
+	}
+	return out
 }
 
 // skippedRulesNote is the footer remark for ignore rules that were not

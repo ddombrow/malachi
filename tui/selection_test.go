@@ -8,10 +8,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/ddombrow/malachi/sandbox"
 )
 
 func TestMain(m *testing.M) {
-	clipboardTools = nil // never touch the developer's real clipboard
+	sandbox.MaybeRunHelper() // this binary is the helper for sandboxed commands on Linux
+	clipboardTools = nil     // never touch the developer's real clipboard
 	// Nor their real ~/.malachi: sessions opened without an explicit Home
 	// land in a throwaway directory.
 	home, err := os.MkdirTemp("", "malachi-test-home-")

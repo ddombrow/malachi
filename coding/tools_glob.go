@@ -18,7 +18,7 @@ const (
 )
 
 // NewGlobTool returns the glob tool rooted at cwd.
-func NewGlobTool(cwd string) *agent.Tool {
+func NewGlobTool(cwd string, opts ToolOptions) *agent.Tool {
 	return &agent.Tool{
 		Name:  "glob",
 		Label: "Glob",
@@ -41,12 +41,12 @@ func NewGlobTool(cwd string) *agent.Tool {
 			"required": []string{"pattern"},
 		},
 		Execute: func(_ context.Context, _ string, args map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
-			return executeGlob(cwd, args)
+			return executeGlob(cwd, opts, args)
 		},
 	}
 }
 
-func executeGlob(cwd string, args map[string]any) (agent.ToolResult, error) {
+func executeGlob(cwd string, opts ToolOptions, args map[string]any) (agent.ToolResult, error) {
 	pattern, err := strArg(args, "pattern")
 	if err != nil {
 		return agent.ToolResult{}, err
@@ -69,7 +69,8 @@ func executeGlob(cwd string, args map[string]any) (agent.ToolResult, error) {
 	}
 	limit = min(limit, MaxGlobLimit)
 
-	root, single, err := searchRoot(cwd, args)
+	pol := opts.policy()
+	root, single, err := searchRoot(cwd, pol, args)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -80,7 +81,7 @@ func executeGlob(cwd string, args map[string]any) (agent.ToolResult, error) {
 
 	var paths []string
 	hitLimit := false
-	skippedRules, err := walkSearch(root, func(rel string, _ fs.DirEntry) error {
+	stats, err := walkSearch(root, pol, func(rel string, _ fs.DirEntry) error {
 		if !matchFilter(pattern, rel) {
 			return nil
 		}
@@ -101,7 +102,7 @@ func executeGlob(cwd string, args map[string]any) (agent.ToolResult, error) {
 	var out string
 	switch {
 	case len(paths) == 0:
-		out = fmt.Sprintf("No files matching %q.%s", pattern, skippedRulesNote(skippedRules))
+		out = fmt.Sprintf("No files matching %q.%s", pattern, stats.note())
 	default:
 		body := TruncateHead(strings.Join(paths, "\n"), MaxOutputLines, MaxOutputBytes)
 		out = body.Content
@@ -117,7 +118,7 @@ func executeGlob(cwd string, args map[string]any) (agent.ToolResult, error) {
 		if hitLimit {
 			footer += fmt.Sprintf(" — stopped at the limit of %d, so results may continue", limit)
 		}
-		out += "\n\n" + footer + skippedRulesNote(skippedRules)
+		out += "\n\n" + footer + stats.note()
 	}
 	return agent.ToolResult{
 		Content: []agent.Content{&agent.TextContent{Text: out}},

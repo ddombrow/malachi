@@ -150,7 +150,15 @@ func (p Policy) HiddenAt(path string) string {
 	if !p.Enabled {
 		return ""
 	}
-	c := Canonical(path)
+	return p.HiddenAtCanonical(Canonical(path))
+}
+
+// HiddenAtCanonical is HiddenAt for a path already canonical, which saves
+// resolving symlinks for every file of a directory walk.
+func (p Policy) HiddenAtCanonical(c string) string {
+	if !p.Enabled {
+		return ""
+	}
 	for _, h := range p.Hidden {
 		if within(c, h) {
 			return h

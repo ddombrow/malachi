@@ -17,6 +17,7 @@ import (
 
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/agent/session"
+	"github.com/ddombrow/malachi/sandbox"
 )
 
 // Options configure Open.
@@ -38,6 +39,9 @@ type Options struct {
 	// working directory's instruction files, "no" to withhold them. Empty
 	// defers to the saved decision and then to the configured policy.
 	Trust string
+	// Sandbox overrides the sandbox setting for this run: "on" or "off".
+	// Empty uses settings (on by default).
+	Sandbox string
 }
 
 // Session is the coding-agent environment around a Harness: tools rooted at
@@ -56,7 +60,13 @@ type Session struct {
 	model      string
 	thinking   string
 	file       *session.File // nil when NoSession
-	spillDir   string        // full output of truncated commands; removed on Close
+	sandboxSet string        // Options.Sandbox, carried across Reopen
+
+	// sbMu guards the sandbox policy, which tools read as they run; it is
+	// separate from mu so a tool never waits on session bookkeeping.
+	sbMu       sync.Mutex
+	sandbox    sandbox.Policy
+	spillDir   string // full output of truncated commands; removed on Close
 	header     []*session.Entry
 	persistErr error
 	diag       *Diagnostics
@@ -243,8 +253,20 @@ func Open(opts Options) (*Session, error) {
 	// never deletes files the new one points at.
 	sweepSpill(spillRoot(), time.Now())
 	s.spillDir = filepath.Join(spillRoot(), sessionID+"-"+session.NewID()[:8])
+	sbCfg := opts.Settings.SandboxConfig(cwd, opts.Home)
+	switch opts.Sandbox {
+	case "":
+	case "on":
+		sbCfg.Disabled = false
+	case "off":
+		sbCfg.Disabled = true
+	default:
+		return nil, fmt.Errorf("sandbox must be \"on\" or \"off\", not %q", opts.Sandbox)
+	}
+	s.sandboxSet, s.sandbox = opts.Sandbox, sandbox.Build(sbCfg)
 	toolOpts := opts.Settings.ToolOptions()
 	toolOpts.SpillDir = s.spillDir
+	toolOpts.Sandbox = s.sandboxPolicy
 	tools := CodingTools(cwd, toolOpts)
 	s.trims = &trimLog{}
 	s.preparer = newCodingContextPreparer(cwd, s.trims)
@@ -698,6 +720,7 @@ func (s *Session) Reopen(resume string) (*Session, error) {
 	}
 	opts := Options{Cwd: s.cwd, Home: s.home, Settings: s.settings, Resume: resume}
 	opts.Trust = s.TrustOverride
+	opts.Sandbox = s.sandboxSet
 	if resume == "" {
 		opts.Model = s.Provider().Name + "/" + s.Model()
 		opts.ThinkingLevel = s.ThinkingLevel()
@@ -708,4 +731,29 @@ func (s *Session) Reopen(resume string) (*Session, error) {
 	}
 	s.Close()
 	return next, nil
+}
+
+func (s *Session) sandboxPolicy() sandbox.Policy {
+	s.sbMu.Lock()
+	defer s.sbMu.Unlock()
+	return s.sandbox
+}
+
+// SandboxState is the sandbox in force and whether it can confine commands
+// here.
+type SandboxState struct {
+	sandbox.Policy
+	// Unavailable is why commands cannot be confined on this system, with
+	// the sandbox on; they then fail rather than run unconfined. The file
+	// tools enforce the policy either way.
+	Unavailable error
+}
+
+// Sandbox reports the sandbox in force.
+func (s *Session) Sandbox() SandboxState {
+	st := SandboxState{Policy: s.sandboxPolicy()}
+	if st.Enabled {
+		st.Unavailable = sandbox.Available()
+	}
+	return st
 }

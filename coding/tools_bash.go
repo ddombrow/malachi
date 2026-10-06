@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ddombrow/malachi/agent"
+	"github.com/ddombrow/malachi/sandbox"
 )
 
 // bashUpdateInterval is how often running output is pushed as a partial result.
@@ -42,6 +43,17 @@ type ToolOptions struct {
 	// HideEnv names variables commands must not inherit: malachi's own API
 	// keys, whether from its .env or named by a provider's apiKeyEnv.
 	HideEnv []string
+	// Sandbox returns the policy in force; it is a function so the user can
+	// change the policy mid-session. Nil means no sandbox.
+	Sandbox func() sandbox.Policy
+}
+
+// policy returns the sandbox policy in force.
+func (o ToolOptions) policy() sandbox.Policy {
+	if o.Sandbox == nil {
+		return sandbox.Policy{}
+	}
+	return o.Sandbox()
 }
 
 // commandEnv is the environment a command runs with: malachi's own, minus
@@ -237,9 +249,13 @@ func executeBash(ctx context.Context, cwd string, opts ToolOptions, args map[str
 		defer cancel()
 	}
 
+	pol := opts.policy()
+	cmd, err := sandbox.Command(runCtx, pol, shellPath(), "-c", command)
+	if err != nil {
+		return agent.ToolResult{}, fmt.Errorf("%v. Commands cannot run until that is fixed or the user turns the sandbox off (-sandbox off)", err)
+	}
 	out := &outputSink{dir: opts.SpillDir}
 	defer out.close()
-	cmd := exec.CommandContext(runCtx, shellPath(), "-c", command)
 	cmd.Dir = cwd
 	cmd.Stdin = nil // /dev/null: keep interactive programs off our terminal
 	cmd.Stdout = out
@@ -341,6 +357,11 @@ wait:
 	if status != "" {
 		text = strings.TrimRight(text, "\n") + "\n\n" + status
 	}
+	if exitCode != 0 && !cancelled && !timedOut {
+		if hint := sandboxHint(pol, out.snapshot()); hint != "" {
+			text += "\n" + hint
+		}
+	}
 
 	return agent.ToolResult{
 		Content: []agent.Content{&agent.TextContent{Text: text}},
@@ -356,4 +377,23 @@ wait:
 			"dropped_bytes":    dropped,
 		},
 	}, nil
+}
+
+// denialSigns are what a command prints when the sandbox refused it: EPERM
+// for file writes, hidden paths and (with the network off) sockets, and the
+// helper's own message when it could not start the command.
+var denialSigns = []string{"Operation not permitted", "Permission denied", "Read-only file system", "malachi sandbox:"}
+
+// sandboxHint explains a failure that looks like a sandbox denial, so the
+// model asks instead of retrying or working around it; "" otherwise.
+func sandboxHint(p sandbox.Policy, output string) string {
+	if !p.Enabled || !slices.ContainsFunc(denialSigns, func(s string) bool { return strings.Contains(output, s) }) {
+		return ""
+	}
+	network := ""
+	if !p.Network {
+		network = " The network is off."
+	}
+	return "[This may be the sandbox: commands can write only in the project, temp and build-cache directories, and cannot read credentials or malachi's own files." +
+		network + " If the task needs more access, ask the user; do not try to work around the sandbox.]"
 }

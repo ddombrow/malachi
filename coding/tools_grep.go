@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ddombrow/malachi/agent"
+	"github.com/ddombrow/malachi/sandbox"
 )
 
 const (
@@ -34,7 +35,7 @@ const (
 const binarySniffBytes = 8000
 
 // NewGrepTool returns the grep tool rooted at cwd.
-func NewGrepTool(cwd string) *agent.Tool {
+func NewGrepTool(cwd string, opts ToolOptions) *agent.Tool {
 	return &agent.Tool{
 		Name:  "grep",
 		Label: "Grep",
@@ -59,12 +60,12 @@ func NewGrepTool(cwd string) *agent.Tool {
 			"required": []string{"pattern"},
 		},
 		Execute: func(_ context.Context, _ string, args map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
-			return executeGrep(cwd, args)
+			return executeGrep(cwd, opts, args)
 		},
 	}
 }
 
-func executeGrep(cwd string, args map[string]any) (agent.ToolResult, error) {
+func executeGrep(cwd string, opts ToolOptions, args map[string]any) (agent.ToolResult, error) {
 	pattern, err := strArg(args, "pattern")
 	if err != nil {
 		return agent.ToolResult{}, err
@@ -104,7 +105,8 @@ func executeGrep(cwd string, args map[string]any) (agent.ToolResult, error) {
 		return agent.ToolResult{}, fmt.Errorf("invalid pattern %q: %w", pattern, err)
 	}
 
-	root, single, err := searchRoot(cwd, args)
+	pol := opts.policy()
+	root, single, err := searchRoot(cwd, pol, args)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -157,12 +159,12 @@ func executeGrep(cwd string, args map[string]any) (agent.ToolResult, error) {
 		return nil
 	}
 
-	skippedRules, err := searchEach(root, single, filter, scan)
+	stats, err := searchEach(root, single, filter, pol, scan)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
 
-	scope := grepFooter(matches, files, searched, hitLimit, skippedBig, skippedBin, limit) + skippedRulesNote(skippedRules)
+	scope := grepFooter(matches, files, searched, hitLimit, skippedBig, skippedBin, limit) + stats.note()
 	var out string
 	if matches == 0 {
 		// A negative result is only trustworthy if it says what was searched:
@@ -218,7 +220,7 @@ func grepFooter(matches, files, searched int, hitLimit bool, skippedBig, skipped
 // single file is allowed and returns that file's directory along with its path
 // relative to it, so "grep pattern path=foo.go" works without a second rule.
 // The working directory is the default.
-func searchRoot(cwd string, args map[string]any) (dir, single string, err error) {
+func searchRoot(cwd string, pol sandbox.Policy, args map[string]any) (dir, single string, err error) {
 	raw, has, err := optStr(args, "path")
 	if err != nil {
 		return "", "", err
@@ -227,6 +229,11 @@ func searchRoot(cwd string, args map[string]any) (dir, single string, err error)
 		raw = "."
 	}
 	root := resolvePath(cwd, raw)
+	// A single file is judged by where it leads; a directory's hidden
+	// subtrees are skipped by the walk.
+	if err := pol.CheckRead(root); err != nil {
+		return "", "", err
+	}
 	info, err := os.Stat(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -250,21 +257,21 @@ func searchRoot(cwd string, args map[string]any) (dir, single string, err error)
 // A named file is visited directly. Walking its directory to find it was slow
 // in a large tree, and ignore rules would silently skip a file the caller
 // asked for by name; an explicit path is not subject to .gitignore.
-func searchEach(dir, single, filter string, fn func(rel string, d fs.DirEntry) error) (skippedRules int, err error) {
+func searchEach(dir, single, filter string, pol sandbox.Policy, fn func(rel string, d fs.DirEntry) error) (st walkStats, err error) {
 	if single != "" {
 		if !matchFilter(filter, single) {
-			return 0, nil
+			return st, nil
 		}
 		info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(single)))
 		if err != nil {
-			return 0, err
+			return st, err
 		}
 		if err := fn(single, fs.FileInfoToDirEntry(info)); err != nil && !errors.Is(err, errStopWalk) {
-			return 0, err
+			return st, err
 		}
-		return 0, nil
+		return st, nil
 	}
-	return walkSearch(dir, func(rel string, d fs.DirEntry) error {
+	return walkSearch(dir, pol, func(rel string, d fs.DirEntry) error {
 		if !matchFilter(filter, rel) {
 			return nil
 		}

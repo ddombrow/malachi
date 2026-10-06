@@ -10,11 +10,11 @@ import "github.com/ddombrow/malachi/agent"
 // steers the model toward structured search over shelling out.
 func CodingTools(cwd string, opts ToolOptions) []*agent.Tool {
 	return []*agent.Tool{
-		NewReadTool(cwd),
-		NewGrepTool(cwd),
-		NewGlobTool(cwd),
+		NewReadTool(cwd, opts),
+		NewGrepTool(cwd, opts),
+		NewGlobTool(cwd, opts),
 		NewBashTool(cwd, opts),
-		NewEditTool(cwd),
-		NewWriteTool(cwd),
+		NewEditTool(cwd, opts),
+		NewWriteTool(cwd, opts),
 	}
 }

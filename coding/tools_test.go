@@ -37,7 +37,7 @@ func TestReadSlicesAndHints(t *testing.T) {
 		lines = append(lines, fmt.Sprintf("line %d", i))
 	}
 	write(t, dir, "f.txt", strings.Join(lines, "\n"))
-	read := NewReadTool(dir)
+	read := NewReadTool(dir, ToolOptions{})
 
 	r, err := run(t, read, map[string]any{"path": "f.txt", "offset": float64(3), "limit": float64(2)})
 	if err != nil {
@@ -64,7 +64,7 @@ func TestReadTruncatesLongFiles(t *testing.T) {
 		fmt.Fprintf(&b, "%d\n", i)
 	}
 	write(t, dir, "big.txt", b.String())
-	r, err := run(t, NewReadTool(dir), map[string]any{"path": "big.txt"})
+	r, err := run(t, NewReadTool(dir, ToolOptions{}), map[string]any{"path": "big.txt"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestReadImage(t *testing.T) {
 	dir := t.TempDir()
 	png := "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
 	write(t, dir, "a.png", png)
-	r, err := run(t, NewReadTool(dir), map[string]any{"path": "a.png"})
+	r, err := run(t, NewReadTool(dir, ToolOptions{}), map[string]any{"path": "a.png"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestReadImage(t *testing.T) {
 
 func TestWriteCreatesParents(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := run(t, NewWriteTool(dir), map[string]any{"path": "a/b/c.txt", "content": "hi"}); err != nil {
+	if _, err := run(t, NewWriteTool(dir, ToolOptions{}), map[string]any{"path": "a/b/c.txt", "content": "hi"}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(filepath.Join(dir, "a/b/c.txt"))
@@ -157,7 +157,7 @@ func TestEdit(t *testing.T) {
 			dir := t.TempDir()
 			p := write(t, dir, "f.txt", tc.content)
 			tc.args["path"] = "f.txt"
-			r, err := run(t, NewEditTool(dir), tc.args)
+			r, err := run(t, NewEditTool(dir, ToolOptions{}), tc.args)
 			got, _ := os.ReadFile(p)
 			if tc.errSub != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.errSub) {
@@ -331,7 +331,7 @@ func TestReadStreamsLargeFiles(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	r, err := run(t, NewReadTool(dir), map[string]any{"path": "big.txt", "offset": 1_000_000, "limit": 2})
+	r, err := run(t, NewReadTool(dir, ToolOptions{}), map[string]any{"path": "big.txt", "offset": 1_000_000, "limit": 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +377,7 @@ func TestScanLinesMatchesSplitting(t *testing.T) {
 func TestReadReportsAnOversizedFirstLine(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "wide.txt", strings.Repeat("x", 3*MaxOutputBytes)+"\nshort\n")
-	r, err := run(t, NewReadTool(dir), map[string]any{"path": "wide.txt"})
+	r, err := run(t, NewReadTool(dir, ToolOptions{}), map[string]any{"path": "wide.txt"})
 	if err != nil {
 		t.Fatal(err)
 	}

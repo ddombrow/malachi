@@ -17,9 +17,11 @@ import (
 	"github.com/ddombrow/malachi/ai"
 	"github.com/ddombrow/malachi/ai/fake"
 	"github.com/ddombrow/malachi/coding"
+	"github.com/ddombrow/malachi/sandbox"
 )
 
 func TestMain(m *testing.M) {
+	sandbox.MaybeRunHelper() // this binary is the helper for sandboxed commands on Linux
 	// Sessions opened without an explicit Home land in a throwaway directory,
 	// never the developer's ~/.malachi.
 	home, err := os.MkdirTemp("", "malachi-test-home-")

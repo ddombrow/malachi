@@ -20,7 +20,7 @@ const MaxImageBytes = 5 * 1024 * 1024
 var imageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
 
 // NewReadTool returns the read tool rooted at cwd.
-func NewReadTool(cwd string) *agent.Tool {
+func NewReadTool(cwd string, opts ToolOptions) *agent.Tool {
 	return &agent.Tool{
 		Name:  "read",
 		Label: "Read",
@@ -40,14 +40,17 @@ func NewReadTool(cwd string) *agent.Tool {
 			"required": []string{"path"},
 		},
 		Execute: func(_ context.Context, _ string, args map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
-			return executeRead(cwd, args)
+			return executeRead(cwd, opts, args)
 		},
 	}
 }
 
-func executeRead(cwd string, args map[string]any) (agent.ToolResult, error) {
+func executeRead(cwd string, opts ToolOptions, args map[string]any) (agent.ToolResult, error) {
 	raw, path, err := pathArg(args, cwd)
 	if err != nil {
+		return agent.ToolResult{}, err
+	}
+	if err := opts.policy().CheckRead(path); err != nil {
 		return agent.ToolResult{}, err
 	}
 	offset, _, err := optInt(args, "offset")

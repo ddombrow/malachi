@@ -100,7 +100,7 @@ func TestGrepFindsAndReportsScope(t *testing.T) {
 	write(t, dir, "util.go", "package main\n\nfunc hello() {}\n")
 	write(t, dir, "main_test.go", "func TestHello(t *testing.T) { hello() }\n")
 
-	r, err := run(t, NewGrepTool(dir), map[string]any{"pattern": "hello"})
+	r, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "hello"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestGrepFindsAndReportsScope(t *testing.T) {
 func TestGrepNoMatchIsExplicit(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "a.go", "package a\n")
-	r, err := run(t, NewGrepTool(dir), map[string]any{"pattern": "nonexistent"})
+	r, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "nonexistent"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestGrepGlobFilterAndCase(t *testing.T) {
 	write(t, dir, "a.go", "Hello\n")
 	write(t, dir, "a_test.go", "Hello\n")
 
-	r, err := run(t, NewGrepTool(dir), map[string]any{"pattern": "Hello", "glob": "*_test.go"})
+	r, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "Hello", "glob": "*_test.go"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestGrepGlobFilterAndCase(t *testing.T) {
 		t.Errorf("glob filter not applied:\n%s", out)
 	}
 
-	r, err = run(t, NewGrepTool(dir), map[string]any{"pattern": "hello", "ignore_case": true})
+	r, err = run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "hello", "ignore_case": true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestGrepGlobFilterAndCase(t *testing.T) {
 func TestGrepLimitStopsAndSaysSo(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "a.go", strings.Repeat("needle\n", 50))
-	r, err := run(t, NewGrepTool(dir), map[string]any{"pattern": "needle", "limit": float64(5)})
+	r, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "needle", "limit": float64(5)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestGrepSkipsBinaryAndReportsIt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "blob.bin"), []byte("needle\x00needle"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r, err := run(t, NewGrepTool(dir), map[string]any{"pattern": "needle"})
+	r, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "needle"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestGrepSingleFilePath(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "a.go", "needle\n")
 	write(t, dir, "b.go", "needle\n")
-	r, err := run(t, NewGrepTool(dir), map[string]any{"pattern": "needle", "path": "a.go"})
+	r, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "needle", "path": "a.go"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestGrepSingleFilePath(t *testing.T) {
 func TestGrepClipsVeryLongLines(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "min.js", "needle "+strings.Repeat("x", 5000)+"\n")
-	r, err := run(t, NewGrepTool(dir), map[string]any{"pattern": "needle"})
+	r, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "needle"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestGrepClipsVeryLongLines(t *testing.T) {
 
 func TestGrepRejectsBadPattern(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := run(t, NewGrepTool(dir), map[string]any{"pattern": "([a-z"}); err == nil {
+	if _, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "([a-z"}); err == nil {
 		t.Fatal("expected an error for an uncompilable pattern")
 	}
 }
@@ -229,7 +229,7 @@ func TestGlobFindsAndReports(t *testing.T) {
 	writeIn(t, dir, "pkg/util.go", "package pkg\n")
 	writeIn(t, dir, "pkg/deep/nested.go", "package deep\n")
 
-	r, err := run(t, NewGlobTool(dir), map[string]any{"pattern": "**/*.go"})
+	r, err := run(t, NewGlobTool(dir, ToolOptions{}), map[string]any{"pattern": "**/*.go"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestGlobSkipsIgnoredDirectories(t *testing.T) {
 	}
 	write(t, dir, "node_modules/dep/index.js", "module.exports = 1\n")
 
-	r, err := run(t, NewGlobTool(dir), map[string]any{"pattern": "**/*"})
+	r, err := run(t, NewGlobTool(dir, ToolOptions{}), map[string]any{"pattern": "**/*"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestGlobLimitStopsAndSaysSo(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		write(t, dir, fmt.Sprintf("f%d.go", i), "package x\n")
 	}
-	r, err := run(t, NewGlobTool(dir), map[string]any{"pattern": "*.go", "limit": float64(3)})
+	r, err := run(t, NewGlobTool(dir, ToolOptions{}), map[string]any{"pattern": "*.go", "limit": float64(3)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +288,7 @@ func TestGlobLimitStopsAndSaysSo(t *testing.T) {
 func TestGlobRejectsFilePath(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "a.go", "package a\n")
-	_, err := run(t, NewGlobTool(dir), map[string]any{"pattern": "*", "path": "a.go"})
+	_, err := run(t, NewGlobTool(dir, ToolOptions{}), map[string]any{"pattern": "*", "path": "a.go"})
 	if err == nil || !strings.Contains(err.Error(), "not a directory") {
 		t.Fatalf("want a not-a-directory error, got %v", err)
 	}
@@ -296,10 +296,10 @@ func TestGlobRejectsFilePath(t *testing.T) {
 
 func TestSearchToolsRejectMissingPattern(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := run(t, NewGrepTool(dir), map[string]any{}); err == nil {
+	if _, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{}); err == nil {
 		t.Error("grep should require a pattern")
 	}
-	if _, err := run(t, NewGlobTool(dir), map[string]any{}); err == nil {
+	if _, err := run(t, NewGlobTool(dir, ToolOptions{}), map[string]any{}); err == nil {
 		t.Error("glob should require a pattern")
 	}
 }
@@ -321,7 +321,7 @@ func TestGrepNamedFileIgnoresGitignoreAndSkipsTheWalk(t *testing.T) {
 	write(t, dir, ".gitignore", "*.log\n")
 	write(t, dir, "build.log", "ERROR: linker failed\n")
 	write(t, dir, "other.txt", "ERROR: should not be searched\n")
-	r, err := run(t, NewGrepTool(dir), map[string]any{"pattern": "ERROR", "path": "build.log"})
+	r, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "ERROR", "path": "build.log"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,10 +370,10 @@ func TestOversizedPatternsAreRejected(t *testing.T) {
 	long := strings.Repeat("a", maxPatternBytes+1)
 	deep := strings.Repeat("*/", maxPatternSegments) + "x"
 	for _, p := range []string{long, deep} {
-		if _, err := run(t, NewGlobTool(dir), map[string]any{"pattern": p}); err == nil {
+		if _, err := run(t, NewGlobTool(dir, ToolOptions{}), map[string]any{"pattern": p}); err == nil {
 			t.Errorf("glob accepted a %d-byte pattern", len(p))
 		}
-		if _, err := run(t, NewGrepTool(dir), map[string]any{"pattern": "package", "glob": p}); err == nil {
+		if _, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "package", "glob": p}); err == nil {
 			t.Errorf("grep accepted a %d-byte glob", len(p))
 		}
 	}
@@ -390,7 +390,7 @@ func TestIgnoreRulesAreBoundedAndReported(t *testing.T) {
 	rules.WriteString(strings.Repeat("y", maxPatternBytes+1) + "\n")
 	write(t, dir, ".gitignore", rules.String())
 	write(t, dir, "a.go", "package a\n")
-	r, err := run(t, NewGlobTool(dir), map[string]any{"pattern": "**/*.go"})
+	r, err := run(t, NewGlobTool(dir, ToolOptions{}), map[string]any{"pattern": "**/*.go"})
 	if err != nil {
 		t.Fatal(err)
 	}
