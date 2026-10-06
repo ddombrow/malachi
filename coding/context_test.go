@@ -359,7 +359,8 @@ func TestCodingLedgerIsBoundedAndDeterministic(t *testing.T) {
 	messages := []agent.Message{assistant, result}
 	cache := newCodingContextPreparer(cwd, nil)
 	cache.update(messages)
-	first, second := ledgerText(cache.records), ledgerText(cache.records)
+	first, _ := ledgerText(cache.records)
+	second, _ := ledgerText(cache.records)
 	if first == "" || first != second || len(first) > maxLedgerBytes {
 		t.Fatalf("ledger should be deterministic and bounded: len=%d", len(first))
 	}
@@ -376,4 +377,26 @@ func toolResultsByID(messages []agent.Message) map[string]*agent.ToolResultMessa
 		}
 	}
 	return results
+}
+
+// The count reported is what was sent: the byte cap can leave fewer records
+// than the record cap.
+func TestLedgerCountsWhatFits(t *testing.T) {
+	var records []string
+	for i := 0; i < maxLedgerRecords; i++ {
+		records = append(records, fmt.Sprintf("read %03d %s", i, strings.Repeat("x", 400)))
+	}
+	text, n := ledgerText(records)
+	if n == 0 || n >= maxLedgerRecords || len(text) > maxLedgerBytes {
+		t.Fatalf("sent %d of %d records in %d bytes", n, len(records), len(text))
+	}
+	if got := strings.Count(text, "\nread "); got != n {
+		t.Fatalf("reported %d records, text holds %d", n, got)
+	}
+	if !strings.Contains(text, fmt.Sprintf("read %03d", maxLedgerRecords-1)) {
+		t.Fatal("the newest record was dropped")
+	}
+	if _, n := ledgerText(records[:3]); n != 3 {
+		t.Fatalf("small ledger reported %d", n)
+	}
 }

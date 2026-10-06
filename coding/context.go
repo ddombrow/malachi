@@ -125,10 +125,9 @@ func (c *codingContextPreparer) prepare(req agent.Request) agent.Request {
 	trimmed, results, fresh, before, after := trimToolResultsWithSizes(req.Messages, c.results, c.trimmed, c.totalSize, c.budgetLocked())
 	if results > 0 {
 		req.Messages = trimmed
-		entries := 0
-		if ledger := ledgerText(c.records); ledger != "" {
+		ledger, entries := ledgerText(c.records)
+		if ledger != "" {
 			req.Messages = insertBeforeLastAssistant(req.Messages, &agent.UserMessage{Content: agent.UserContent{Text: ledger}})
-			entries = len(c.records)
 		}
 		c.log.note(results, fresh, before, after, entries)
 	}
@@ -370,9 +369,11 @@ func toolResultPayloadBytes(result *agent.ToolResultMessage) int {
 	return n
 }
 
-// codingLedger records only facts that can be read directly from tool calls
-// and their results. It is regenerated from the canonical history each time.
-func ledgerText(records []string) string {
+// ledgerText renders the newest records that fit the ledger's limits, and
+// how many that is: the byte cap can leave fewer than maxLedgerRecords. The
+// records hold only facts read directly from tool calls and their results,
+// regenerated from the canonical history each time.
+func ledgerText(records []string) (string, int) {
 	if len(records) > maxLedgerRecords {
 		records = records[len(records)-maxLedgerRecords:]
 	}
@@ -383,11 +384,11 @@ func ledgerText(records []string) string {
 	for len(records) > 0 {
 		text := header + strings.Join(records, "\n") + footer
 		if len(text) <= maxLedgerBytes {
-			return text
+			return text, len(records)
 		}
 		records = records[1:]
 	}
-	return ""
+	return "", 0
 }
 
 func ledgerRecord(result *agent.ToolResultMessage, call *agent.ToolCall, cwd string) string {

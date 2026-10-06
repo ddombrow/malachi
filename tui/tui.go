@@ -294,8 +294,13 @@ func (m *model) noteTrim() {
 	if total := c.Results - c.NewResults; total > 0 {
 		line += fmt.Sprintf(" · %d already trimmed", total)
 	}
-	if c.LedgerEntries > 0 {
-		line += fmt.Sprintf(" · ledger %d entries", c.LedgerEntries)
+	// The ledger is a rolling window over the newest tool calls, so say so:
+	// in a long session the count sits at its cap.
+	switch {
+	case c.LedgerEntries == 1:
+		line += " · ledger: last tool call"
+	case c.LedgerEntries > 1:
+		line += fmt.Sprintf(" · ledger: last %d tool calls", c.LedgerEntries)
 	}
 	m.tr.add(func(r *renderer) string { return r.gutter(iconTrimmed, r.st.dim, r.st.dim.Render(line)) })
 }

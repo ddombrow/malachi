@@ -425,7 +425,7 @@ func TestTrimmingIsVisible(t *testing.T) {
 	if !strings.Contains(out, "trimmed 3 tool results") {
 		t.Errorf("transcript marker missing or wrong: %q", out)
 	}
-	if !strings.Contains(out, "kB") || !strings.Contains(out, "ledger 4 entries") {
+	if !strings.Contains(out, "kB") || !strings.Contains(out, "ledger: last 4 tool calls") {
 		t.Errorf("marker should report sizes and ledger size: %q", out)
 	}
 }
