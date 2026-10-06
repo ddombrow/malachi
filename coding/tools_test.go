@@ -1,13 +1,16 @@
 package coding
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/ddombrow/malachi/agent"
@@ -306,5 +309,79 @@ func TestBashTimeoutSetting(t *testing.T) {
 		if got := (&Settings{BashTimeoutSeconds: secs}).ToolOptions().bashTimeout(); got != want {
 			t.Errorf("bashTimeoutSeconds %d → %v, want %v", secs, got, want)
 		}
+	}
+}
+
+// The window is streamed: a file far larger than memory needs to be is read
+// with offset/limit without loading it, and the total still counts every line.
+func TestReadStreamsLargeFiles(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "big.txt")
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := bufio.NewWriter(f)
+	for i := 1; i <= 2_000_000; i++ {
+		fmt.Fprintf(w, "line %d\n", i)
+	}
+	w.Flush()
+	f.Close()
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	r, err := run(t, NewReadTool(dir), map[string]any{"path": "big.txt", "offset": 1_000_000, "limit": 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.ReadMemStats(&after)
+	want := "line 1000000\nline 1000001\n\n[1000000 more lines in file. Use offset=1000002 to continue.]"
+	if r.Text() != want {
+		t.Fatalf("got %q", r.Text())
+	}
+	if grew := int64(after.HeapAlloc) - int64(before.HeapAlloc); grew > 8<<20 {
+		t.Fatalf("heap grew %d bytes reading a 2-line window", grew)
+	}
+}
+
+func TestScanLinesMatchesSplitting(t *testing.T) {
+	cases := []string{"", "a", "a\n", "a\r\nb", "a\rb\r", "a\r\n\r\nb\n", "\n\n", strings.Repeat("é", 70000) + "\nz"}
+	for _, in := range cases {
+		want := strings.Split(strings.ReplaceAll(strings.ReplaceAll(in, "\r\n", "\n"), "\r", "\n"), "\n")
+		var got []string
+		// A 1-byte reader splits CRLF pairs and multi-byte runes across reads.
+		n, valid, err := scanLines(iotest.OneByteReader(strings.NewReader(in)), 1<<20, func(_ int, line []byte, full int) {
+			if full != len(line) {
+				t.Errorf("full %d, kept %d", full, len(line))
+			}
+			got = append(got, string(line))
+		})
+		if err != nil || !valid || n != len(want) || strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Errorf("%q: n=%d valid=%v got %q want %q", in[:min(len(in), 20)], n, valid, got, want)
+		}
+	}
+	// A long line is clipped while streaming, but its length is reported.
+	_, _, _ = scanLines(strings.NewReader(strings.Repeat("x", 100)+"\n"), 10, func(i int, line []byte, full int) {
+		if i == 0 && (len(line) != 10 || full != 100) {
+			t.Errorf("kept %d of %d", len(line), full)
+		}
+	})
+	for _, bad := range []string{"ok\xff", "trailing \xe2\x82"} {
+		if _, valid, _ := scanLines(iotest.OneByteReader(strings.NewReader(bad)), 1<<20, func(int, []byte, int) {}); valid {
+			t.Errorf("%q reported valid", bad)
+		}
+	}
+}
+
+func TestReadReportsAnOversizedFirstLine(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "wide.txt", strings.Repeat("x", 3*MaxOutputBytes)+"\nshort\n")
+	r, err := run(t, NewReadTool(dir), map[string]any{"path": "wide.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(r.Text(), "[Line 1 is 150.0KB, exceeds 50.0KB limit.") {
+		t.Fatalf("got %q", r.Text())
 	}
 }

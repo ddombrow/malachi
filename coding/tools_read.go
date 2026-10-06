@@ -1,9 +1,11 @@
 package coding
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -73,20 +75,34 @@ func executeRead(cwd string, args map[string]any) (agent.ToolResult, error) {
 	if info.IsDir() {
 		return agent.ToolResult{}, fmt.Errorf("Path is a directory: %s. Use bash with ls to list it", path)
 	}
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
+	defer f.Close()
 
-	if mime := http.DetectContentType(data); imageTypes[mime] {
-		if len(data) > MaxImageBytes {
+	// DetectContentType reads at most 512 bytes, so that is all an image
+	// check needs; only a small enough image is then read whole.
+	sniff := make([]byte, 512)
+	n, err := io.ReadFull(f, sniff)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return agent.ToolResult{}, err
+	}
+	if mime := http.DetectContentType(sniff[:n]); imageTypes[mime] {
+		size := info.Size()
+		if size > MaxImageBytes {
 			return agent.ToolResult{
 				Content: []agent.Content{&agent.TextContent{Text: fmt.Sprintf(
 					"Read image file [%s]\n[Image omitted: %s exceeds the %s inline limit.]",
-					mime, FormatSize(len(data)), FormatSize(MaxImageBytes))}},
-				Details: map[string]any{"path": path, "mime_type": mime, "bytes": len(data)},
+					mime, FormatSize(int(size)), FormatSize(MaxImageBytes))}},
+				Details: map[string]any{"path": path, "mime_type": mime, "bytes": size},
 			}, nil
 		}
+		rest, err := io.ReadAll(io.LimitReader(f, MaxImageBytes))
+		if err != nil {
+			return agent.ToolResult{}, err
+		}
+		data := append(sniff[:n], rest...)
 		return agent.ToolResult{
 			Content: []agent.Content{
 				&agent.TextContent{Text: fmt.Sprintf("Read image file [%s]", mime)},
@@ -95,24 +111,52 @@ func executeRead(cwd string, args map[string]any) (agent.ToolResult, error) {
 			Details: map[string]any{"path": path, "mime_type": mime, "bytes": len(data)},
 		}, nil
 	}
-	if !utf8.Valid(data) {
-		return agent.ToolResult{}, fmt.Errorf("Cannot read %s: file is not UTF-8 text or a supported image", path)
-	}
 
-	text := strings.ReplaceAll(strings.ReplaceAll(string(data), "\r\n", "\n"), "\r", "\n")
-	all := strings.Split(text, "\n")
+	// Text: stream the file, keeping only the requested window and only as
+	// much of it as the display limits can use. Lines past those limits are
+	// counted, not kept, so a huge file costs time, not memory.
 	start := 0
 	if offset > 0 {
 		start = offset - 1
 	}
-	if start >= len(all) {
-		return agent.ToolResult{}, fmt.Errorf("Offset %d is beyond end of file (%d lines total)", offset, len(all))
+	var (
+		kept      []string
+		keptBytes int
+		window    int // lines in the requested window
+		firstLen  int // full length of the window's first line
+	)
+	inWindow := func(i int) bool { return i >= start && (!hasLimit || i < start+limit) }
+	total, valid, err := scanLines(io.MultiReader(bytes.NewReader(sniff[:n]), f), MaxOutputBytes+1,
+		func(i int, line []byte, full int) {
+			if !inWindow(i) {
+				return
+			}
+			if window == 0 {
+				firstLen = full
+			}
+			window++
+			// One line over the line limit (two, in case the last is a
+			// trailing empty line) or one line past the byte limit is enough
+			// for TruncateHead to reach the same decision as on the whole.
+			if len(kept) < MaxOutputLines+2 && keptBytes <= MaxOutputBytes {
+				kept = append(kept, string(line))
+				keptBytes += len(line) + 1
+			}
+		})
+	if err != nil {
+		return agent.ToolResult{}, err
 	}
-	end := len(all)
+	if !valid {
+		return agent.ToolResult{}, fmt.Errorf("Cannot read %s: file is not UTF-8 text or a supported image", path)
+	}
+	if start >= total {
+		return agent.ToolResult{}, fmt.Errorf("Offset %d is beyond end of file (%d lines total)", offset, total)
+	}
+	end := total
 	if hasLimit {
-		end = min(start+limit, len(all))
+		end = min(start+limit, total)
 	}
-	selected := strings.Join(all[start:end], "\n")
+	selected := strings.Join(kept, "\n")
 
 	t := TruncateHead(selected, MaxOutputLines, MaxOutputBytes)
 	startDisplay := start + 1
@@ -120,7 +164,7 @@ func executeRead(cwd string, args map[string]any) (agent.ToolResult, error) {
 	switch {
 	case t.FirstLineTooBig:
 		out = fmt.Sprintf("[Line %d is %s, exceeds %s limit. Use bash: sed -n '%dp' %s | head -c %d]",
-			startDisplay, FormatSize(len(all[start])), FormatSize(MaxOutputBytes), startDisplay, raw, MaxOutputBytes)
+			startDisplay, FormatSize(firstLen), FormatSize(MaxOutputBytes), startDisplay, raw, MaxOutputBytes)
 	case t.Truncated:
 		endDisplay := startDisplay + t.OutputLines - 1
 		limitNote := ""
@@ -128,9 +172,9 @@ func executeRead(cwd string, args map[string]any) (agent.ToolResult, error) {
 			limitNote = fmt.Sprintf(" (%s limit)", FormatSize(MaxOutputBytes))
 		}
 		out = fmt.Sprintf("%s\n\n[Showing lines %d-%d of %d%s. Use offset=%d to continue.]",
-			t.Content, startDisplay, endDisplay, len(all), limitNote, endDisplay+1)
-	case hasLimit && end < len(all):
-		out = fmt.Sprintf("%s\n\n[%d more lines in file. Use offset=%d to continue.]", t.Content, len(all)-end, end+1)
+			t.Content, startDisplay, endDisplay, total, limitNote, endDisplay+1)
+	case hasLimit && end < total:
+		out = fmt.Sprintf("%s\n\n[%d more lines in file. Use offset=%d to continue.]", t.Content, total-end, end+1)
 	default:
 		out = t.Content
 	}
@@ -138,4 +182,82 @@ func executeRead(cwd string, args map[string]any) (agent.ToolResult, error) {
 		Content: []agent.Content{&agent.TextContent{Text: out}},
 		Details: map[string]any{"path": path, "truncation": t},
 	}, nil
+}
+
+// scanLines reads text from r and calls emit for every line, numbered from
+// 0. CRLF and a lone CR are line breaks like LF, as when the whole file was
+// normalized and split, and a final line is emitted even when empty, so the
+// count matches strings.Split. emit receives at most keep bytes of each line
+// (the slice is reused; copy it to keep it) and the line's full length. It
+// returns the number of lines and whether the whole stream was valid UTF-8.
+func scanLines(r io.Reader, keep int, emit func(i int, line []byte, full int)) (lines int, validUTF8 bool, err error) {
+	buf := make([]byte, 64*1024)
+	var (
+		cur    []byte
+		curLen int
+		prevCR bool
+		carry  []byte // an incomplete UTF-8 sequence split across reads
+		idx    int
+	)
+	validUTF8 = true
+	endLine := func() {
+		emit(idx, cur, curLen)
+		idx++
+		cur, curLen = cur[:0], 0
+	}
+	for {
+		n, rerr := r.Read(buf)
+		chunk := buf[:n]
+		if validUTF8 && n > 0 {
+			data := append(carry, chunk...)
+			cut := len(data)
+			// Hold back a trailing partial rune for the next read.
+			for back := 1; back <= utf8.UTFMax-1 && back <= len(data); back++ {
+				if utf8.RuneStart(data[len(data)-back]) {
+					if !utf8.FullRune(data[len(data)-back:]) {
+						cut = len(data) - back
+					}
+					break
+				}
+			}
+			if !utf8.Valid(data[:cut]) {
+				validUTF8 = false
+			}
+			carry = append(carry[:0], data[cut:]...)
+		}
+		for len(chunk) > 0 {
+			if prevCR {
+				prevCR = false
+				if chunk[0] == '\n' {
+					chunk = chunk[1:]
+					continue
+				}
+			}
+			k := bytes.IndexAny(chunk, "\r\n")
+			seg := chunk
+			if k >= 0 {
+				seg = chunk[:k]
+			}
+			if room := keep - len(cur); room > 0 {
+				cur = append(cur, seg[:min(len(seg), room)]...)
+			}
+			curLen += len(seg)
+			if k < 0 {
+				break
+			}
+			prevCR = chunk[k] == '\r'
+			endLine()
+			chunk = chunk[k+1:]
+		}
+		if rerr == io.EOF {
+			if len(carry) > 0 {
+				validUTF8 = false
+			}
+			endLine()
+			return idx, validUTF8, nil
+		}
+		if rerr != nil {
+			return idx, validUTF8, rerr
+		}
+	}
 }
