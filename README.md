@@ -6,21 +6,24 @@ events, and sessions, and reads tau session files.
 
 > [!WARNING]
 > **malachi does not ask permission before it acts.** When the model decides
-> to run a shell command, write a file, or edit one, it happens immediately,
-> with your user account's privileges: there is no approval prompt and no
-> undo. It can delete files, change anything your account can change, and
-> reach the network. Use it on work you can recover (a version-controlled
-> checkout, committed first), and run it in a container, VM, or disposable
-> environment for anything you do not trust — including repositories you
-> did not write, whose files the model will read. [Project
-> trust](#project-trust) only decides whether a repository's `AGENTS.md` is
-> obeyed; it is not a sandbox. The same applies in `-p` and RPC mode, where
-> nobody is watching at all.
+> to run a shell command, write a file, or edit one, it happens immediately:
+> there is no approval prompt and no undo. A [sandbox](#sandbox), on by
+> default on macOS and Linux, confines what that can touch: writes only in
+> the project, temp and build-cache directories; no reading credentials
+> (`~/.ssh`, cloud and registry tokens) or malachi's own files. But it is a
+> fence, not a VM. Inside the project the model can still delete or rewrite
+> anything, the network is on, and whatever it can read it can send
+> somewhere. Use it on work you can recover (a version-controlled checkout,
+> committed first), and use a container or VM for repositories you do not
+> trust, whose files the model will read. The same applies in `-p` and RPC
+> mode, where nobody is watching at all.
 
 ```text
 cmd/malachi   CLI: interactive TUI or print mode (-p)
 tui/          full-screen Bubble Tea frontend
+rpc/          headless JSONL protocol (-mode rpc)
 coding/       tools (read, write, edit, bash), system prompt, config, sessions
+sandbox/      what commands and file tools may touch; Seatbelt and Landlock backends
 ai/           providers over raw net/http + SSE (openai-compatible today)
 agent/        portable brain: messages, events, loop, harness, session tree
 ```
@@ -37,8 +40,9 @@ go install github.com/ddombrow/malachi/cmd/malachi@latest
 checkout instead, see [Development](#development).
 
 macOS and Linux are supported. malachi builds on Windows, but its bash tool
-needs `bash` or `sh` on the PATH, and cancelling a command there stops only
-the shell, not the processes it started.
+needs `bash` or `sh` on the PATH, cancelling a command there stops only the
+shell, not the processes it started, and there is no [sandbox](#sandbox):
+commands fail until you run with `-sandbox off`.
 
 ## Usage
 
@@ -219,7 +223,70 @@ that merely share an ancestor. `-trust yes`/`-trust no` applies to one run.
 
 Your own `~/.malachi/AGENTS.md` is never gated — those are your instructions,
 not project input. Trust governs whether instruction *files* are instructions
-or ignored; it is not a filesystem, network, or tool sandbox.
+or ignored; what tools may touch is the [sandbox](#sandbox)'s job.
+
+### Sandbox
+
+Commands the model runs are confined by the operating system, and the file
+tools (read, write, edit, grep, glob) check the same rules themselves:
+
+- **Writes** only under the project, the temp directories, the user cache
+  directory (Go's build cache, among others), the Go module cache, and npm,
+  cargo and rustup caches.
+- **No reading or writing** malachi's home (`~/.malachi`: your API keys,
+  sessions, settings) or credential stores: `~/.ssh`, `~/.gnupg`, `~/.aws`,
+  `~/.azure`, `~/.kube`, `~/.docker/config.json`, `~/.config/gh`,
+  `~/.config/gcloud`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`,
+  `~/.pypirc`, cargo and Terraform credentials, and the macOS keychains.
+- **The network** is on by default. Turn it off and commands cannot open IP
+  connections (Unix sockets still work).
+- **API keys** that malachi loaded from its `.env`, or that a provider's
+  `apiKeyEnv` names, are removed from commands' environment. This holds even
+  with the sandbox off.
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "network": true,
+    "writableRoots": ["~/scratch"],
+    "hiddenPaths": ["~/.config/my-token"]
+  }
+}
+```
+
+`writableRoots` and `hiddenPaths` add to the defaults. Settings are read only
+from `~/.malachi/settings.json`, which the sandbox hides, so a project cannot
+widen its own sandbox. `-sandbox off` turns the sandbox off for one run, and
+`-sandbox on` turns it on over a setting. `/sandbox` shows what is in force.
+The status bar says `unsandboxed`, `sandbox unavailable` or `offline` when
+those apply. When a command fails in a way that looks like the sandbox, its
+result tells the model to ask you rather than work around it.
+
+How it works:
+
+- **macOS** runs commands under `sandbox-exec` with a generated profile.
+  Apple deprecated the tool but offers no replacement, and other coding
+  agents rely on it too.
+- **Linux** uses Landlock (kernel 5.13 or later), plus seccomp when the
+  network is off. malachi applies it through itself, with nothing else to
+  install.
+- **Failing closed.** Where the sandbox cannot run (an older kernel, Windows,
+  `sandbox-exec` gone), malachi says so at startup and commands fail rather
+  than run unconfined.
+
+What it does not stop:
+
+- **Anything in the project.** The model can delete or rewrite files there.
+  That includes `.git/hooks`, which run with no sandbox when *you* next use
+  git.
+- **Anything readable and not hidden** can be read, and with the network on
+  it can be sent somewhere.
+- **On Linux**, the names inside a hidden directory can be listed, though not
+  their contents.
+- **On Linux**, a writable directory that itself contains a hidden path (say,
+  malachi run in your home directory) cannot gain new entries at its top
+  level.
 
 Failures with nowhere else to go — panics, provider errors, and failures to
 write the session file — are appended to `~/.malachi/logs/agent.jsonl`, one

@@ -32,6 +32,10 @@ jobs:
           go-version-file: go.mod
       # The same tasks a contributor runs (task is pinned in go.mod).
       - run: go tool task lint
+      # Both runners can sandbox (macOS sandbox-exec; Ubuntu's kernel has
+      # Landlock), so the sandbox tests must run there, not skip.
       - run: go tool task test
+        env:
+          MALACHI_REQUIRE_SANDBOX: "1"
       - run: go tool task build
       - run: bin/malachi -version
