@@ -17,6 +17,7 @@ import (
 
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/ai/openai"
+	"github.com/ddombrow/malachi/sandbox"
 )
 
 // ProviderConfig describes one model endpoint. Built-in presets can be
@@ -59,6 +60,7 @@ type Settings struct {
 	// 0 means the default (600), -1 means no limit.
 	BashTimeoutSeconds int                       `json:"bashTimeoutSeconds,omitempty"`
 	ProjectTrust       string                    `json:"projectTrust,omitempty"` // "ask" (default), "always", or "never"
+	Sandbox            SandboxSettings           `json:"sandbox,omitzero"`
 	Providers          map[string]ProviderConfig `json:"providers,omitempty"`
 }
 
@@ -203,6 +205,37 @@ func LoadSettings(home string) (*Settings, error) {
 		return nil, fmt.Errorf("settings.json: %w", err)
 	}
 	return s, nil
+}
+
+// SandboxSettings configure the sandbox around commands and file tools. They
+// are read only from malachi's home, which the sandbox hides, so a project
+// cannot widen its own sandbox.
+type SandboxSettings struct {
+	Enabled       *bool    `json:"enabled,omitempty"` // default true
+	Network       *bool    `json:"network,omitempty"` // default true
+	WritableRoots []string `json:"writableRoots,omitempty"`
+	HiddenPaths   []string `json:"hiddenPaths,omitempty"`
+}
+
+// SandboxConfig is the sandbox these settings describe for a project in cwd,
+// with malachi's home hidden. Paths may start with ~.
+func (s *Settings) SandboxConfig(cwd, home string) sandbox.Config {
+	sb := s.Sandbox
+	expand := func(paths []string) []string {
+		var out []string
+		for _, p := range paths {
+			out = append(out, resolvePath(cwd, p))
+		}
+		return out
+	}
+	return sandbox.Config{
+		Disabled: sb.Enabled != nil && !*sb.Enabled,
+		NoNet:    sb.Network != nil && !*sb.Network,
+		Cwd:      cwd,
+		Home:     home,
+		Writable: expand(sb.WritableRoots),
+		Hidden:   expand(sb.HiddenPaths),
+	}
 }
 
 // ToolOptions turns settings into options for the coding tools.

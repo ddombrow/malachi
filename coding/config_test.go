@@ -1,8 +1,11 @@
 package coding
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -43,5 +46,32 @@ func TestContextWindowFallsBackWhenUnset(t *testing.T) {
 	}
 	if got := s.ProviderConfigs()["opencode-go"].ContextWindowTokens(); got != defaultContextWindow {
 		t.Errorf("contextWindow = %d, want the %d default", got, defaultContextWindow)
+	}
+}
+
+func TestSandboxSettings(t *testing.T) {
+	var s Settings
+	if err := json.Unmarshal([]byte(`{"sandbox":{"network":false,"writableRoots":["~/scratch","rel"],"hiddenPaths":["/etc/secret"]}}`), &s); err != nil {
+		t.Fatal(err)
+	}
+	cwd, home := t.TempDir(), t.TempDir()
+	c := s.SandboxConfig(cwd, home)
+	userHome, _ := os.UserHomeDir()
+	if c.Disabled || !c.NoNet || c.Cwd != cwd || c.Home != home {
+		t.Fatalf("config %+v", c)
+	}
+	if want := []string{filepath.Join(userHome, "scratch"), filepath.Join(cwd, "rel")}; !slices.Equal(c.Writable, want) {
+		t.Fatalf("writable %v, want %v", c.Writable, want)
+	}
+	if !slices.Equal(c.Hidden, []string{"/etc/secret"}) {
+		t.Fatalf("hidden %v", c.Hidden)
+	}
+	if (&Settings{}).SandboxConfig(cwd, home).Disabled {
+		t.Fatal("sandbox off by default")
+	}
+	// An empty block stays out of a saved file.
+	raw, _ := json.Marshal(Settings{})
+	if strings.Contains(string(raw), "sandbox") {
+		t.Fatalf("empty sandbox block serialized: %s", raw)
 	}
 }
