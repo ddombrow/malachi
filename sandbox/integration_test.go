@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -63,7 +64,9 @@ func TestSandboxedCommands(t *testing.T) {
 		{"write outside", "echo hi > " + filepath.Join(outside, "x"), false},
 		{"write via ..", "echo hi > ../outside/y", false},
 		{"read hidden", "cat " + filepath.Join(home, ".env"), false},
-		{"list hidden", "ls " + home, false},
+		// Landlock grants subtrees, so a directory split around a hidden
+		// path stays listable on Linux: names show, contents do not.
+		{"list hidden", "ls " + home, runtime.GOOS == "linux"},
 		{"read hidden via link", "cat env-link", false},
 		{"read elsewhere", "cat /etc/hosts >/dev/null", true},
 		{"dev null", "echo x > /dev/null", true},
@@ -109,5 +112,25 @@ func TestSandboxedNetwork(t *testing.T) {
 	p.Network = false
 	if out, ok := sh(t, p, project, connect); ok {
 		t.Fatalf("network off: connect succeeded: %s", out)
+	}
+}
+
+// A real build works under the default policy: the Go build cache and
+// module cache are writable, and their atomic renames across directories
+// are allowed.
+func TestSandboxedGoBuild(t *testing.T) {
+	requireBackend(t)
+	gobin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("no go toolchain")
+	}
+	project := t.TempDir()
+	t.Setenv("GOCACHE", t.TempDir()) // a cold cache, so the build writes to it
+	// As in real use, malachi's home is not under a writable root (the temp
+	// directory here); see carve.
+	p := Build(Config{Cwd: project, Home: "/nonexistent/malachi-home"})
+	script := "export GOTOOLCHAIN=local GOFLAGS=-mod=mod && " + gobin + ` mod init example.com/x && printf 'package main\nfunc main() { println("built") }\n' > main.go && ` + gobin + " run ."
+	if out, ok := sh(t, p, project, script); !ok || !strings.Contains(out, "built") {
+		t.Fatalf("go run under the sandbox failed: %s", out)
 	}
 }

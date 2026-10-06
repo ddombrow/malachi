@@ -21,10 +21,14 @@ import (
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/coding"
 	"github.com/ddombrow/malachi/rpc"
+	"github.com/ddombrow/malachi/sandbox"
 	"github.com/ddombrow/malachi/tui"
 )
 
 func main() {
+	// A sandboxed command on Linux starts as this binary in helper mode; it
+	// must confine itself before anything else runs.
+	sandbox.MaybeRunHelper()
 	os.Exit(recoverAndRun(run))
 }
 
