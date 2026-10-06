@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // writeIn writes a file, creating any parent directories it needs.
@@ -329,5 +330,71 @@ func TestGrepNamedFileIgnoresGitignoreAndSkipsTheWalk(t *testing.T) {
 	}
 	if strings.Contains(r.Text(), "other.txt") || r.Details.(map[string]any)["searched"] != 1 {
 		t.Fatalf("searched beyond the named file:\n%s", r.Text())
+	}
+}
+
+// Repeated "**" against a deep path used to retry every split: exponential.
+// Memoized, it is pattern segments × path segments.
+func TestGlobMatchingIsPolynomial(t *testing.T) {
+	pattern := strings.Repeat("**/", 20) + "x"                // 21 segments, mostly **
+	name := strings.TrimSuffix(strings.Repeat("a/", 60), "/") // 60 segments, no x
+	start := time.Now()
+	if matchGlob(pattern, name) {
+		t.Fatal("pattern ending in x matched a path without x")
+	}
+	if d := time.Since(start); d > 100*time.Millisecond {
+		t.Fatalf("matching took %v", d)
+	}
+	// Semantics are unchanged.
+	for _, c := range []struct {
+		pattern, name string
+		want          bool
+	}{
+		{"**/*.go", "a/b/c.go", true},
+		{"**/*.go", "c.go", true},
+		{"a/**/c.go", "a/c.go", true},
+		{"a/**/c.go", "a/x/y/c.go", true},
+		{"*.go", "a/c.go", false},
+		{"a/**", "a/b/c", true},
+		{"a/**/b", "a/c", false},
+	} {
+		if got := matchGlob(c.pattern, c.name); got != c.want {
+			t.Errorf("matchGlob(%q, %q) = %v, want %v", c.pattern, c.name, got, c.want)
+		}
+	}
+}
+
+func TestOversizedPatternsAreRejected(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "a.go", "package a\n")
+	long := strings.Repeat("a", maxPatternBytes+1)
+	deep := strings.Repeat("*/", maxPatternSegments) + "x"
+	for _, p := range []string{long, deep} {
+		if _, err := run(t, NewGlobTool(dir), map[string]any{"pattern": p}); err == nil {
+			t.Errorf("glob accepted a %d-byte pattern", len(p))
+		}
+		if _, err := run(t, NewGrepTool(dir), map[string]any{"pattern": "package", "glob": p}); err == nil {
+			t.Errorf("grep accepted a %d-byte glob", len(p))
+		}
+	}
+}
+
+// A repository's .gitignore is input too: rules beyond the limit are not
+// applied, and the footer says so instead of searching silently differently.
+func TestIgnoreRulesAreBoundedAndReported(t *testing.T) {
+	dir := t.TempDir()
+	var rules strings.Builder
+	for i := 0; i < maxIgnoreRules+5; i++ {
+		fmt.Fprintf(&rules, "gen%d/\n", i)
+	}
+	rules.WriteString(strings.Repeat("y", maxPatternBytes+1) + "\n")
+	write(t, dir, ".gitignore", rules.String())
+	write(t, dir, "a.go", "package a\n")
+	r, err := run(t, NewGlobTool(dir), map[string]any{"pattern": "**/*.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.Text(), "6 .gitignore rule(s) beyond the first 1000") {
+		t.Fatalf("footer: %q", r.Text())
 	}
 }

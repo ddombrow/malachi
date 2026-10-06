@@ -76,6 +76,9 @@ func executeGrep(cwd string, args map[string]any) (agent.ToolResult, error) {
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
+	if err := checkPattern(filter); err != nil {
+		return agent.ToolResult{}, fmt.Errorf("glob: %w", err)
+	}
 	ignoreCase, _, err := optBool(args, "ignore_case")
 	if err != nil {
 		return agent.ToolResult{}, err
@@ -154,11 +157,12 @@ func executeGrep(cwd string, args map[string]any) (agent.ToolResult, error) {
 		return nil
 	}
 
-	if err := searchEach(root, single, filter, scan); err != nil {
+	skippedRules, err := searchEach(root, single, filter, scan)
+	if err != nil {
 		return agent.ToolResult{}, err
 	}
 
-	scope := grepFooter(matches, files, searched, hitLimit, skippedBig, skippedBin, limit)
+	scope := grepFooter(matches, files, searched, hitLimit, skippedBig, skippedBin, limit) + skippedRulesNote(skippedRules)
 	var out string
 	if matches == 0 {
 		// A negative result is only trustworthy if it says what was searched:
@@ -246,19 +250,19 @@ func searchRoot(cwd string, args map[string]any) (dir, single string, err error)
 // A named file is visited directly. Walking its directory to find it was slow
 // in a large tree, and ignore rules would silently skip a file the caller
 // asked for by name; an explicit path is not subject to .gitignore.
-func searchEach(dir, single, filter string, fn func(rel string, d fs.DirEntry) error) error {
+func searchEach(dir, single, filter string, fn func(rel string, d fs.DirEntry) error) (skippedRules int, err error) {
 	if single != "" {
 		if !matchFilter(filter, single) {
-			return nil
+			return 0, nil
 		}
 		info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(single)))
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if err := fn(single, fs.FileInfoToDirEntry(info)); err != nil && !errors.Is(err, errStopWalk) {
-			return err
+			return 0, err
 		}
-		return nil
+		return 0, nil
 	}
 	return walkSearch(dir, func(rel string, d fs.DirEntry) error {
 		if !matchFilter(filter, rel) {

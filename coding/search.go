@@ -2,6 +2,7 @@ package coding
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -34,13 +35,14 @@ var skipDirs = map[string]bool{
 
 // walkSearch visits every searchable file under root in lexical order,
 // skipping ignored directories. fn receives the slash-separated path relative
-// to root. Returning errStopWalk from fn ends the walk successfully.
+// to root. Returning errStopWalk from fn ends the walk successfully. It
+// reports how many .gitignore rules were beyond the limits and not applied.
 //
 // Symlinks are not followed: a link pointing at an ancestor would otherwise
 // make the walk unbounded.
-func walkSearch(root string, fn func(rel string, d fs.DirEntry) error) error {
+func walkSearch(root string, fn func(rel string, d fs.DirEntry) error) (skippedRules int, err error) {
 	ign := loadIgnores(root)
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if d != nil && d.IsDir() {
 				return filepath.SkipDir
@@ -67,38 +69,77 @@ func walkSearch(root string, fn func(rel string, d fs.DirEntry) error) error {
 		return fn(rel, d)
 	})
 	if errors.Is(err, errStopWalk) {
-		return nil
+		err = nil
 	}
-	return err
+	return ign.skipped, err
+}
+
+// skippedRulesNote is the footer remark for ignore rules that were not
+// applied, or "".
+func skippedRulesNote(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (%d .gitignore rule(s) beyond the first %d, or over %d bytes, were not applied)", n, maxIgnoreRules, maxPatternBytes)
+}
+
+// Limits on patterns, which come from the model (glob, grep's glob) and from
+// a repository's own .gitignore. Matching is polynomial, but unbounded input
+// would still let a hostile repository make every search slow.
+const (
+	maxPatternBytes    = 1024
+	maxPatternSegments = 64
+	maxIgnoreRules     = 1000
+)
+
+// checkPattern rejects a glob too large to be a reasonable path pattern.
+func checkPattern(pattern string) error {
+	if len(pattern) > maxPatternBytes {
+		return fmt.Errorf("pattern is %d bytes; the limit is %d", len(pattern), maxPatternBytes)
+	}
+	if n := strings.Count(pattern, "/") + 1; n > maxPatternSegments {
+		return fmt.Errorf("pattern has %d path segments; the limit is %d", n, maxPatternSegments)
+	}
+	return nil
 }
 
 // matchGlob matches a slash-separated path against a glob supporting "**",
 // which matches any number of path segments including none. Every other
 // segment follows path.Match, so "*.go" does not cross a "/".
+//
+// Matching is memoized over (pattern segment, path segment), so it costs at
+// most their product. Without that, each "**" retried every split and a
+// pattern like "**/**/**/…/x" took exponential time against a deep path.
 func matchGlob(pattern, name string) bool {
-	return globSegments(strings.Split(pattern, "/"), strings.Split(name, "/"))
-}
-
-func globSegments(pattern, name []string) bool {
-	for len(pattern) > 0 {
-		if pattern[0] == "**" {
-			// Try consuming every remaining segment count, including zero.
-			for i := 0; i <= len(name); i++ {
-				if globSegments(pattern[1:], name[i:]) {
-					return true
-				}
-			}
-			return false
+	pat, segs := strings.Split(pattern, "/"), strings.Split(name, "/")
+	width := len(segs) + 1
+	memo := make([]int8, (len(pat)+1)*width) // 0 unknown, 1 match, 2 no match
+	var match func(i, j int) bool
+	match = func(i, j int) bool {
+		k := i*width + j
+		if memo[k] != 0 {
+			return memo[k] == 1
 		}
-		if len(name) == 0 {
-			return false
+		var ok bool
+		switch {
+		case i == len(pat):
+			ok = j == len(segs)
+		case pat[i] == "**":
+			// Consume no segment, or one and stay on "**".
+			ok = match(i+1, j) || (j < len(segs) && match(i, j+1))
+		case j == len(segs):
+			ok = false
+		default:
+			m, err := path.Match(pat[i], segs[j])
+			ok = err == nil && m && match(i+1, j+1)
 		}
-		if ok, err := path.Match(pattern[0], name[0]); err != nil || !ok {
-			return false
+		memo[k] = 2
+		if ok {
+			memo[k] = 1
 		}
-		pattern, name = pattern[1:], name[1:]
+		return ok
 	}
-	return len(name) == 0
+	return match(0, 0)
 }
 
 // matchFilter applies gitignore-style matching to one relative path: a pattern
@@ -125,8 +166,11 @@ type ignoreRule struct {
 
 // ignores holds the root .gitignore. Nested .gitignore files are not read;
 // honoring them per-directory would change results depending on where the
-// search started.
-type ignores struct{ rules []ignoreRule }
+// search started. skipped counts rules beyond the limits, which are ignored.
+type ignores struct {
+	rules   []ignoreRule
+	skipped int
+}
 
 func loadIgnores(root string) *ignores {
 	ig := &ignores{}
@@ -135,9 +179,15 @@ func loadIgnores(root string) *ignores {
 		return ig
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		if r, ok := parseIgnoreRule(line); ok {
-			ig.rules = append(ig.rules, r)
+		r, ok := parseIgnoreRule(line)
+		if !ok {
+			continue
 		}
+		if len(ig.rules) >= maxIgnoreRules || checkPattern(r.pattern) != nil {
+			ig.skipped++
+			continue
+		}
+		ig.rules = append(ig.rules, r)
 	}
 	return ig
 }

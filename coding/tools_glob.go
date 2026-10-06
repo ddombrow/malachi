@@ -51,6 +51,9 @@ func executeGlob(cwd string, args map[string]any) (agent.ToolResult, error) {
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
+	if err := checkPattern(pattern); err != nil {
+		return agent.ToolResult{}, err
+	}
 	if strings.TrimSpace(pattern) == "" {
 		return agent.ToolResult{}, fmt.Errorf("argument %q must not be empty", "pattern")
 	}
@@ -77,7 +80,7 @@ func executeGlob(cwd string, args map[string]any) (agent.ToolResult, error) {
 
 	var paths []string
 	hitLimit := false
-	if err := walkSearch(root, func(rel string, _ fs.DirEntry) error {
+	skippedRules, err := walkSearch(root, func(rel string, _ fs.DirEntry) error {
 		if !matchFilter(pattern, rel) {
 			return nil
 		}
@@ -87,7 +90,8 @@ func executeGlob(cwd string, args map[string]any) (agent.ToolResult, error) {
 		}
 		paths = append(paths, rel)
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
 		return agent.ToolResult{}, err
 	}
 	// WalkDir is lexical already; sorting keeps the order stable if the walk
@@ -97,7 +101,7 @@ func executeGlob(cwd string, args map[string]any) (agent.ToolResult, error) {
 	var out string
 	switch {
 	case len(paths) == 0:
-		out = fmt.Sprintf("No files matching %q.", pattern)
+		out = fmt.Sprintf("No files matching %q.%s", pattern, skippedRulesNote(skippedRules))
 	default:
 		body := TruncateHead(strings.Join(paths, "\n"), MaxOutputLines, MaxOutputBytes)
 		out = body.Content
@@ -113,7 +117,7 @@ func executeGlob(cwd string, args map[string]any) (agent.ToolResult, error) {
 		if hitLimit {
 			footer += fmt.Sprintf(" — stopped at the limit of %d, so results may continue", limit)
 		}
-		out += "\n\n" + footer
+		out += "\n\n" + footer + skippedRulesNote(skippedRules)
 	}
 	return agent.ToolResult{
 		Content: []agent.Content{&agent.TextContent{Text: out}},
