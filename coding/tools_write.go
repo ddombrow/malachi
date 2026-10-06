@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/ddombrow/malachi/agent"
@@ -50,10 +49,16 @@ func NewWriteTool(cwd string, opts ToolOptions) *agent.Tool {
 				return agent.ToolResult{}, err
 			}
 			defer lockFile(path)()
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			// Creates parent directories; an existing file keeps its mode.
+			f, err := opts.policy().OpenWrite(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+			if err != nil {
 				return agent.ToolResult{}, err
 			}
-			if err := os.WriteFile(path, []byte(content), filePerm(path)); err != nil {
+			_, err = f.WriteString(content)
+			if cerr := f.Close(); err == nil {
+				err = cerr
+			}
+			if err != nil {
 				return agent.ToolResult{}, err
 			}
 			r := agent.TextResult(fmt.Sprintf("Successfully wrote to %s.", path))
@@ -61,12 +66,4 @@ func NewWriteTool(cwd string, opts ToolOptions) *agent.Tool {
 			return r, nil
 		},
 	}
-}
-
-// filePerm keeps an existing file's mode, defaulting to 0644.
-func filePerm(path string) os.FileMode {
-	if info, err := os.Stat(path); err == nil {
-		return info.Mode().Perm()
-	}
-	return 0o644
 }

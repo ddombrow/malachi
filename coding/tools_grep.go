@@ -127,9 +127,9 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 			skippedBig++
 			return nil
 		}
-		f, err := os.Open(filepath.Join(root, rel))
+		f, err := pol.OpenRead(filepath.Join(root, rel))
 		if err != nil {
-			return nil
+			return nil // gone, unreadable, or swapped for a link to a hidden file
 		}
 		defer f.Close()
 		if isBinary(f) {

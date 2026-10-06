@@ -68,21 +68,23 @@ func executeRead(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 		return agent.ToolResult{}, fmt.Errorf("limit must be at least 1")
 	}
 
-	info, err := os.Stat(path)
+	// OpenRead judges the file actually opened, so a symlink swapped after
+	// the check above still cannot reach a hidden file.
+	f, err := opts.policy().OpenRead(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return agent.ToolResult{}, fmt.Errorf("File not found: %s", path)
 		}
 		return agent.ToolResult{}, err
 	}
-	if info.IsDir() {
-		return agent.ToolResult{}, fmt.Errorf("Path is a directory: %s. Use bash with ls to list it", path)
-	}
-	f, err := os.Open(path)
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
-	defer f.Close()
+	if info.IsDir() {
+		return agent.ToolResult{}, fmt.Errorf("Path is a directory: %s. Use bash with ls to list it", path)
+	}
 
 	// DetectContentType reads at most 512 bytes, so that is all an image
 	// check needs; only a small enough image is then read whole.

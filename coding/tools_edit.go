@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -180,7 +181,14 @@ func executeEdit(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 	}
 
 	defer lockFile(path)()
-	raw, err := os.ReadFile(path)
+	// Read and write through one descriptor that OpenWrite has checked, so
+	// nothing can swap the file in between.
+	f, err := opts.policy().OpenWrite(path, os.O_RDWR, 0)
+	if err != nil {
+		return agent.ToolResult{}, err
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(f)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -199,7 +207,13 @@ func executeEdit(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 	if ending == "\r\n" {
 		final = strings.ReplaceAll(updated, "\n", "\r\n")
 	}
-	if err := os.WriteFile(path, []byte(bom+final), info.Mode().Perm()); err != nil {
+	if err := f.Truncate(0); err != nil {
+		return agent.ToolResult{}, err
+	}
+	if _, err := f.WriteAt([]byte(bom+final), 0); err != nil {
+		return agent.ToolResult{}, err
+	}
+	if err := f.Close(); err != nil {
 		return agent.ToolResult{}, err
 	}
 	patch, first := UnifiedDiff(path, base, updated)
