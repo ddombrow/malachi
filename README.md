@@ -89,6 +89,8 @@ to cancel, and use `/help` for the full command list.
 | `/trim [bytes]` | Trim old tool output mechanically before the next request |
 | `/ctx` | Context budget: prompt tokens, tool output share, compaction count |
 | `/trust [yes\|no\|parent]` | Decide whether this directory's `AGENTS.md` is obeyed |
+| `/sandbox` | Show what commands and file tools may touch |
+| `/network [on\|off]` | Switch commands' network access for this session |
 | `/copy`, `/quit` | Copy the transcript, exit |
 
 `/compact` and `/trim` are different tools: `/compact` is a lossy,
