@@ -10,13 +10,22 @@ events, and sessions, and reads tau session files.
 > there is no approval prompt and no undo. A [sandbox](#sandbox), on by
 > default on macOS and Linux, confines what that can touch: writes only in
 > the project, temp and build-cache directories; no reading credentials
-> (`~/.ssh`, cloud and registry tokens) or malachi's own files. But it is a
-> fence, not a VM. Inside the project the model can still delete or rewrite
-> anything, and if you turn the network on, whatever it can read it can send
-> somewhere. Use it on work you can recover (a version-controlled checkout,
-> committed first), and use a container or VM for repositories you do not
-> trust, whose files the model will read. The same applies in `-p` and RPC
-> mode, where nobody is watching at all.
+> (`~/.ssh`, cloud and registry tokens) or malachi's own files; no network
+> and no local daemons such as Docker or ssh-agent unless you allow them.
+> But it is a fence, not a VM:
+>
+> - Inside the project the model can delete or rewrite anything, including
+>   `.git/hooks`, which run outside the sandbox when *you* next use git.
+> - Everything a tool returns is sent to your model provider, network on or
+>   off, and with the network on whatever a command can read it can send
+>   anywhere.
+> - On macOS a command can still ask system services to act for it, such as
+>   opening a URL in your browser.
+>
+> Use it on work you can recover (a version-controlled checkout, committed
+> first), and use a container or VM for repositories you do not trust, whose
+> files the model will read. The same applies in `-p` and RPC mode, where
+> nobody is watching at all.
 
 ```text
 cmd/malachi   CLI: interactive TUI or print mode (-p)
