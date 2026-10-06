@@ -672,3 +672,19 @@ func TestSandboxCommandAndMarker(t *testing.T) {
 		t.Fatalf("no startup notice:\n%s", off.tr.text(off.r))
 	}
 }
+
+func TestNetworkCommand(t *testing.T) {
+	m := newTestModel(t)
+	m.command("/network off")
+	if m.s.Sandbox().Network || !strings.Contains(m.statusLine(), "offline") {
+		t.Fatalf("network=%v status=%q", m.s.Sandbox().Network, m.statusLine())
+	}
+	m.command("/network on")
+	if !m.s.Sandbox().Network || strings.Contains(m.statusLine(), "offline") {
+		t.Fatalf("network=%v status=%q", m.s.Sandbox().Network, m.statusLine())
+	}
+	m.command("/network maybe")
+	if !strings.Contains(m.tr.text(m.r), "usage: /network") {
+		t.Fatal("bad argument not reported")
+	}
+}

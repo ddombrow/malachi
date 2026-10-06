@@ -1,8 +1,10 @@
 package coding
 
 import (
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -125,5 +127,61 @@ func TestSandboxOffReachesEverything(t *testing.T) {
 func TestSandboxOptionIsValidated(t *testing.T) {
 	if _, err := Open(Options{Cwd: t.TempDir(), Home: t.TempDir(), Settings: &Settings{}, Provider: fake.New(), NoSession: true, Sandbox: "maybe"}); err == nil {
 		t.Fatal("accepted -sandbox maybe")
+	}
+}
+
+func TestSetNetworkSwitchesCommandsNetwork(t *testing.T) {
+	s, _, _, _ := sandboxedSession(t, "")
+	if !s.Sandbox().Network {
+		t.Fatal("network off by default")
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	connect := map[string]any{"command": "exec 3<>/dev/tcp/127.0.0.1/" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port) + " && echo connected"}
+
+	if err := s.SetNetwork(false); err != nil {
+		t.Fatal(err)
+	}
+	if s.Sandbox().Network {
+		t.Fatal("still on after SetNetwork(false)")
+	}
+	if sandbox.Available() == nil {
+		if r, _ := run(t, tool(t, s, "bash"), connect); strings.Contains(r.Text(), "connected") {
+			t.Fatalf("connected with the network off: %s", r.Text())
+		}
+	}
+	// The switch survives /new.
+	next, err := s.Reopen("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer next.Close()
+	if next.Sandbox().Network {
+		t.Fatal("Reopen turned the network back on")
+	}
+	if err := next.SetNetwork(true); err != nil {
+		t.Fatal(err)
+	}
+	if sandbox.Available() == nil {
+		if r, _ := run(t, tool(t, next, "bash"), connect); !strings.Contains(r.Text(), "connected") {
+			t.Fatalf("could not connect with the network back on: %s", r.Text())
+		}
+	}
+
+	off, _, _, _ := sandboxedSession(t, "off")
+	if off.SetNetwork(false) == nil {
+		t.Fatal("SetNetwork accepted with the sandbox off")
 	}
 }

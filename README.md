@@ -266,7 +266,10 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
 `writableRoots` and `hiddenPaths` add to the defaults. Settings are read only
 from `~/.malachi/settings.json`, which the sandbox hides, so a project cannot
 widen its own sandbox. `-sandbox off` turns the sandbox off for one run, and
-`-sandbox on` turns it on over a setting. `/sandbox` shows what is in force.
+`-sandbox on` turns it on over a setting. `/network off` and `/network on`
+switch commands' network access for the rest of the session, from the next
+command; RPC clients send `set_network` with `{"enabled": false}`.
+`/sandbox` shows what is in force.
 The status bar says `unsandboxed`, `sandbox unavailable` or `offline` when
 those apply. When a command fails in a way that looks like the sandbox, its
 result tells the model to ask you rather than work around it.

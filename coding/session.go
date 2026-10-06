@@ -42,6 +42,9 @@ type Options struct {
 	// Sandbox overrides the sandbox setting for this run: "on" or "off".
 	// Empty uses settings (on by default).
 	Sandbox string
+	// Network overrides the sandbox's network setting: "on" or "off".
+	// Empty uses settings (on by default).
+	Network string
 }
 
 // Session is the coding-agent environment around a Harness: tools rooted at
@@ -61,6 +64,7 @@ type Session struct {
 	thinking   string
 	file       *session.File // nil when NoSession
 	sandboxSet string        // Options.Sandbox, carried across Reopen
+	networkSet string        // Options.Network or the last SetNetwork, likewise
 
 	// sbMu guards the sandbox policy, which tools read as they run; it is
 	// separate from mu so a tool never waits on session bookkeeping.
@@ -263,7 +267,16 @@ func Open(opts Options) (*Session, error) {
 	default:
 		return nil, fmt.Errorf("sandbox must be \"on\" or \"off\", not %q", opts.Sandbox)
 	}
-	s.sandboxSet, s.sandbox = opts.Sandbox, sandbox.Build(sbCfg)
+	switch opts.Network {
+	case "":
+	case "on":
+		sbCfg.NoNet = false
+	case "off":
+		sbCfg.NoNet = true
+	default:
+		return nil, fmt.Errorf("network must be \"on\" or \"off\", not %q", opts.Network)
+	}
+	s.sandboxSet, s.networkSet, s.sandbox = opts.Sandbox, opts.Network, sandbox.Build(sbCfg)
 	toolOpts := opts.Settings.ToolOptions()
 	toolOpts.SpillDir = s.spillDir
 	toolOpts.Sandbox = s.sandboxPolicy
@@ -721,6 +734,9 @@ func (s *Session) Reopen(resume string) (*Session, error) {
 	opts := Options{Cwd: s.cwd, Home: s.home, Settings: s.settings, Resume: resume}
 	opts.Trust = s.TrustOverride
 	opts.Sandbox = s.sandboxSet
+	s.sbMu.Lock()
+	opts.Network = s.networkSet
+	s.sbMu.Unlock()
 	if resume == "" {
 		opts.Model = s.Provider().Name + "/" + s.Model()
 		opts.ThinkingLevel = s.ThinkingLevel()
@@ -756,4 +772,22 @@ func (s *Session) Sandbox() SandboxState {
 		st.Unavailable = sandbox.Available()
 	}
 	return st
+}
+
+// SetNetwork turns sandboxed commands' network access on or off for the
+// rest of the session (and sessions it reopens into). It takes effect from
+// the next command; one already running keeps what it started with. It is
+// for the user: no tool calls it.
+func (s *Session) SetNetwork(on bool) error {
+	s.sbMu.Lock()
+	defer s.sbMu.Unlock()
+	if !s.sandbox.Enabled {
+		return errors.New("the sandbox is off, so commands already have the network")
+	}
+	s.sandbox.Network = on
+	s.networkSet = "off"
+	if on {
+		s.networkSet = "on"
+	}
+	return nil
 }

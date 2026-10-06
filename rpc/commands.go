@@ -98,6 +98,19 @@ func (sv *Server) dispatch(id any, typ string, cmd map[string]any) {
 		sv.ok(id, typ, statsOf(s))
 	case "set_trust":
 		sv.setTrust(s, id, typ, cmd)
+	case "set_network":
+		// A malachi extension: the user switching sandboxed commands'
+		// network access for this session. Answers with the sandbox state.
+		on, ok := cmd["enabled"].(bool)
+		if !ok {
+			sv.fail(id, typ, "enabled must be a boolean")
+			return
+		}
+		if err := s.SetNetwork(on); err != nil {
+			sv.fail(id, typ, err.Error())
+			return
+		}
+		sv.ok(id, typ, sandboxOf(s.Sandbox()))
 	default:
 		sv.fail(id, typ, "Unknown command: "+typ)
 	}

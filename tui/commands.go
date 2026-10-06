@@ -23,6 +23,7 @@ const helpText = `Commands:
   /trust [yes|no]    load this directory's AGENTS.md into the prompt
   /trust parent    do the same for every directory beneath the parent
   /sandbox            show what commands and file tools may touch
+  /network [on|off]   show, or turn commands' network access on or off
   /ctx               measured context: tokens, tool output share, trim passes
   /new                start a fresh session
   /resume [n|name]    list recent sessions, or resume one
@@ -102,6 +103,8 @@ func (m *model) command(line string) tea.Cmd {
 		return m.trustCommand(arg)
 	case "sandbox":
 		return m.printDim(m.s.Sandbox().Describe())
+	case "network":
+		return m.networkCommand(arg)
 	case "compact":
 		return m.compactCommand(arg)
 	case "ctx":
@@ -430,4 +433,28 @@ func columns(ids []string, width int) string {
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// networkCommand shows or switches sandboxed commands' network access for
+// this session.
+func (m *model) networkCommand(arg string) tea.Cmd {
+	state := func() string {
+		if m.s.Sandbox().Network {
+			return "network on: commands can reach the internet"
+		}
+		return "network off: commands cannot open network connections"
+	}
+	switch strings.ToLower(arg) {
+	case "":
+		if !m.s.Sandbox().Enabled {
+			return m.printDim("the sandbox is off, so commands have the network")
+		}
+		return m.printDim(state() + " (/network on|off to switch)")
+	case "on", "off":
+		if err := m.s.SetNetwork(strings.EqualFold(arg, "on")); err != nil {
+			return m.printErr(err)
+		}
+		return m.printDim(state() + ", from the next command, for this session")
+	}
+	return m.printErr(fmt.Errorf("usage: /network [on|off]"))
 }

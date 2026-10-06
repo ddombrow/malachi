@@ -531,3 +531,18 @@ func TestGetStateReportsTheSandbox(t *testing.T) {
 	}
 	c.close()
 }
+
+func TestSetNetwork(t *testing.T) {
+	s := openSession(t, fake.New())
+	c := serve(t, s)
+	c.send(`{"id":"n","type":"set_network","enabled":false}`)
+	r := c.response("n")
+	if r["success"] != true || r["data"].(map[string]any)["network"] != false || s.Sandbox().Network {
+		t.Fatalf("set_network: %v", r)
+	}
+	c.send(`{"id":"bad","type":"set_network","enabled":"no"}`)
+	if r := c.response("bad"); r["success"] != false {
+		t.Fatalf("non-boolean accepted: %v", r)
+	}
+	c.close()
+}
