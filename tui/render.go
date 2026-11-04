@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
@@ -119,11 +120,44 @@ func (r *renderer) summary(name string, args map[string]any) string {
 }
 
 func (r *renderer) userMessage(text string) string {
+	// Copied text can use CRLF or legacy CR line endings. Normalize them before
+	// wrapping so each pasted line stays a separate transcript line.
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	// Tabs have terminal-dependent display widths. Expand them here so pasted
+	// code keeps its indentation consistently in the transcript. The original
+	// message sent to the agent is unchanged.
+	text = expandTabs(text, 4)
 	lines := wordWrap(strings.TrimRight(text, "\n"), r.width-r.gutterWidth(iconUser)-1)
 	for i, l := range lines {
 		lines[i] = r.st.user.Render(l)
 	}
 	return item(r.gutter(iconUser, r.st.user, strings.Join(lines, "\n")))
+}
+
+// expandTabs replaces tabs with spaces at fixed-width tab stops, counting
+// display cells rather than bytes.
+func expandTabs(text string, tabWidth int) string {
+	if tabWidth < 1 || !strings.ContainsRune(text, '\t') {
+		return text
+	}
+	var b strings.Builder
+	column := 0
+	for _, r := range text {
+		switch r {
+		case '\n':
+			b.WriteRune(r)
+			column = 0
+		case '\t':
+			spaces := tabWidth - column%tabWidth
+			b.WriteString(strings.Repeat(" ", spaces))
+			column += spaces
+		default:
+			b.WriteRune(r)
+			column += lipgloss.Width(string(r))
+		}
+	}
+	return b.String()
 }
 
 // thinkingBlock shows at most a few lines of reasoning, dimmed.
@@ -432,35 +466,73 @@ func truncateLeft(s string, w int) string {
 	return "…" + string(runes)
 }
 
-// wordWrap wraps text at spaces to width, hard-breaking words that are
-// longer than a line.
+// wordWrap wraps text at spaces to width without normalizing the whitespace.
+// Explicit newlines, indentation, and repeated spaces are part of a user's
+// prompt (especially when it contains pasted code), so wrapping must not
+// discard them. Words longer than a line are hard-broken.
 func wordWrap(s string, width int) []string {
 	width = max(width, 10)
 	var out []string
 	for _, para := range strings.Split(s, "\n") {
-		line := ""
-		for _, word := range strings.Fields(para) {
-			for lipgloss.Width(word) > width {
-				if line != "" {
+		var line, pendingSpace string
+		runes := []rune(para)
+		for i := 0; i < len(runes); {
+			start := i
+			space := unicode.IsSpace(runes[i])
+			for i < len(runes) && unicode.IsSpace(runes[i]) == space {
+				i++
+			}
+			token := string(runes[start:i])
+			if space {
+				pendingSpace += token
+				continue
+			}
+
+			if line != "" && lipgloss.Width(line+pendingSpace+token) > width {
+				out = append(out, line)
+				line = pendingSpace
+			} else {
+				line += pendingSpace
+			}
+			pendingSpace = ""
+
+			for token != "" {
+				room := width - lipgloss.Width(line)
+				if room <= 0 {
+					out = append(out, line)
+					line = ""
+					room = width
+				}
+				part, rest := takeWidth(token, room)
+				line += part
+				token = rest
+				if token != "" {
 					out = append(out, line)
 					line = ""
 				}
-				out = append(out, string([]rune(word)[:width]))
-				word = string([]rune(word)[width:])
-			}
-			switch {
-			case line == "":
-				line = word
-			case lipgloss.Width(line)+1+lipgloss.Width(word) <= width:
-				line += " " + word
-			default:
-				out = append(out, line)
-				line = word
 			}
 		}
-		out = append(out, line)
+		out = append(out, line+pendingSpace)
 	}
 	return out
+}
+
+// takeWidth returns the largest rune prefix of s that fits within width
+// display cells, always taking at least one rune to make progress.
+func takeWidth(s string, width int) (head, tail string) {
+	runes := []rune(s)
+	end := 0
+	for i := range runes {
+		next := i + 1
+		if i > 0 && lipgloss.Width(string(runes[:next])) > width {
+			break
+		}
+		end = next
+	}
+	if end == 0 {
+		end = 1
+	}
+	return string(runes[:end]), string(runes[end:])
 }
 
 // wrapLines hard-wraps text to width for the live area, counting display

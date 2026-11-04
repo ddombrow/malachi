@@ -46,8 +46,10 @@ tasks:
 
   test:
     desc: Run the test suite with the race detector
+    env:
+      GOGC: "20"
     cmds:
-      - go test -race ./...
+      - go test -race -p 1 ./...
 
   lint:
     desc: Check formatting and run go vet

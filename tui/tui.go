@@ -95,6 +95,11 @@ type lastTool struct {
 	isError bool
 }
 
+type pastedText struct {
+	marker  string
+	content string
+}
+
 type model struct {
 	s      *coding.Session
 	bridge *bridge
@@ -118,6 +123,7 @@ type model struct {
 	tools      []*runningTool
 	toolArgs   map[string]map[string]any
 	last       *lastTool
+	pastes     []pastedText
 	usage      agent.Usage
 	context    int64 // tokens in the most recent request
 	// trimSeq is the last trim counter rendered as a transcript marker; a
@@ -417,12 +423,25 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 	case bridgeClosedMsg:
 		return nil
 
+	case tea.PasteMsg:
+		if lines := pastedLineCount(msg.Content); lines > 1 {
+			marker := fmt.Sprintf("[Pasted %d Lines]", lines)
+			m.input.DeleteSelection()
+			m.input.InsertString(marker)
+			m.pastes = append(m.pastes, pastedText{marker: marker, content: msg.Content})
+			return nil
+		}
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return cmd
+
 	case tea.KeyPressMsg:
 		m.sel = selection{} // typing dismisses a finished selection
 		switch msg.String() {
 		case "ctrl+c":
 			if m.input.Value() != "" {
 				m.input.Reset()
+				m.pastes = nil
 				return nil
 			}
 			if m.busy() {
@@ -467,12 +486,12 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			m.vp.GotoBottom()
 			return nil
 		case "enter":
-			text := strings.TrimSpace(m.input.Value())
-			if text == "" {
+			visible := strings.TrimSpace(m.input.Value())
+			if visible == "" {
 				return nil
 			}
 			m.input.Reset()
-			return m.submit(text)
+			return m.submitInput(m.expandPastes(visible), visible)
 		}
 	}
 
@@ -485,7 +504,14 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 // the agent runs, a prompt held through a compaction, or a new prompt. Which
 // of those it is, and whether it is allowed, is the session's decision.
 func (m *model) submit(text string) tea.Cmd {
+	return m.submitInput(text, text)
+}
+
+// submitInput submits the expanded text while keeping the shorter visible
+// input available if the session refuses it.
+func (m *model) submitInput(text, restore string) tea.Cmd {
 	if strings.HasPrefix(text, "/") {
+		m.pastes = nil
 		return m.command(text)
 	}
 	st := m.s.State()
@@ -494,9 +520,10 @@ func (m *model) submit(text string) tea.Cmd {
 		behavior = coding.BehaviorSteer
 	}
 	if err := m.s.Submit(context.Background(), text, behavior); err != nil {
-		m.input.SetValue(text) // refused: keep what was typed
+		m.input.SetValue(restore) // refused: keep what was typed
 		return m.printErr(err)
 	}
+	m.pastes = nil
 	switch {
 	case st.Running:
 		return m.printDim("queued — will be sent after the current step")
