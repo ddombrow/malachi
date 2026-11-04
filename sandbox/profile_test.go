@@ -10,6 +10,7 @@ func TestProfile(t *testing.T) {
 	prof := Profile(p)
 	for _, want := range []string{
 		"(allow default)",
+		"(deny process-info* (target others))",
 		"(deny file-write*)",
 		`(subpath "/w")`,
 		`(deny file-read* file-write*` + "\n" + `  (subpath "/h \"q\" \\b"))`,

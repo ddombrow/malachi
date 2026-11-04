@@ -25,7 +25,8 @@ import (
 type ProviderConfig struct {
 	Name          string            `json:"-"`
 	DisplayName   string            `json:"displayName,omitempty"`
-	API           string            `json:"api,omitempty"` // only "openai-completions" today
+	API           string            `json:"api,omitempty"`     // only "openai-completions" today
+	WireAPI       string            `json:"wireApi,omitempty"` // "responses" or "chat-completions"; empty selects automatically
 	BaseURL       string            `json:"baseUrl,omitempty"`
 	APIKey        string            `json:"apiKey,omitempty"`
 	APIKeyEnv     string            `json:"apiKeyEnv,omitempty"`
@@ -51,11 +52,14 @@ type ProviderConfig struct {
 
 // Settings is ~/.malachi/settings.json.
 type Settings struct {
-	DefaultProvider    string `json:"defaultProvider,omitempty"`
-	DefaultModel       string `json:"defaultModel,omitempty"`
-	ThinkingLevel      string `json:"thinkingLevel,omitempty"`
-	AppendSystemPrompt string `json:"appendSystemPrompt,omitempty"`
-	Icons              string `json:"icons,omitempty"` // TUI icon set: "emoji" (default) or "dots"
+	DefaultProvider string `json:"defaultProvider,omitempty"`
+	DefaultModel    string `json:"defaultModel,omitempty"`
+	ThinkingLevel   string `json:"thinkingLevel,omitempty"`
+	// CommandEnvAllowlist names extra parent environment variables passed to
+	// model-run commands. Built-in safe variables are allowed separately.
+	CommandEnvAllowlist []string `json:"commandEnvAllowlist,omitempty"`
+	AppendSystemPrompt  string   `json:"appendSystemPrompt,omitempty"`
+	Icons               string   `json:"icons,omitempty"` // TUI icon set: "emoji" (default) or "dots"
 	// BashTimeoutSeconds bounds a command the model gives no timeout for:
 	// 0 means the default (600), -1 means no limit.
 	BashTimeoutSeconds int                       `json:"bashTimeoutSeconds,omitempty"`
@@ -242,11 +246,12 @@ func (s *Settings) SandboxConfig(cwd, home string) sandbox.Config {
 
 // ToolOptions turns settings into options for the coding tools.
 func (s *Settings) ToolOptions() ToolOptions {
-	o := ToolOptions{HideEnv: DotEnvKeys()}
+	o := ToolOptions{HideEnv: DotEnvKeys(), AllowEnv: slices.Clone(s.CommandEnvAllowlist)}
 	for _, pc := range s.ProviderConfigs() {
 		if pc.APIKeyEnv != "" {
 			o.HideEnv = append(o.HideEnv, pc.APIKeyEnv)
 		}
+		o.HideEnv = append(o.HideEnv, referencedEnvNames(pc.APIKey)...)
 	}
 	switch {
 	case s.BashTimeoutSeconds < 0:
@@ -255,6 +260,21 @@ func (s *Settings) ToolOptions() ToolOptions {
 		o.BashTimeout = time.Duration(s.BashTimeoutSeconds) * time.Second
 	}
 	return o
+}
+
+// referencedEnvNames returns variables expanded in a configured API key, so
+// an API key written as "$TOKEN" does not become visible to shell commands.
+func referencedEnvNames(s string) []string {
+	var names []string
+	seen := map[string]bool{}
+	os.Expand(s, func(name string) string {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+		return ""
+	})
+	return names
 }
 
 // ProviderConfigs merges settings over the built-in presets.
@@ -283,6 +303,7 @@ func mergeProvider(dst *ProviderConfig, o ProviderConfig) {
 	}
 	set(&dst.DisplayName, o.DisplayName)
 	set(&dst.API, o.API)
+	set(&dst.WireAPI, o.WireAPI)
 	set(&dst.BaseURL, o.BaseURL)
 	set(&dst.APIKey, o.APIKey)
 	set(&dst.APIKeyEnv, o.APIKeyEnv)
@@ -382,6 +403,9 @@ func (pc ProviderConfig) NewProvider(model string) (agent.Provider, error) {
 	}
 	switch pc.API {
 	case "", openai.API:
+		if pc.WireAPI != "" && pc.WireAPI != openai.WireAPIResponses && pc.WireAPI != openai.WireAPIChatCompletions {
+			return nil, fmt.Errorf("provider %s: unsupported wireApi %q (want %q or %q)", pc.Name, pc.WireAPI, openai.WireAPIResponses, openai.WireAPIChatCompletions)
+		}
 		return openai.New(openai.Config{
 			Name:            pc.Name,
 			BaseURL:         pc.BaseURL,
@@ -390,6 +414,7 @@ func (pc ProviderConfig) NewProvider(model string) (agent.Provider, error) {
 			SessionHeader:   pc.SessionHeader,
 			ResponsesModels: pc.ResponsesModels,
 			UserAgent:       UserAgent,
+			WireAPI:         pc.WireAPI,
 			ThinkingFormat:  pc.ThinkingFormat,
 			MaxTokens:       pc.MaxTokens,
 			SupportsImages:  slices.Contains(pc.VisionModels, model),

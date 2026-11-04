@@ -29,6 +29,10 @@ func main() {
 	// A sandboxed command on Linux starts as this binary in helper mode; it
 	// must confine itself before anything else runs.
 	sandbox.MaybeRunHelper()
+	if err := sandbox.ProtectProcess(); err != nil {
+		fmt.Fprintln(os.Stderr, "malachi: cannot protect process environment from child commands:", err)
+		os.Exit(1)
+	}
 	os.Exit(recoverAndRun(run))
 }
 

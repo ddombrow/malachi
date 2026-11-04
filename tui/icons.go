@@ -92,13 +92,27 @@ func toolIcon(name string) string {
 // gutter prefixes the first line of body with the icon and indents the rest
 // to align under the first line's text. The icon is colored with style
 // (which matters for single-glyph sets; emoji keep their own colors).
+const iconGap = "  "
+
+func iconGapFor(kind string) string {
+	switch kind {
+	case iconGlob, iconEdit:
+		// These emoji render optically narrower than the others; compensate
+		// so their labels have the same visible separation.
+		return iconGap + " "
+	default:
+		return iconGap
+	}
+}
+
 func (r *renderer) gutter(kind string, style lipgloss.Style, body string) string {
 	glyph := r.icons[kind]
-	pad := strings.Repeat(" ", lipgloss.Width(glyph)+1)
+	gap := iconGapFor(kind)
+	pad := strings.Repeat(" ", lipgloss.Width(glyph)+lipgloss.Width(gap))
 	lines := strings.Split(body, "\n")
 	for i, l := range lines {
 		if i == 0 {
-			lines[i] = style.Render(glyph) + " " + l
+			lines[i] = style.Render(glyph) + gap + l
 		} else if l != "" {
 			lines[i] = pad + l
 		}
@@ -108,5 +122,5 @@ func (r *renderer) gutter(kind string, style lipgloss.Style, body string) string
 
 // gutterWidth is how far gutter() indents continuation lines for kind.
 func (r *renderer) gutterWidth(kind string) int {
-	return lipgloss.Width(r.icons[kind]) + 1
+	return lipgloss.Width(r.icons[kind]) + lipgloss.Width(iconGapFor(kind))
 }

@@ -63,11 +63,11 @@ func Build(c Config) Policy {
 		return filepath.Join(userHome, rel)
 	}
 
-	writable := []string{c.Cwd, os.TempDir(), "/tmp"}
+	writable := []string{c.Cwd, "/tmp", safeDerivedRoot(os.TempDir(), userHome)}
 	if dir, err := os.UserCacheDir(); err == nil {
-		writable = append(writable, dir) // go-build, pip, and most other caches
+		writable = append(writable, safeDerivedRoot(dir, userHome)) // go-build, pip, and most other caches
 	}
-	writable = append(writable, os.Getenv("GOCACHE"), goModCache(userHome),
+	writable = append(writable, safeDerivedRoot(os.Getenv("GOCACHE"), userHome), safeDerivedRoot(goModCache(userHome), userHome),
 		inHome(".npm"), inHome(".cargo/registry"), inHome(".cargo/git"), inHome(".rustup"))
 	writable = append(writable, c.Writable...)
 
@@ -83,6 +83,21 @@ func Build(c Config) Policy {
 
 	p.Writable, p.Hidden = canonicalAll(writable), hidden
 	return p
+}
+
+// safeDerivedRoot validates writable roots inferred from process environment
+// and platform defaults. A typo such as GOCACHE=/ or TMPDIR=$HOME must not
+// silently turn a cache convenience into broad filesystem write access.
+func safeDerivedRoot(path, userHome string) string {
+	if path == "" || !filepath.IsAbs(path) {
+		return ""
+	}
+	root := Canonical(path)
+	volumeRoot := filepath.Clean(filepath.VolumeName(root) + string(filepath.Separator))
+	if root == volumeRoot || userHome != "" && within(Canonical(userHome), root) {
+		return ""
+	}
+	return root
 }
 
 // defaultHidden are credential stores under the user's home directory.

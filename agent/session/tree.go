@@ -51,6 +51,7 @@ type State struct {
 	Provider      string
 	Model         string
 	ThinkingLevel string
+	TrustDecision string
 	Title         string
 	Cwd           string
 }
@@ -104,6 +105,8 @@ func replay(path []*Entry, honorCompaction bool) State {
 			st.Model, st.Provider = e.String("model"), e.String("provider")
 		case TypeThinkingLevelChange:
 			st.ThinkingLevel = e.String("thinking_level")
+		case TypeTrustChange:
+			st.TrustDecision = e.String("decision")
 		}
 		if i < start {
 			continue

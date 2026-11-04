@@ -390,6 +390,7 @@ func TestReadReportsAnOversizedFirstLine(t *testing.T) {
 // set nor any provider's apiKeyEnv.
 func TestBashDoesNotInheritAPIKeys(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("MALACHI_TEST_DOTENV_KEY", "from-shell") // shell value still must be hidden
 	write(t, dir, ".env", "MALACHI_TEST_DOTENV_KEY=from-dotenv\n")
 	if err := LoadDotEnv(filepath.Join(dir, ".env")); err != nil {
 		t.Fatal(err)
@@ -397,15 +398,41 @@ func TestBashDoesNotInheritAPIKeys(t *testing.T) {
 	t.Cleanup(func() { os.Unsetenv("MALACHI_TEST_DOTENV_KEY") })
 	t.Setenv("MALACHI_TEST_PROVIDER_KEY", "from-shell")
 	t.Setenv("MALACHI_TEST_UNRELATED", "kept")
+	t.Setenv("MALACHI_TEST_BLOCKED", "not-allowed")
+	t.Setenv("MALACHI_TEST_UNLISTED", "not-allowlisted")
 
-	s := &Settings{Providers: map[string]ProviderConfig{"p": {APIKeyEnv: "MALACHI_TEST_PROVIDER_KEY"}}}
+	s := &Settings{
+		CommandEnvAllowlist: []string{"MALACHI_TEST_DOTENV_KEY", "MALACHI_TEST_UNRELATED", "MALACHI_TEST_BLOCKED"},
+		Providers: map[string]ProviderConfig{
+			"p": {APIKeyEnv: "MALACHI_TEST_PROVIDER_KEY"},
+			"q": {APIKeyEnv: "MALACHI_TEST_BLOCKED"},
+		},
+	}
 	r, err := run(t, NewBashTool(dir, s.ToolOptions()), map[string]any{
-		"command": `echo "[$MALACHI_TEST_DOTENV_KEY][$MALACHI_TEST_PROVIDER_KEY][$MALACHI_TEST_UNRELATED]"`,
+		"command": `echo "[$MALACHI_TEST_DOTENV_KEY][$MALACHI_TEST_PROVIDER_KEY][$MALACHI_TEST_UNRELATED][$MALACHI_TEST_BLOCKED][$MALACHI_TEST_UNLISTED]"`,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(r.Text()); got != "[][][kept]" {
+	if got := strings.TrimSpace(r.Text()); got != "[][][kept][][]" {
 		t.Fatalf("command saw %s", got)
+	}
+}
+
+func TestBashAlwaysHidesInlineAPIKeyReferences(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MALACHI_TEST_INLINE_KEY", "secret")
+	s := &Settings{
+		CommandEnvAllowlist: []string{"MALACHI_TEST_INLINE_KEY"},
+		Providers:           map[string]ProviderConfig{"p": {APIKey: "$MALACHI_TEST_INLINE_KEY"}},
+	}
+	r, err := run(t, NewBashTool(dir, s.ToolOptions()), map[string]any{
+		"command": `printf '<%s>' "$MALACHI_TEST_INLINE_KEY"`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(r.Text()); got != "<>" {
+		t.Fatalf("command saw inline API key reference: %q", got)
 	}
 }

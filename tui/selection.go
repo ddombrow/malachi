@@ -173,17 +173,23 @@ func (m *model) highlightSelection(view string) string {
 // status bar confirms briefly.
 func (m *model) copyText(text, note string) tea.Cmd {
 	m.flash, m.flashUntil = note, time.Now().Add(2*time.Second)
-	return tea.Batch(tea.SetClipboard(text), nativeCopy(text))
+	env := m.s.Settings().ToolOptions().EnvironmentFor(clipboardEnvironment)
+	return tea.Batch(tea.SetClipboard(text), nativeCopy(text, env))
+}
+
+var clipboardEnvironment = []string{
+	"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR",
 }
 
 // nativeCopy pipes text to the platform clipboard tool, if any.
-func nativeCopy(text string) tea.Cmd {
+func nativeCopy(text string, env []string) tea.Cmd {
 	return func() tea.Msg {
 		for _, argv := range clipboardTools {
 			if _, err := exec.LookPath(argv[0]); err != nil {
 				continue
 			}
 			cmd := exec.Command(argv[0], argv[1:]...)
+			cmd.Env = env
 			cmd.Stdin = strings.NewReader(text)
 			if cmd.Run() == nil {
 				return nil

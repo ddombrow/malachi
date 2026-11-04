@@ -90,6 +90,7 @@ to cancel, and use `/help` for the full command list.
 | `/ctx` | Context budget: prompt tokens, tool output share, compaction count |
 | `/trust [yes\|no\|parent]` | Decide whether this directory's `AGENTS.md` is obeyed |
 | `/sandbox` | Show what commands and file tools may touch |
+| `/allow-write <dir>` | Add an existing directory as writable for this session only |
 | `/network [on\|off]` | Switch commands' network access for this session |
 | `/copy`, `/quit` | Copy the transcript, exit |
 
@@ -128,6 +129,7 @@ which follows Pi's, so clients written for those should work here.
 | `get_messages`, `get_last_assistant_text` | the transcript; the last reply's text |
 | `get_available_models`, `set_model` (`provider?`, `modelId`) | model descriptions |
 | `get_available_thinking_levels`, `set_thinking_level` (`level`) | `levels` |
+| `add_writable_root` (`path`) | canonical path and updated sandbox state |
 | `compact` (`customInstructions?`), `set_auto_compaction` (`enabled`) | the summary, `firstKeptEntryId`, token estimates before and after |
 | `new_session`, `switch_session` (`sessionPath` or `sessionId`) | `cancelled` |
 | `get_session_stats` | message and token counts, cost, context usage |
@@ -168,11 +170,12 @@ providers. Built-in providers are `opencode-go`, `openai`, `openrouter`, and `ol
   "defaultProvider": "opencode-go",
   "defaultModel": "kimi-k2.7-code",
   "thinkingLevel": "medium",
+  "commandEnvAllowlist": ["GOCACHE", "GOMODCACHE"],
   "icons": "emoji",
   "projectTrust": "ask",
   "providers": {
     "local": { "baseUrl": "http://localhost:8080/v1", "defaultModel": "qwen", "thinkingLevels": ["off"], "contextWindow": 128000 },
-    "my-gateway": { "baseUrl": "https://gw.example/v1", "apiKeyEnv": "GW_KEY", "sessionHeader": "x-session-id" }
+    "my-gateway": { "baseUrl": "https://gw.example/v1", "apiKeyEnv": "GW_KEY", "sessionHeader": "x-session-id", "wireApi": "responses" }
   }
 }
 ```
@@ -182,6 +185,13 @@ many seconds (default 600; `-1` for no limit). A command's output beyond the
 display limit is saved to a file under `$TMPDIR/malachi-spill/`, up to
 64 MiB; anything past that is counted but not kept. A session's files are
 removed when it closes, and ones left by a crash after seven days.
+
+Commands receive only a small default environment (`PATH`, `HOME`, temporary
+directory and locale/terminal settings). Add names to `commandEnvAllowlist`
+when a build needs other variables, for example `GOCACHE` or `GOMODCACHE`.
+Variables loaded from `~/.malachi/.env` and provider API-key variables are
+always withheld from commands, even if listed there. Do not allowlist a secret
+unless you intend the model-run commands to be able to read it.
 
 `contextWindow` is a provider's context window in tokens, defaulting to
 128000. Set it to a real published figure when you have one: `/ctx` and the
@@ -194,6 +204,11 @@ models, which the built-in preset routes there. A provider's
 `responsesModels` lists them. A model the gateway refuses on chat with "does
 not support this protocol" is moved to `/responses` automatically for the rest
 of the session, so newly added models work before they are listed.
+
+Set `wireApi` to `"responses"` to use `/responses` first for every model on a
+provider (for example, for AWS Bedrock Mantle). `"chat-completions"` forces
+`/chat/completions`; leaving it unset keeps the model-list and automatic-fallback
+behavior.
 
 Requests carry `User-Agent: malachi/<version>`. A provider's `sessionHeader`
 sends the session id (stable across `-c`/resume) on every request; OpenCode Go
@@ -209,6 +224,8 @@ are append-only JSONL under `~/.malachi/sessions/<project>/`.
 An `AGENTS.md` is a file the *project* supplies, and supplying one is exactly
 what you would do if you could get someone to open a repository: its contents
 become the agent's instructions. So they are withheld until you decide.
+Instruction files must be regular files; symlinked `AGENTS.md` and `CLAUDE.md`
+files are ignored.
 
 ```json
 { "projectTrust": "ask" }
@@ -216,7 +233,10 @@ become the agent's instructions. So they are withheld until you decide.
 
 `ask` (default) withholds and tells you which files were held back. `always`
 and `never` skip the question. Withheld files are named at startup and in
-`-p` mode; their contents are never printed.
+`-p` mode; their contents are never printed. A `/trust yes` or `/trust no`
+choice is saved in the current session and restored when that session resumes;
+it does not change the global trust store. `/trust yes --save` or
+`/trust parent` remembers the choice globally for the directory or its parent.
 
 | Command | Effect |
 | --- | --- |
@@ -265,7 +285,11 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   protection.
 - **API keys** that malachi loaded from its `.env`, or that a provider's
   `apiKeyEnv` names, are removed from commands' environment. This holds even
-  with the sandbox off.
+  with the sandbox off. On Linux, malachi also marks its own process
+  non-dumpable so child commands cannot read the original environment through
+  `/proc`; this disables core dumps, and malachi refuses to run as root. This
+  process-inspection protection is complemented by a Seatbelt rule on macOS
+  that denies sandboxed commands access to information about other processes.
 
 ```json
 {
@@ -287,6 +311,12 @@ switch commands' network access for the rest of the session, from the next
 command; `-network on` does it for one run, and RPC clients send
 `set_network` with `{"enabled": true}`.
 `/sandbox` shows what is in force.
+`/allow-write <dir>` adds one existing directory to the writable roots for
+this session only; the path is resolved and printed, and the grant takes effect
+on the next tool call. Filesystem roots, your entire home directory, and paths
+overlapping hidden locations are refused. The grant is not saved in settings
+and is lost when starting or resuming another session. Model-run tools can
+modify or delete everything in an allowed directory.
 The status bar says `unsandboxed`, `sandbox unavailable` or `network on` when
 those apply. When a command fails in a way that looks like the sandbox, its
 result tells the model to ask you rather than work around it.

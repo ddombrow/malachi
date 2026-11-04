@@ -43,6 +43,8 @@ type ToolOptions struct {
 	// HideEnv names variables commands must not inherit: malachi's own API
 	// keys, whether from its .env or named by a provider's apiKeyEnv.
 	HideEnv []string
+	// AllowEnv adds names to the small default environment passed to commands.
+	AllowEnv []string
 	// Sandbox returns the policy in force; it is a function so the user can
 	// change the policy mid-session. Nil means no sandbox.
 	Sandbox func() sandbox.Policy
@@ -56,14 +58,41 @@ func (o ToolOptions) policy() sandbox.Policy {
 	return o.Sandbox()
 }
 
-// commandEnv is the environment a command runs with: malachi's own, minus
-// hidden variables, plus settings that keep tools non-interactive.
-func commandEnv(hide []string) []string {
-	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
+var defaultCommandEnv = []string{
+	"PATH", "HOME", "TMPDIR", "TMP", "TEMP",
+	"LANG", "LC_ALL", "LC_CTYPE", "TERM", "COLORTERM", "NO_COLOR",
+	"USER", "LOGNAME", "SHELL",
+}
+
+// commandEnv passes only explicitly allowed names. Hidden names always win,
+// including when they are also present in the configured allowlist.
+func commandEnv(allow, hide []string) []string {
+	allowed := make(map[string]bool, len(defaultCommandEnv)+len(allow))
+	for _, name := range defaultCommandEnv {
+		allowed[strings.ToUpper(name)] = true
+	}
+	for _, name := range allow {
+		allowed[strings.ToUpper(name)] = true
+	}
+	hidden := make(map[string]bool, len(hide))
+	for _, name := range hide {
+		hidden[strings.ToUpper(name)] = true
+	}
+	var env []string
+	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
-		return slices.Contains(hide, name)
-	})
+		key := strings.ToUpper(name)
+		if allowed[key] && !hidden[key] {
+			env = append(env, kv)
+		}
+	}
 	return append(env, "PAGER=cat", "GIT_PAGER=cat", "TERM=dumb")
+}
+
+// EnvironmentFor builds a filtered environment for an auxiliary process. It
+// uses only the supplied allowlist, not settings' extra build variables.
+func (o ToolOptions) EnvironmentFor(allow []string) []string {
+	return commandEnv(allow, o.HideEnv)
 }
 
 func (o ToolOptions) bashTimeout() time.Duration {
@@ -260,7 +289,7 @@ func executeBash(ctx context.Context, cwd string, opts ToolOptions, args map[str
 	cmd.Stdin = nil // /dev/null: keep interactive programs off our terminal
 	cmd.Stdout = out
 	cmd.Stderr = out
-	cmd.Env = commandEnv(opts.HideEnv)
+	cmd.Env = commandEnv(opts.AllowEnv, opts.HideEnv)
 	configureProcessGroup(cmd)
 	cmd.WaitDelay = 2 * time.Second
 

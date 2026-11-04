@@ -26,6 +26,12 @@ const protocolMismatch = "does not support this protocol"
 // usesResponses reports whether model is served over /responses, by
 // configuration or because a chat request for it was refused for protocol.
 func (p *Provider) usesResponses(model string) bool {
+	if p.cfg.WireAPI == WireAPIResponses {
+		return true
+	}
+	if p.cfg.WireAPI == WireAPIChatCompletions {
+		return false
+	}
 	for _, m := range p.cfg.ResponsesModels {
 		if m == model {
 			return true

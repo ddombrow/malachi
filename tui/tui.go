@@ -243,7 +243,7 @@ func (m *model) applyInputStyles() {
 	st.Focused.Prompt = m.r.st.user
 	// The input's prompt is the same glyph, and the same width, as the
 	// gutter on a user message in the transcript above it.
-	m.input.Prompt = m.r.icons[iconUser] + " "
+	m.input.Prompt = m.r.icons[iconUser] + iconGap
 	m.input.SetStyles(st)
 	m.input.SetWidth(max(20, m.width-1))
 }
@@ -395,7 +395,15 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		m.vp, cmd = m.vp.Update(msg)
 		return cmd
 
-	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
+	case tea.MouseClickMsg:
+		if m.jumpWidgetHit(msg) {
+			m.sel = selection{}
+			m.vp.GotoBottom()
+			return nil
+		}
+		return m.handleMouse(msg)
+
+	case tea.MouseMotionMsg, tea.MouseReleaseMsg:
 		return m.handleMouse(msg.(tea.MouseMsg))
 
 	case spinner.TickMsg:
@@ -626,10 +634,39 @@ func (m *model) View() tea.View {
 	transcript := m.highlightSelection(m.vp.View())
 	body := transcript + "\n" + input
 	if m.chrome >= chromeRows {
-		body = transcript + "\n\n" + top + "\n" + input + "\n" + lower
+		pad := m.jumpWidget()
+		if pad != "" {
+			pad = strings.Repeat(" ", m.jumpWidgetStart()) + pad
+		}
+		body = transcript + "\n" + pad + "\n" + top + "\n" + input + "\n" + lower
 	}
 	v.Content = body + "\n" + m.statusLine()
 	return v
+}
+
+const jumpWidgetText = "↓ jump to bottom ↓"
+
+// jumpWidget occupies the pad row below the viewport, so it never covers
+// transcript text or steals rows from the pinned input.
+func (m *model) jumpWidget() string {
+	if m.chrome < chromeRows || m.vp.AtBottom() || m.width < 16 {
+		return ""
+	}
+	return m.r.st.jump.Render(jumpWidgetText)
+}
+
+func (m *model) jumpWidgetStart() int {
+	return max(0, (m.width-lipgloss.Width(m.jumpWidget()))/2)
+}
+
+func (m *model) jumpWidgetHit(msg tea.MouseClickMsg) bool {
+	widget := m.jumpWidget()
+	if widget == "" {
+		return false
+	}
+	mouse := msg.Mouse()
+	start := m.jumpWidgetStart()
+	return mouse.Button == tea.MouseLeft && mouse.Y == m.vp.Height() && mouse.X >= start && mouse.X < start+lipgloss.Width(widget)
 }
 
 // live renders the in-progress parts of the current turn: the streaming

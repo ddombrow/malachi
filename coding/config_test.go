@@ -33,6 +33,35 @@ func TestProviderOverrideMergesContextWindow(t *testing.T) {
 	}
 }
 
+func TestProviderWireAPIOverride(t *testing.T) {
+	home := t.TempDir()
+	body := `{"providers":{"opencode-go":{"wireApi":"responses"}}}`
+	if err := os.WriteFile(filepath.Join(home, "settings.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadSettings(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc := s.ProviderConfigs()["opencode-go"]
+	if pc.WireAPI != "responses" {
+		t.Fatalf("wireApi = %q, want responses", pc.WireAPI)
+	}
+	if pc.BaseURL == "" {
+		t.Fatal("wireApi override dropped provider preset")
+	}
+}
+
+func TestCommandEnvAllowlistSettings(t *testing.T) {
+	var s Settings
+	if err := json.Unmarshal([]byte(`{"commandEnvAllowlist":["GOCACHE","CUSTOM_BUILD_FLAG"]}`), &s); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(s.ToolOptions().AllowEnv, []string{"GOCACHE", "CUSTOM_BUILD_FLAG"}) {
+		t.Fatalf("command env allowlist = %v", s.ToolOptions().AllowEnv)
+	}
+}
+
 // An override that says nothing about the window keeps the preset's, and an
 // unset one still falls back to the conservative default.
 func TestContextWindowFallsBackWhenUnset(t *testing.T) {

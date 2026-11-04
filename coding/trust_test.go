@@ -1,12 +1,14 @@
 package coding
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ddombrow/malachi/agent"
+	"github.com/ddombrow/malachi/agent/session"
 	"github.com/ddombrow/malachi/ai/fake"
 )
 
@@ -29,6 +31,23 @@ func TestDetectProjectResourcesExcludesHome(t *testing.T) {
 	}
 	if !strings.Contains(got.Files[0], "AGENTS.md") {
 		t.Errorf("unexpected file %q", got.Files[0])
+	}
+}
+
+func TestProjectInstructionSymlinksAreIgnored(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	secret := filepath.Join(t.TempDir(), "instructions")
+	if err := os.WriteFile(secret, []byte("do not load this"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(cwd, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+	if got := DetectProjectResources(home, cwd); !got.Empty() {
+		t.Fatalf("symlink counted as project instructions: %+v", got)
+	}
+	if got := LoadContextFiles(home, cwd, true); len(got) != 0 {
+		t.Fatalf("symlinked instructions loaded: %+v", got)
 	}
 }
 
@@ -291,6 +310,72 @@ func TestSessionTrustAppliesAndRebuildsThePrompt(t *testing.T) {
 	// be worse than either.
 	if s.Harness.Config().System != after {
 		t.Error("harness prompt diverged from the session's")
+	}
+}
+
+func TestSessionTrustChoicePersistsOnResumeWithoutGlobalSave(t *testing.T) {
+	for _, decision := range []TrustDecision{TrustTrusted, TrustUntrusted} {
+		t.Run(string(decision), func(t *testing.T) {
+			home, cwd := project(t)
+			opts := testOpts(t, home, cwd, fake.New(fake.Text("ok")))
+			s, err := Open(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Trust(decision, false); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Prompt(context.Background(), "start session"); err != nil {
+				t.Fatal(err)
+			}
+			path := s.Path()
+			s.Close()
+
+			store, err := LoadTrustStore(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(store.Entries) != 0 {
+				t.Fatalf("session choice unexpectedly changed global trust: %+v", store.Entries)
+			}
+
+			resume := testOpts(t, home, cwd, fake.New(fake.Text("resumed")))
+			resume.Resume = path
+			next, err := Open(resume)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer next.Close()
+			if next.TrustState().Decision != decision || next.TrustState().Source != "session" {
+				t.Fatalf("resumed trust = %+v, want %s from session", next.TrustState(), decision)
+			}
+			loaded := strings.Contains(next.Harness.Config().System, "project rules")
+			if loaded != (decision == TrustTrusted) {
+				t.Fatalf("project instructions loaded=%v for decision %s", loaded, decision)
+			}
+		})
+	}
+}
+
+func TestExternalSessionCannotSupplyProjectTrust(t *testing.T) {
+	home, cwd := project(t)
+	path := filepath.Join(t.TempDir(), "untrusted.jsonl")
+	f := session.NewFile(path)
+	if err := f.Append(session.NewSessionInfo(cwd, "")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Append(session.NewTrustChange(string(TrustTrusted))); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := testOpts(t, home, cwd, fake.New(fake.Text("ok")))
+	opts.Resume = path
+	s, err := Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.TrustState().Trusted() || !s.TrustState().Pending {
+		t.Fatalf("external session supplied trust: %+v", s.TrustState())
 	}
 }
 

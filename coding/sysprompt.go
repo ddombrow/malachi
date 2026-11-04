@@ -3,6 +3,7 @@ package coding
 import (
 	"fmt"
 	"html"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,7 @@ func LoadContextFiles(home, cwd string, trusted bool) []ContextFile {
 			if seen[p] {
 				return
 			}
-			data, err := os.ReadFile(p)
+			data, err := readInstructionFile(p)
 			if err == nil {
 				seen[p] = true
 				out = append(out, ContextFile{Path: p, Content: strings.TrimSpace(string(data))})
@@ -60,6 +61,32 @@ func LoadContextFiles(home, cwd string, trusted bool) []ContextFile {
 		add(dirs[i])
 	}
 	return out
+}
+
+// readInstructionFile accepts only regular, non-symlink files. Comparing the
+// opened file to the lstat result also rejects a symlink swap between checking
+// the path and opening it.
+func readInstructionFile(path string) ([]byte, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("instruction file is not a regular file")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	after, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(before, after) {
+		return nil, fmt.Errorf("instruction file changed while opening")
+	}
+	return io.ReadAll(f)
 }
 
 // PromptOptions are the inputs to BuildSystemPrompt.

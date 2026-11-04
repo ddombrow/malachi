@@ -10,6 +10,7 @@ import (
 	seccomp "github.com/elastic/go-seccomp-bpf"
 	"github.com/landlock-lsm/go-landlock/landlock"
 	ll "github.com/landlock-lsm/go-landlock/landlock/syscall"
+	"golang.org/x/sys/unix"
 )
 
 // devices commands write to as a matter of course.
@@ -82,7 +83,7 @@ func restrictFS(p Policy) error {
 // connecting to one by path before ABI 9, which few kernels have.
 // socketpair(2) still works.
 func denySockets(p Policy) error {
-	var groups []seccomp.SyscallGroup
+	var socketRules []seccomp.NameWithConditions
 	if !p.Network {
 		allowed := []uint64{syscall.AF_NETLINK}
 		if p.UnixSockets {
@@ -92,17 +93,26 @@ func denySockets(p Policy) error {
 		for _, family := range allowed {
 			notAllowed = append(notAllowed, seccomp.Condition{Argument: 0, Operation: seccomp.NotEqual, Value: family})
 		}
-		groups = append(groups,
-			seccomp.SyscallGroup{Action: seccomp.ActionErrno, NamesWithCondtions: []seccomp.NameWithConditions{{Name: "socket", Conditions: notAllowed}}},
-			seccomp.SyscallGroup{Action: seccomp.ActionErrno, Names: []string{"io_uring_setup"}},
-		)
+		socketRules = append(socketRules, seccomp.NameWithConditions{Name: "socket", Conditions: notAllowed})
 	} else if !p.UnixSockets {
-		groups = append(groups, seccomp.SyscallGroup{Action: seccomp.ActionErrno, NamesWithCondtions: []seccomp.NameWithConditions{{
+		socketRules = append(socketRules, seccomp.NameWithConditions{
 			Name: "socket", Conditions: seccomp.ArgumentConditions{{Argument: 0, Operation: seccomp.Equal, Value: syscall.AF_UNIX}},
-		}}})
+		})
 	}
-	if len(groups) == 0 {
-		return nil
+	// NETLINK_USERSOCK is userspace-to-userspace IPC. Keep the general
+	// AF_NETLINK allowance for kernel route queries without leaving that side
+	// channel open. Put both rules in one group: conditions for the same syscall
+	// are ORed by the seccomp compiler.
+	socketRules = append(socketRules, seccomp.NameWithConditions{
+		Name: "socket",
+		Conditions: seccomp.ArgumentConditions{
+			{Argument: 0, Operation: seccomp.Equal, Value: syscall.AF_NETLINK},
+			{Argument: 2, Operation: seccomp.Equal, Value: unix.NETLINK_USERSOCK},
+		},
+	})
+	groups := []seccomp.SyscallGroup{{Action: seccomp.ActionErrno, NamesWithCondtions: socketRules}}
+	if !p.Network {
+		groups = append(groups, seccomp.SyscallGroup{Action: seccomp.ActionErrno, Names: []string{"io_uring_setup"}})
 	}
 	return seccomp.LoadFilter(seccomp.Filter{
 		NoNewPrivs: true,

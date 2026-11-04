@@ -20,9 +20,10 @@ const helpText = `Commands:
   /thinking [level]   show or set the reasoning level
   /compact [note]    summarize the conversation with the agent
   /trim [bytes]      trim old tool output before the next request
-  /trust [yes|no]    load this directory's AGENTS.md into the prompt
+  /trust [yes|no] [--save] load this directory's AGENTS.md into the prompt
   /trust parent    do the same for every directory beneath the parent
   /sandbox            show what commands and file tools may touch
+  /allow-write <dir>  allow writes to a directory for this session
   /network [on|off]   show, or turn commands' network access on or off
   /ctx               measured context: tokens, tool output share, trim passes
   /new                start a fresh session
@@ -103,6 +104,12 @@ func (m *model) command(line string) tea.Cmd {
 		return m.trustCommand(arg)
 	case "sandbox":
 		return m.printDim(m.s.Sandbox().Describe())
+	case "allow-write":
+		root, err := m.s.AddWritableRoot(arg)
+		if err != nil {
+			return m.printErr(err)
+		}
+		return m.printDim(fmt.Sprintf("Added writable root %s for this session. Model-run tools can modify or delete its contents.", root))
 	case "network":
 		return m.networkCommand(arg)
 	case "compact":
@@ -127,23 +134,19 @@ func (m *model) command(line string) tea.Cmd {
 // the decision is never a guess about what /trust would do.
 func (m *model) trustCommand(arg string) tea.Cmd {
 	state := m.s.TrustState()
-	switch strings.ToLower(strings.TrimSpace(arg)) {
-	case "yes", "no":
-		remember := true
-		if state.Pending {
-			// Nobody has vouched for this directory yet, so a bare /trust yes
-			// is an answer to a question that was just asked: it applies to
-			// this session. Saving it is an explicit /trust yes --save.
-			remember = false
-		}
-		if err := m.s.Trust(trustDecisionOf(arg), remember); err != nil {
+	args := strings.Fields(strings.ToLower(strings.TrimSpace(arg)))
+	if len(args) > 0 && (args[0] == "yes" || args[0] == "no") && (len(args) == 1 || len(args) == 2 && args[1] == "--save") {
+		remember := len(args) == 2
+		if err := m.s.Trust(trustDecisionOf(args[0]), remember); err != nil {
 			return m.printErr(err)
 		}
-		note := "for this session"
+		note := "for this session (saved for resume)"
 		if remember {
 			note = "remembered for this directory"
 		}
 		return m.printDim(trustOutcome(m.s.TrustState()) + " (" + note + ")")
+	}
+	switch strings.ToLower(strings.TrimSpace(arg)) {
 	case "parent":
 		if err := m.s.TrustParent(true); err != nil {
 			return m.printErr(err)
@@ -153,9 +156,9 @@ func (m *model) trustCommand(arg string) tea.Cmd {
 		if state.Trusted() {
 			return m.printDim(trustOutcome(state))
 		}
-		return m.printDim(state.TrustNotice() + "\n\n  /trust yes to load them · /trust parent if this is a package in a repo · /trust yes --save to remember · /trust no to decline")
+		return m.printDim(state.TrustNotice() + "\n\n  /trust yes to load them for this session · /trust parent if this is a package in a repo · /trust yes --save to remember · /trust no to decline")
 	default:
-		return m.printErr(fmt.Errorf("usage: /trust [yes [--save] | parent | no]"))
+		return m.printErr(fmt.Errorf("usage: /trust [yes|no] [--save] | parent"))
 	}
 }
 

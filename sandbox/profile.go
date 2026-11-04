@@ -9,7 +9,7 @@ import "strings"
 // are canonical.
 func Profile(p Policy) string {
 	var b strings.Builder
-	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write*")
+	b.WriteString("(version 1)\n(allow default)\n(deny process-info* (target others))\n(deny file-write*)\n(allow file-write*")
 	for _, w := range p.Writable {
 		b.WriteString("\n  (subpath " + sbplString(w) + ")")
 	}

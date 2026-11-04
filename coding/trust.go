@@ -212,7 +212,7 @@ func DetectProjectResources(home, cwd string) ProjectResources {
 	add := func(dir string) {
 		for _, name := range contextFileNames {
 			p := filepath.Join(dir, name)
-			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			if info, err := os.Lstat(p); err == nil && info.Mode().IsRegular() {
 				all = append(all, p)
 				return
 			}
@@ -322,11 +322,13 @@ func (t TrustState) TrustNotice() string {
 	}
 	switch {
 	case t.Pending:
-		b.WriteString("  /trust to load them, /trust no to decline and stop asking")
+		b.WriteString("  /trust to load them for this session, /trust no to decline for this session")
 	case t.Source == "never":
 		b.WriteString("  projectTrust is \"never\" in settings; change it to \"ask\" or \"always\"")
 	case t.Source == "run":
 		b.WriteString("  declined for this run; /trust yes loads them for the session")
+	case t.Source == "session":
+		b.WriteString("  declined for this session; /trust yes loads them for the session")
 	default:
 		b.WriteString("  /trust to load them")
 	}

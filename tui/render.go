@@ -15,7 +15,7 @@ import (
 
 // styles holds every color decision so light/dark switching is one place.
 type styles struct {
-	user, dim, thinking, toolOK, toolErr, toolRun, errorText, add, del, hunk, status, accent lipgloss.Style
+	user, dim, thinking, toolOK, toolErr, toolRun, errorText, add, del, hunk, status, accent, jump lipgloss.Style
 }
 
 func newStyles(isDark bool) styles {
@@ -37,6 +37,9 @@ func newStyles(isDark bool) styles {
 			Foreground(ld(lipgloss.Color("240"), lipgloss.Color("250"))).
 			Background(ld(lipgloss.Color("252"), lipgloss.Color("236"))),
 		accent: lipgloss.NewStyle().Foreground(ld(lipgloss.Color("97"), lipgloss.Color("141"))),
+		jump: lipgloss.NewStyle().Bold(true).
+			Foreground(ld(lipgloss.Color("97"), lipgloss.Color("141"))).
+			Padding(0, 1),
 	}
 }
 
@@ -263,13 +266,23 @@ func (r *renderer) preview(style lipgloss.Style, text string) string {
 func (r *renderer) history(msgs []agent.Message) []string {
 	calls := map[string]*agent.ToolCall{}
 	var out []string
+	lastWasUser := false
+	appendEntry := func(s string, isUser bool) {
+		// Each rendered history item begins with one newline. Add another
+		// around prompts to give them a blank line on either side.
+		if len(out) > 0 && (lastWasUser || isUser) {
+			out[len(out)-1] += "\n"
+		}
+		out = append(out, s)
+		lastWasUser = isUser
+	}
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case *agent.UserMessage:
-			out = append(out, r.userMessage(v.Content.String()))
+			appendEntry(r.userMessage(v.Content.String()), true)
 		case *agent.AssistantMessage:
 			if s := r.assistantMessage(v); s != "" {
-				out = append(out, s)
+				appendEntry(s, false)
 			}
 			for _, c := range v.ToolCalls() {
 				calls[c.ID] = c
@@ -280,14 +293,18 @@ func (r *renderer) history(msgs []agent.Message) []string {
 				args = c.Arguments
 			}
 			res := agent.ToolResult{Content: v.Content, Details: v.Details}
-			out = append(out, r.toolResult(v.ToolName, args, res, v.IsError))
+			appendEntry(r.toolResult(v.ToolName, args, res, v.IsError), false)
 		case *agent.CompactionSummaryMessage:
-			out = append(out, item(r.gutter(iconCompacted, r.st.dim, r.st.dim.Render("earlier conversation compacted"))))
+			appendEntry(item(r.gutter(iconCompacted, r.st.dim, r.st.dim.Render("earlier conversation compacted"))), false)
 		default:
 			if t := agent.MessageText(m); t != "" {
-				out = append(out, item(r.st.dim.Render(firstLines(t, 3))))
+				appendEntry(item(r.st.dim.Render(firstLines(t, 3))), false)
 			}
 		}
+	}
+	if lastWasUser {
+		// Keep the final prompt visually separated from the input area too.
+		out[len(out)-1] += "\n\n"
 	}
 	return out
 }

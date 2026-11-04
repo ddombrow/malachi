@@ -24,6 +24,7 @@ const (
 	TypeCustomMessage       = "custom_message"
 	TypeModelChange         = "model_change"
 	TypeThinkingLevelChange = "thinking_level_change"
+	TypeTrustChange         = "trust_change" // malachi extension: session-scoped project trust
 	TypeCompaction          = "compaction"
 	TypeBranchSummary       = "branch_summary"
 	TypeLabel               = "label"
@@ -161,6 +162,13 @@ func NewThinkingLevelChange(level string) *Entry {
 	if level != "" {
 		e.Set("thinking_level", level)
 	}
+	return e
+}
+
+// NewTrustChange records a session-scoped project-instruction decision.
+func NewTrustChange(decision string) *Entry {
+	e := newEntry(TypeTrustChange)
+	e.Set("decision", decision)
 	return e
 }
 

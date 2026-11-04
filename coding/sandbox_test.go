@@ -83,6 +83,46 @@ func TestFileToolsFollowTheSandbox(t *testing.T) {
 	}
 }
 
+func TestAddWritableRootIsSessionScopedAndEffective(t *testing.T) {
+	s, _, outside, home := sandboxedSession(t, "")
+	root, err := s.AddWritableRoot(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := sandbox.Canonical(outside); root != want {
+		t.Fatalf("root = %q, want canonical %q", root, want)
+	}
+	if err := s.Sandbox().CheckWrite(filepath.Join(root, "new.txt")); err != nil {
+		t.Fatalf("new root did not take effect: %v", err)
+	}
+	if _, err := run(t, tool(t, s, "write"), map[string]any{
+		"path": filepath.Join(root, "new.txt"), "content": "session grant",
+	}); err != nil {
+		t.Fatalf("write using new root: %v", err)
+	}
+	if _, err := s.AddWritableRoot(home); err == nil {
+		t.Fatal("allowed a hidden directory")
+	}
+	if _, err := s.AddWritableRoot(filepath.Dir(home)); err == nil {
+		t.Fatal("allowed a root overlapping the hidden home")
+	}
+	if _, err := s.AddWritableRoot(string(filepath.Separator)); err == nil {
+		t.Fatal("allowed the filesystem root")
+	}
+}
+
+func TestAddWritableRootRequiresSandboxAndExistingDirectory(t *testing.T) {
+	s, _, outside, _ := sandboxedSession(t, "off")
+	if _, err := s.AddWritableRoot(outside); err == nil {
+		t.Fatal("added a root while sandbox was off")
+	}
+
+	s, _, _, _ = sandboxedSession(t, "")
+	if _, err := s.AddWritableRoot(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("added a nonexistent directory")
+	}
+}
+
 func TestBashFollowsTheSandbox(t *testing.T) {
 	if err := sandbox.Available(); err != nil {
 		t.Skip(err)

@@ -56,6 +56,27 @@ func TestBuildDefaults(t *testing.T) {
 	}
 }
 
+func TestEnvironmentDerivedWritableRootsCannotCoverFilesystemOrHome(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", string(filepath.Separator))
+	t.Setenv("XDG_CACHE_HOME", string(filepath.Separator))
+	t.Setenv("GOCACHE", string(filepath.Separator))
+	t.Setenv("GOMODCACHE", string(filepath.Separator))
+	p := Build(Config{Cwd: cwd, Home: filepath.Join(cwd, "malachi")})
+	if slices.Contains(p.Writable, Canonical(string(filepath.Separator))) {
+		t.Fatal("an environment-derived cache granted the filesystem root")
+	}
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range p.Writable {
+		if within(Canonical(userHome), root) {
+			t.Fatalf("an environment-derived root covers the user's home: %s", root)
+		}
+	}
+}
+
 func TestUnhiddenRemovesDefaults(t *testing.T) {
 	_, project, _, home, _ := fixture(t)
 	p := Build(Config{Cwd: project, Home: home, Unhidden: []string{home}})

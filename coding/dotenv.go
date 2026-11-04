@@ -11,14 +11,15 @@ import (
 	"sync"
 )
 
-// dotEnvKeys records the variables LoadDotEnv set. They are malachi's own
-// secrets (API keys), so commands the model runs do not inherit them.
+// dotEnvKeys records every variable named by LoadDotEnv. They are private to
+// malachi's environment and are withheld from commands, even when the shell
+// environment already supplied the value.
 var (
 	dotEnvMu   sync.Mutex
 	dotEnvKeys []string
 )
 
-// DotEnvKeys returns the names of the variables LoadDotEnv has set.
+// DotEnvKeys returns the names of the variables listed in files LoadDotEnv read.
 func DotEnvKeys() []string {
 	dotEnvMu.Lock()
 	defer dotEnvMu.Unlock()
@@ -58,13 +59,15 @@ func LoadDotEnv(path string) error {
 		if err != nil {
 			return fmt.Errorf("%s:%d: %w", path, n, err)
 		}
+		dotEnvMu.Lock()
+		if !slices.Contains(dotEnvKeys, key) {
+			dotEnvKeys = append(dotEnvKeys, key)
+		}
+		dotEnvMu.Unlock()
 		if os.Getenv(key) == "" {
 			if err := os.Setenv(key, value); err != nil {
 				return err
 			}
-			dotEnvMu.Lock()
-			dotEnvKeys = append(dotEnvKeys, key)
-			dotEnvMu.Unlock()
 		}
 	}
 	return sc.Err()

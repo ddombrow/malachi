@@ -168,6 +168,28 @@ func TestResponsesRequestShape(t *testing.T) {
 
 // A model the gateway refuses on chat for protocol moves to /responses, once,
 // and stays there for later requests.
+func TestResponsesRouteFromConfig(t *testing.T) {
+	g := &gateway{
+		responses: responsesSSE(
+			map[string]any{"type": "response.output_text.delta", "delta": "hi"},
+			map[string]any{"type": "response.completed", "response": map[string]any{"status": "completed"}},
+		),
+	}
+	srv := g.serve(t)
+	p := New(Config{BaseURL: srv.URL + "/v1", WireAPI: WireAPIResponses})
+	req := agent.Request{
+		Model:         "openai.gpt-oss-120b",
+		ThinkingLevel: "medium",
+		Tools:         []*agent.Tool{{Name: "read", Parameters: map[string]any{"type": "object"}}},
+	}
+	if m := final(t, collect(p, req)); m.Text() != "hi" || m.StopReason != agent.StopStop {
+		t.Fatalf("response: %+v", m)
+	}
+	if got, want := strings.Join(g.paths, " "), "/v1/responses"; got != want {
+		t.Fatalf("paths %s, want %s", got, want)
+	}
+}
+
 func TestProtocolMismatchFallsBackToResponsesAndRemembers(t *testing.T) {
 	g := &gateway{
 		responses: responsesSSE(
@@ -188,6 +210,27 @@ func TestProtocolMismatchFallsBackToResponsesAndRemembers(t *testing.T) {
 	}
 	want := "/v1/chat/completions /v1/responses /v1/responses"
 	if got := strings.Join(g.paths, " "); got != want {
+		t.Fatalf("paths %s, want %s", got, want)
+	}
+}
+
+func TestFunctionToolReasoningErrorFallsBackToResponses(t *testing.T) {
+	g := &gateway{
+		responses: responsesSSE(
+			map[string]any{"type": "response.output_text.delta", "delta": "hi"},
+			map[string]any{"type": "response.completed", "response": map[string]any{"status": "completed"}},
+		),
+		chat: func(w http.ResponseWriter) {
+			w.WriteHeader(400)
+			_, _ = io.WriteString(w, `{"error":{"message":"To use function tools I need to use /v1/responses or set thinking to none."}}`)
+		},
+	}
+	srv := g.serve(t)
+	m := final(t, collect(New(Config{BaseURL: srv.URL + "/v1"}), agent.Request{Model: "gpt-7", ThinkingLevel: "medium"}))
+	if m.Text() != "hi" || m.StopReason != agent.StopStop {
+		t.Fatalf("response: %+v", m)
+	}
+	if got, want := strings.Join(g.paths, " "), "/v1/chat/completions /v1/responses"; got != want {
 		t.Fatalf("paths %s, want %s", got, want)
 	}
 }

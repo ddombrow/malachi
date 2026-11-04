@@ -1,7 +1,9 @@
 package sandbox
 
 import (
+	"bufio"
 	"context"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -182,6 +184,73 @@ func TestSandboxedUnixSockets(t *testing.T) {
 	p.UnixSockets = true
 	if out, ok := sh(t, p, project, connect); !ok {
 		t.Fatalf("Unix sockets allowed but connect failed: %s", out)
+	}
+}
+
+// NETLINK_USERSOCK can relay messages directly between processes, so merely
+// allowing the AF_NETLINK family for kernel queries would leave an egress path.
+func TestNetworkOffBlocksNetlinkUsersock(t *testing.T) {
+	requireBackend(t)
+	if runtime.GOOS != "linux" {
+		t.Skip("NETLINK_USERSOCK is Linux-specific")
+	}
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("no python3")
+	}
+	serverScript := `import socket
+s = socket.socket(16, 2, 2)
+s.bind((0, 0))
+print(s.getsockname()[0], flush=True)
+s.settimeout(3)
+try:
+    data, _ = s.recvfrom(4096)
+    print("received:" + data.decode(), flush=True)
+except TimeoutError:
+    print("none", flush=True)
+`
+	server := exec.Command(py, "-c", serverScript)
+	stdout, err := server.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Stderr = io.Discard
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if server.ProcessState == nil {
+			_ = server.Process.Kill()
+			_ = server.Wait()
+		}
+	}()
+	reader := bufio.NewReader(stdout)
+	portID, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("netlink listener did not start: %v", err)
+	}
+	portID = strings.TrimSpace(portID)
+
+	clientScript := `import socket, sys
+s = socket.socket(16, 2, 2)
+s.bind((0, 0))
+s.sendto(b"redteam-marker", (int(sys.argv[1]), 0))
+`
+	project := t.TempDir()
+	p := Build(Config{Cwd: project, NoNet: true})
+	command := py + ` -c '` + clientScript + `' ` + portID
+	if out, ok := sh(t, p, project, command); ok {
+		t.Fatalf("sandboxed command sent over NETLINK_USERSOCK: %s", out)
+	}
+	result, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("netlink listener did not report result: %v", err)
+	}
+	if strings.TrimSpace(result) != "none" {
+		t.Fatalf("unconfined process received sandbox data: %q", strings.TrimSpace(result))
+	}
+	if err := server.Wait(); err != nil {
+		t.Fatalf("netlink listener: %v", err)
 	}
 }
 

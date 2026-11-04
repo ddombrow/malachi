@@ -39,6 +39,12 @@ const (
 	ThinkingOpenRouter = "openrouter" // reasoning: {effort}
 )
 
+// Wire API selections. An empty value keeps the automatic/model-list behavior.
+const (
+	WireAPIChatCompletions = "chat-completions"
+	WireAPIResponses       = "responses"
+)
+
 // Config configures one OpenAI-compatible endpoint.
 type Config struct {
 	Name    string // provider name recorded on messages, e.g. "opencode-go"
@@ -50,6 +56,7 @@ type Config struct {
 	// conversation consistently and reuse its prompt cache.
 	SessionHeader  string
 	UserAgent      string // default "malachi"
+	WireAPI        string // empty (auto), WireAPIChatCompletions, or WireAPIResponses
 	ThinkingFormat string // default ThinkingOpenAI
 	MaxTokens      int    // 0 omits the field
 	SupportsImages bool
@@ -114,8 +121,11 @@ func (p *Provider) failRequest(ctx context.Context, b *ai.Builder, err error) {
 // because it is served over the other one.
 func isProtocolMismatch(err error) bool {
 	var he *httpError
-	return errors.As(err, &he) && he.status == http.StatusBadRequest &&
-		strings.Contains(strings.ToLower(errorText(he.body)), protocolMismatch)
+	if !errors.As(err, &he) || he.status != http.StatusBadRequest {
+		return false
+	}
+	message := strings.ToLower(errorText(he.body))
+	return strings.Contains(message, protocolMismatch) || strings.Contains(message, "use /v1/responses")
 }
 
 // Stream implements agent.Provider.
@@ -138,7 +148,7 @@ func (p *Provider) Stream(ctx context.Context, req agent.Request) iter.Seq[agent
 		if err != nil {
 			// A model the gateway serves only over /responses: move it there
 			// for the rest of the session and try again, once.
-			if isProtocolMismatch(err) {
+			if p.cfg.WireAPI != WireAPIChatCompletions && isProtocolMismatch(err) {
 				p.learned.Store(req.Model, struct{}{})
 				p.streamResponses(ctx, req, b)
 				return

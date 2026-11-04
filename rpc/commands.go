@@ -111,6 +111,18 @@ func (sv *Server) dispatch(id any, typ string, cmd map[string]any) {
 			return
 		}
 		sv.ok(id, typ, sandboxOf(s.Sandbox()))
+	case "add_writable_root":
+		path, err := requiredString(cmd, "path")
+		if err != nil {
+			sv.fail(id, typ, err.Error())
+			return
+		}
+		root, err := s.AddWritableRoot(path)
+		if err != nil {
+			sv.fail(id, typ, err.Error())
+			return
+		}
+		sv.ok(id, typ, map[string]any{"path": root, "sandbox": sandboxOf(s.Sandbox())})
 	default:
 		sv.fail(id, typ, "Unknown command: "+typ)
 	}

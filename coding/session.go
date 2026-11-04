@@ -165,6 +165,14 @@ func newSessionPath(dir string) string {
 
 // Open builds a coding session, resuming one if requested.
 func Open(opts Options) (*Session, error) {
+	switch strings.ToLower(strings.TrimSpace(opts.Trust)) {
+	case "", "yes", "no":
+		if opts.Trust != "" {
+			opts.Trust = strings.ToLower(strings.TrimSpace(opts.Trust))
+		}
+	default:
+		return nil, fmt.Errorf("trust must be \"yes\" or \"no\", not %q", opts.Trust)
+	}
 	if opts.Cwd == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -185,9 +193,6 @@ func Open(opts Options) (*Session, error) {
 		}
 	}
 	s := &Session{cwd: cwd, home: opts.Home, settings: opts.Settings, diag: NewDiagnostics(opts.Home)}
-	// Resolved before the prompt is built: an untrusted project's instruction
-	// files must never reach the system prompt, not even briefly.
-	s.trust = ResolveTrust(opts.Home, cwd, opts.Settings.TrustPolicyOrDefault(), opts.Trust)
 
 	// Pick the session file and replay it.
 	var state session.State
@@ -216,6 +221,28 @@ func Open(opts Options) (*Session, error) {
 		}
 	default:
 		s.file = session.NewFile(newSessionPath(dir))
+	}
+	// Trust is resolved before the prompt is built: untrusted project
+	// instructions must never reach the system prompt, not even briefly. A
+	// session's own decision applies only to a Malachi-managed session for that
+	// same working directory, and only when a command-line override or global
+	// always/never policy is absent.
+	trustOverride := opts.Trust
+	sessionTrust := false
+	managedSession := s.file != nil && withinPath(canonicalPath(s.file.Path()), canonicalPath(dir))
+	if trustOverride == "" && managedSession && opts.Settings.TrustPolicyOrDefault() == TrustAsk &&
+		state.Cwd != "" && canonicalPath(state.Cwd) == canonicalPath(cwd) {
+		switch state.TrustDecision {
+		case string(TrustTrusted):
+			trustOverride, sessionTrust = "yes", true
+		case string(TrustUntrusted):
+			trustOverride, sessionTrust = "no", true
+		}
+	}
+	s.TrustOverride = trustOverride
+	s.trust = ResolveTrust(opts.Home, cwd, opts.Settings.TrustPolicyOrDefault(), trustOverride)
+	if sessionTrust && !s.trust.Resources.Empty() {
+		s.trust.Source = "session"
 	}
 
 	// Explicit flags win over the resumed session, which wins over settings.
@@ -316,6 +343,9 @@ func Open(opts Options) (*Session, error) {
 		if state.ThinkingLevel != s.thinking {
 			s.header = append(s.header, session.NewThinkingLevelChange(s.thinking))
 		}
+		if opts.Trust != "" && state.TrustDecision != string(s.trust.Decision) {
+			s.header = append(s.header, session.NewTrustChange(string(s.trust.Decision)))
+		}
 		s.unsub = s.Harness.Subscribe(s.persist)
 	}
 	sessionPath := ""
@@ -401,8 +431,8 @@ func (s *Session) TrustParent(remember bool) error {
 func (s *Session) TrustState() TrustState { return s.trust }
 
 // Trust applies a decision about this directory's instruction files. With
-// remember set it is saved so the next session starts the same way; without
-// it the decision lasts only as long as the session does.
+// remember set it is saved in the per-directory trust store; otherwise it is
+// saved in this session file only and restored when that session resumes.
 //
 // The system prompt is rebuilt either way. Trust is the difference between a
 // project's instructions being part of the prompt and not, so a decision that
@@ -424,9 +454,9 @@ func (s *Session) Trust(decision TrustDecision, remember bool) error {
 }
 
 // trustNow applies a decision and rebuilds everything derived from it.
-// override is a decision scoped to this run; it is empty when the decision
-// should come from the saved store, which is what lets a newly saved parent
-// decision take effect instead of being masked by the session's own.
+// override is a session-scoped decision; it is empty when the decision should
+// come from the saved store, which lets a newly saved parent decision take
+// effect instead of being masked by the session's own.
 func (s *Session) trustNow(decision TrustDecision, remember bool, override string) error {
 	s.mu.Lock()
 	if remember {
@@ -438,10 +468,15 @@ func (s *Session) trustNow(decision TrustDecision, remember bool, override strin
 	s.TrustOverride = override
 	s.trust = ResolveTrust(s.home, s.cwd, s.settings.TrustPolicyOrDefault(), s.TrustOverride)
 	resolved := s.trust
+	if override != "" && !resolved.Resources.Empty() {
+		resolved.Source = "session"
+		s.trust.Source = "session"
+	}
 	system := s.buildPrompt(s.tools)
 	s.mu.Unlock()
 
 	s.Harness.Update(func(c *agent.HarnessConfig) { c.System = system })
+	s.recordSetting(session.NewTrustChange(string(resolved.Decision)))
 	// The prompt grew or shrank, so every figure derived from it is stale.
 	s.estimateContext()
 	s.diag.LogTrust(resolved)
@@ -790,4 +825,56 @@ func (s *Session) SetNetwork(on bool) error {
 		s.networkSet = "on"
 	}
 	return nil
+}
+
+// AddWritableRoot grants model-run commands and file tools write access to an
+// existing directory for this session only. The grant is in-memory and takes
+// effect on the next tool call. Hidden paths still win over writable roots.
+func (s *Session) AddWritableRoot(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("usage: /allow-write <existing directory>")
+	}
+	resolved := resolvePath(s.cwd, path)
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("cannot access %q: %w", path, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%q is not a directory", path)
+	}
+	root := sandbox.Canonical(resolved)
+
+	s.sbMu.Lock()
+	defer s.sbMu.Unlock()
+	if !s.sandbox.Enabled {
+		return "", errors.New("the sandbox is off; writable roots have no effect")
+	}
+	if err := s.sandbox.CheckWrite(root); err == nil {
+		return "", fmt.Errorf("%s is already writable", root)
+	}
+	volumeRoot := filepath.Clean(filepath.VolumeName(root) + string(filepath.Separator))
+	if root == volumeRoot {
+		return "", errors.New("refusing to add a filesystem root; choose a narrower directory")
+	}
+	if home, err := os.UserHomeDir(); err == nil && root == sandbox.Canonical(home) {
+		return "", errors.New("refusing to add your entire home directory; choose a narrower directory")
+	}
+	for _, hidden := range s.sandbox.Hidden {
+		if withinPath(root, hidden) || withinPath(hidden, root) {
+			return "", fmt.Errorf("%s overlaps hidden path %s", root, hidden)
+		}
+	}
+
+	writable := slices.Clone(s.sandbox.Writable)
+	writable = append(writable, root)
+	slices.Sort(writable)
+	s.sandbox.Writable = slices.Compact(writable)
+	return root, nil
+}
+
+// withinPath reports whether path is root or one of its descendants.
+func withinPath(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && (rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))
 }

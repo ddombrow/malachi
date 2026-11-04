@@ -80,20 +80,41 @@ func TestDragSelectsAndCopiesWithoutGutter(t *testing.T) {
 	// Drag from the far left of "alpha" to the end of "two".
 	m.Update(tea.MouseClickMsg{X: 0, Y: row, Button: tea.MouseLeft})
 	m.Update(tea.MouseMotionMsg{X: 5, Y: row + 1, Button: tea.MouseLeft})
-	m.Update(tea.MouseMotionMsg{X: 10, Y: row + 1, Button: tea.MouseLeft})
+	m.Update(tea.MouseMotionMsg{X: 11, Y: row + 1, Button: tea.MouseLeft})
 	if got := m.selectedText(); got != "alpha one\nbeta two" {
 		t.Fatalf("selection = %q", got)
 	}
 	if !strings.Contains(m.View().Content, "\x1b[7m") {
 		t.Fatal("selection is not highlighted")
 	}
-	_, cmd := m.Update(tea.MouseReleaseMsg{X: 10, Y: row + 1, Button: tea.MouseLeft})
+	_, cmd := m.Update(tea.MouseReleaseMsg{X: 11, Y: row + 1, Button: tea.MouseLeft})
 	runCmd(cmd)
 	if got := clip(); got != "alpha one\nbeta two" {
 		t.Fatalf("clipboard = %q", got)
 	}
 	if !strings.Contains(m.statusLine(), "copied selection") {
 		t.Fatalf("status: %s", ansi.Strip(m.statusLine()))
+	}
+}
+
+func TestClipboardHelperDoesNotInheritUnlistedEnvironment(t *testing.T) {
+	t.Setenv("MALACHI_TEST_CLIPBOARD_SECRET", "must-not-pass")
+	dir := t.TempDir()
+	contentPath := filepath.Join(dir, "content")
+	envPath := filepath.Join(dir, "env")
+	script := filepath.Join(dir, "clip")
+	body := "#!/bin/sh\ncat > '" + contentPath + "'\nprintf '%s' \"$MALACHI_TEST_CLIPBOARD_SECRET\" > '" + envPath + "'\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	clipboardTools = [][]string{{script}}
+	m := newTestModel(t)
+	runCmd(m.copyText("copied", ""))
+	if got, _ := os.ReadFile(contentPath); string(got) != "copied" {
+		t.Fatalf("clipboard content = %q", got)
+	}
+	if got, _ := os.ReadFile(envPath); string(got) != "" {
+		t.Fatalf("clipboard helper inherited an unlisted variable: %q", got)
 	}
 }
 
@@ -149,10 +170,10 @@ func TestLinesWithoutGutterKeepTheirFirstColumns(t *testing.T) {
 	if g := m.lineGutter("/\\/\\   __ _"); g != 0 {
 		t.Fatalf("banner art has no gutter, got %d", g)
 	}
-	if g := m.lineGutter("💬 hello"); g != m.r.gutterWidth(iconReply) {
+	if g := m.lineGutter(iconSets["emoji"][iconReply] + iconGap + "hello"); g != m.r.gutterWidth(iconReply) {
 		t.Fatalf("icon line gutter = %d", g)
 	}
-	if g := m.lineGutter("   continued"); g != m.r.gutterWidth(iconReply) {
+	if g := m.lineGutter(strings.Repeat(" ", m.r.gutterWidth(iconReply)) + "continued"); g != m.r.gutterWidth(iconReply) {
 		t.Fatalf("indented line gutter = %d", g)
 	}
 }

@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -158,6 +160,18 @@ func TestIconsPerItemKind(t *testing.T) {
 			t.Errorf("%s: want %s in %q", tool, kind, out)
 		}
 	}
+	for _, tc := range []struct {
+		tool string
+		icon string
+	}{
+		{tool: "glob", icon: "🗂️"},
+		{tool: "edit", icon: "✏️"},
+	} {
+		out := ansi.Strip(m.r.toolResult(tc.tool, map[string]any{}, agent.TextResult(""), false))
+		if want := tc.icon + iconGapFor(toolIcon(tc.tool)) + tc.tool; !strings.Contains(out, want) {
+			t.Errorf("%s action should use the standard icon gap %q: %q", tc.tool, iconGap, out)
+		}
+	}
 	if out := m.r.toolResult("read", map[string]any{"path": "x"}, agent.TextResult("File not found"), true); !strings.Contains(out, m.r.icons[iconError]) {
 		t.Errorf("error icon missing: %q", out)
 	}
@@ -177,8 +191,8 @@ func TestGutterAlignsMarkdown(t *testing.T) {
 	out := ansi.Strip(m.r.assistantMessage(a))
 	lines := strings.Split(strings.TrimLeft(out, "\n"), "\n")
 	glyph := m.r.icons[iconReply]
-	indent := strings.Repeat(" ", lipgloss.Width(glyph)+1)
-	if !strings.HasPrefix(lines[0], glyph+" First paragraph.") {
+	indent := strings.Repeat(" ", lipgloss.Width(glyph)+lipgloss.Width(iconGap))
+	if !strings.HasPrefix(lines[0], glyph+iconGap+"First paragraph.") {
 		t.Fatalf("first line: %q", lines[0])
 	}
 	for _, l := range lines[1:] {
@@ -196,7 +210,7 @@ func TestListReplyStartsOnIconLine(t *testing.T) {
 	a := agent.NewAssistantMessage("m")
 	a.Content = []agent.Content{&agent.TextContent{Text: "- **one**\n- two"}}
 	out := strings.TrimLeft(ansi.Strip(m.r.assistantMessage(a)), "\n")
-	if !strings.HasPrefix(out, m.r.icons[iconReply]+" • one") {
+	if !strings.HasPrefix(out, m.r.icons[iconReply]+iconGap+"• one") {
 		t.Fatalf("got %q", out)
 	}
 }
@@ -205,7 +219,7 @@ func TestUserMessageWrapsInsideGutter(t *testing.T) {
 	r := newRenderer(30, true, "emoji", "")
 	out := strings.TrimLeft(ansi.Strip(r.userMessage("please read the readme and summarize it briefly")), "\n")
 	lines := strings.Split(out, "\n")
-	if len(lines) < 2 || !strings.HasPrefix(lines[0], "❯ please") || !strings.HasPrefix(lines[1], "  ") {
+	if len(lines) < 2 || !strings.HasPrefix(lines[0], "❯  please") || !strings.HasPrefix(lines[1], "   ") {
 		t.Fatalf("got %q", out)
 	}
 	for _, l := range lines {
@@ -250,6 +264,32 @@ func TestViewportFollowsUnlessScrolledUp(t *testing.T) {
 	}
 }
 
+func TestJumpWidgetAppearsAndJumpsToBottom(t *testing.T) {
+	m := newTestModel(t)
+	for i := 0; i < 60; i++ {
+		m.Update(printMsg{func(r *renderer) string { return item(fmt.Sprintf("line %d", i)) }})
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	if m.vp.AtBottom() {
+		t.Fatal("setup did not scroll away from the bottom")
+	}
+	if out := ansi.Strip(m.View().Content); !strings.Contains(out, jumpWidgetText) {
+		t.Fatalf("jump widget not shown while scrolled up:\n%s", out)
+	}
+	widget := m.jumpWidget()
+	start := m.jumpWidgetStart()
+	if want := (m.width - lipgloss.Width(widget)) / 2; start != want {
+		t.Fatalf("widget starts at %d, want centered start %d", start, want)
+	}
+	m.Update(tea.MouseClickMsg{X: start + 1, Y: m.vp.Height(), Button: tea.MouseLeft})
+	if !m.vp.AtBottom() {
+		t.Fatal("clicking jump widget did not move to the bottom")
+	}
+	if strings.Contains(ansi.Strip(m.View().Content), jumpWidgetText) {
+		t.Fatal("jump widget remained visible at the bottom")
+	}
+}
+
 func TestResizeRewrapsTranscript(t *testing.T) {
 	m := newTestModel(t)
 	long := strings.Repeat("word ", 30)
@@ -262,13 +302,32 @@ func TestResizeRewrapsTranscript(t *testing.T) {
 	}
 }
 
+func TestHistorySeparatesUserPrompts(t *testing.T) {
+	r := newRenderer(80, true, "emoji", "")
+	previous := agent.NewAssistantMessage("m")
+	previous.Content = []agent.Content{&agent.TextContent{Text: "previous"}}
+	prompt := &agent.UserMessage{Content: agent.UserContent{Text: "prompt"}}
+	next := agent.NewAssistantMessage("m")
+	next.Content = []agent.Content{&agent.TextContent{Text: "next"}}
+
+	out := ansi.Strip(strings.Join(r.history([]agent.Message{previous, prompt, next}), ""))
+	if !strings.Contains(out, "previous\n\n❯  prompt\n\n💬  next") {
+		t.Fatalf("prompt should have a blank line before and after it: %q", out)
+	}
+
+	out = ansi.Strip(strings.Join(r.history([]agent.Message{prompt}), ""))
+	if !strings.HasSuffix(out, "❯  prompt\n\n") {
+		t.Fatalf("final prompt should have a blank line after it: %q", out)
+	}
+}
+
 func TestItemsAreSeparatedByBlankLines(t *testing.T) {
 	m := newTestModel(t)
 	m.Update(printMsg{func(r *renderer) string { return r.userMessage("hi") }})
 	m.Update(printMsg{func(r *renderer) string { return "" }}) // empty turns add nothing
 	m.Update(printMsg{func(r *renderer) string { return item("second") }})
 	text := ansi.Strip(m.tr.text(m.r))
-	if !strings.Contains(text, "❯ hi\n\nsecond") {
+	if !strings.Contains(text, "❯  hi\n\nsecond") {
 		t.Fatalf("got %q", text)
 	}
 	if lines := strings.Split(m.View().Content, "\n"); len(lines) != m.height {
@@ -279,7 +338,7 @@ func TestItemsAreSeparatedByBlankLines(t *testing.T) {
 func TestDotsIconSet(t *testing.T) {
 	r := newRenderer(80, true, "dots", "")
 	out := ansi.Strip(r.toolResult("bash", map[string]any{"command": "ls"}, agent.TextResult(""), false))
-	if !strings.Contains(out, "⏺ $ ls") {
+	if !strings.Contains(out, "⏺  $ ls") {
 		t.Fatalf("dots: %q", out)
 	}
 	if newRenderer(80, true, "bogus", "").icons[iconReply] != iconSets["emoji"][iconReply] {
@@ -370,8 +429,8 @@ func TestStatusBarIsTinted(t *testing.T) {
 func TestInputPromptMatchesUserGutter(t *testing.T) {
 	m := newTestModel(t)
 	glyph := m.r.icons[iconUser]
-	if m.input.Prompt != glyph+" " {
-		t.Fatalf("prompt %q, want %q", m.input.Prompt, glyph+" ")
+	if m.input.Prompt != glyph+iconGap {
+		t.Fatalf("prompt %q, want %q", m.input.Prompt, glyph+iconGap)
 	}
 	if got, want := lipgloss.Width(m.input.Prompt), m.r.gutterWidth(iconUser); got != want {
 		t.Fatalf("prompt is %d cells, user gutter is %d", got, want)
@@ -380,7 +439,7 @@ func TestInputPromptMatchesUserGutter(t *testing.T) {
 	d := newTestModel(t)
 	d.r = newRenderer(80, true, "dots", "")
 	d.applyInputStyles()
-	if d.input.Prompt != d.r.icons[iconUser]+" " {
+	if d.input.Prompt != d.r.icons[iconUser]+iconGap {
 		t.Fatalf("prompt did not follow the icon set: %q", d.input.Prompt)
 	}
 }
@@ -670,6 +729,60 @@ func TestSandboxCommandAndMarker(t *testing.T) {
 	}
 	if !strings.Contains(off.tr.text(off.r), "Sandbox off") {
 		t.Fatalf("no startup notice:\n%s", off.tr.text(off.r))
+	}
+}
+
+func TestAllowWriteCommandRequiresDirectory(t *testing.T) {
+	m := newTestModel(t)
+	m.command("/allow-write")
+	if out := m.tr.text(m.r); !strings.Contains(out, "usage: /allow-write <existing directory>") {
+		t.Fatalf("missing directory was not rejected: %s", out)
+	}
+}
+
+func TestTrustCommandSavesToSessionUnlessExplicitlyAsked(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(cwd, "AGENTS.md"), []byte("project rules"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := coding.Open(coding.Options{
+		Cwd: cwd, Home: home, Settings: &coding.Settings{}, Provider: fake.New(), NoSession: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	m := newModel(s, "")
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	m.command("/trust yes")
+	if !m.s.TrustState().Trusted() || m.s.TrustState().Source != "session" {
+		t.Fatalf("bare trust decision: %+v", m.s.TrustState())
+	}
+	store, err := coding.LoadTrustStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Entries) != 0 {
+		t.Fatalf("bare /trust yes changed global trust: %+v", store.Entries)
+	}
+
+	m.command("/trust no")
+	store, err = coding.LoadTrustStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Entries) != 0 {
+		t.Fatalf("bare /trust no changed global trust: %+v", store.Entries)
+	}
+
+	m.command("/trust yes --save")
+	store, err = coding.LoadTrustStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state := coding.ResolveTrust(home, cwd, coding.TrustAsk, ""); !state.Trusted() || state.Source != "saved" {
+		t.Fatalf("explicit save did not remember trust: %+v (store %v)", state, store.Entries)
 	}
 }
 
