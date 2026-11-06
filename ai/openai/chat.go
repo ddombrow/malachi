@@ -443,10 +443,12 @@ func toChatMessages(messages []agent.Message, vision bool) []any {
 					text = "(see attached image)"
 				}
 			}
+			// No "name": it isn't part of the tool message schema, and
+			// gateways translating to Anthropic Messages reject it
+			// ("cannot preserve named conversation participants").
 			out = append(out, map[string]any{
 				"role":         "tool",
 				"tool_call_id": PortableToolCallID(v.ToolCallID),
-				"name":         v.ToolName,
 				"content":      text,
 			})
 			if vision {

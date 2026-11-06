@@ -211,6 +211,9 @@ func TestMessageConversion(t *testing.T) {
 	if !strings.HasPrefix(id, "tc_") || tool["tool_call_id"] != id || tool["content"] != "(no tool output)" {
 		t.Fatalf("ids: %q %v", id, tool)
 	}
+	if _, ok := tool["name"]; ok {
+		t.Fatalf("tool message carries a name, which Anthropic-translating gateways reject: %v", tool)
+	}
 	if u := msgs[3].(map[string]any); u["role"] != "user" || u["content"] != "earlier" {
 		t.Fatalf("summary: %v", u)
 	}
