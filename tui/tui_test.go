@@ -39,6 +39,25 @@ func shown(m *model, fn func() tea.Cmd) string {
 	return ansi.Strip(m.tr.text(m.r))[before:]
 }
 
+func TestTerminalFocusBlursAndRestoresInput(t *testing.T) {
+	m := newTestModel(t)
+	if !m.View().ReportFocus {
+		t.Fatal("view must request terminal focus reporting")
+	}
+
+	m.Update(tea.BlurMsg{})
+	m.Update(tea.KeyPressMsg{Code: 'x'})
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("blurred input accepted key: %q", got)
+	}
+
+	m.Update(tea.FocusMsg{})
+	m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if got := m.input.Value(); got != "x" {
+		t.Fatalf("focused input value = %q, want x", got)
+	}
+}
+
 func TestStreamingTextIsLiveThenPrinted(t *testing.T) {
 	m := newTestModel(t)
 	partial := agent.NewAssistantMessage("m")

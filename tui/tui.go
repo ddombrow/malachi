@@ -353,6 +353,13 @@ func (m *model) refresh() {
 
 func (m *model) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
+	case tea.FocusMsg:
+		return m.input.Focus()
+
+	case tea.BlurMsg:
+		m.input.Blur()
+		return nil
+
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		// A resumed session knows its own size before anything has been sent, so
@@ -650,6 +657,7 @@ func (m *model) View() tea.View {
 	v := tea.NewView("")
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
+	v.ReportFocus = true
 	if m.quitting && !m.busy() {
 		return v
 	}
