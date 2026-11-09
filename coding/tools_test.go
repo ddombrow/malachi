@@ -31,6 +31,13 @@ func write(t *testing.T, dir, name, content string) string {
 }
 
 func TestReadSlicesAndHints(t *testing.T) {
+	for _, tool := range CodingTools(t.TempDir(), ToolOptions{}) {
+		want := tool.Name == "read" || tool.Name == "grep" || tool.Name == "glob"
+		if tool.Parallel != want {
+			t.Fatalf("tool %s Parallel = %v, want %v", tool.Name, tool.Parallel, want)
+		}
+	}
+
 	dir := t.TempDir()
 	var lines []string
 	for i := 1; i <= 10; i++ {

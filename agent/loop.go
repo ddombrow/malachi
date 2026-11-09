@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,7 @@ type LoopConfig struct {
 	ThinkingLevel string
 	SessionID     string
 	MaxTurns      int // 0 means unlimited
+	MaxParallel   int // 0 means unlimited
 
 	// GetSteeringMessages is polled before every turn after the first; its
 	// messages are injected before the next provider call.
@@ -150,12 +152,10 @@ func Run(ctx context.Context, cfg LoopConfig, history []Message, prompts []Messa
 
 			calls := assistant.ToolCalls()
 			hasMoreTools = len(calls) > 0
-			var results []*ToolResultMessage
-			for _, call := range calls {
-				r := executeToolCall(ctx, cfg, call, toolsByName, emit)
+			results := executeToolCalls(ctx, cfg, calls, toolsByName, emit)
+			for _, r := range results {
 				messages = append(messages, r)
 				newMessages = append(newMessages, r)
-				results = append(results, r)
 			}
 			emit(&TurnEndEvent{Message: assistant, ToolResults: results})
 
@@ -285,34 +285,120 @@ func partialOf(e AssistantEvent) *AssistantMessage {
 	return nil
 }
 
-func executeToolCall(ctx context.Context, cfg LoopConfig, call *ToolCall, tools map[string]*Tool, emit func(Event)) *ToolResultMessage {
-	emit(&ToolExecutionStartEvent{ToolCallID: call.ID, ToolName: call.Name, Args: call.Arguments})
+type preparedTool struct {
+	tool    *Tool
+	blocked bool
+	reason  string
+}
 
-	var (
-		result  ToolResult
-		isError bool
-	)
-	blocked, reason := false, ""
+type toolOutcome struct {
+	result  ToolResult
+	isError bool
+}
+
+// executeToolCalls runs the turn's tool calls, grouping consecutive Parallel
+// calls to run concurrently while treating non-parallel calls as barriers.
+func executeToolCalls(ctx context.Context, cfg LoopConfig, calls []*ToolCall, tools map[string]*Tool, emit func(Event)) []*ToolResultMessage {
+	if len(calls) == 0 {
+		return nil
+	}
+	isParallel := func(c *ToolCall) bool {
+		t := tools[c.Name]
+		return t != nil && t.Parallel
+	}
+	results := make([]*ToolResultMessage, 0, len(calls))
+	for i := 0; i < len(calls); {
+		if !isParallel(calls[i]) {
+			results = append(results, executeToolGroup(ctx, cfg, calls[i:i+1], tools, emit)...)
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(calls) && isParallel(calls[j]) {
+			j++
+		}
+		results = append(results, executeToolGroup(ctx, cfg, calls[i:j], tools, emit)...)
+		i = j
+	}
+	return results
+}
+
+func executeToolGroup(ctx context.Context, cfg LoopConfig, group []*ToolCall, tools map[string]*Tool, emit func(Event)) []*ToolResultMessage {
+	prep := make([]preparedTool, len(group))
+	for i, c := range group {
+		prep[i] = beginTool(ctx, cfg, c, tools, emit)
+	}
+
+	out := make([]toolOutcome, len(group))
+	if len(group) == 1 {
+		out[0] = runPrepared(ctx, prep[0], group[0], emit)
+	} else {
+		var (
+			wg  sync.WaitGroup
+			mu  sync.Mutex
+			sem chan struct{}
+		)
+		if cfg.MaxParallel > 0 {
+			sem = make(chan struct{}, cfg.MaxParallel)
+		}
+		safeEmit := func(e Event) {
+			mu.Lock()
+			defer mu.Unlock()
+			emit(e)
+		}
+		for i, c := range group {
+			p := prep[i]
+			wg.Go(func() {
+				if sem != nil {
+					sem <- struct{}{}
+					defer func() { <-sem }()
+				}
+				out[i] = runPrepared(ctx, p, c, safeEmit)
+			})
+		}
+		wg.Wait()
+	}
+
+	results := make([]*ToolResultMessage, len(group))
+	for i, c := range group {
+		results[i] = finishTool(ctx, cfg, c, out[i], emit)
+	}
+	return results
+}
+
+func beginTool(ctx context.Context, cfg LoopConfig, call *ToolCall, tools map[string]*Tool, emit func(Event)) preparedTool {
+	emit(&ToolExecutionStartEvent{ToolCallID: call.ID, ToolName: call.Name, Args: call.Arguments})
+	var blocked bool
+	var reason string
 	if cfg.BeforeToolCall != nil {
 		blocked, reason = cfg.BeforeToolCall(ctx, call)
 	}
-	switch tool := tools[call.Name]; {
-	case blocked:
+	return preparedTool{tool: tools[call.Name], blocked: blocked, reason: reason}
+}
+
+func runPrepared(ctx context.Context, prep preparedTool, call *ToolCall, emit func(Event)) toolOutcome {
+	switch {
+	case prep.blocked:
+		reason := prep.reason
 		if reason == "" {
 			reason = "Tool execution was blocked"
 		}
-		result, isError = TextResult(reason), true
+		return toolOutcome{result: TextResult(reason), isError: true}
 	case ctx.Err() != nil:
-		result, isError = TextResult("Operation aborted"), true
-	case tool == nil:
-		result, isError = TextResult(fmt.Sprintf("Tool %s not found", call.Name)), true
+		return toolOutcome{result: TextResult("Operation aborted"), isError: true}
+	case prep.tool == nil:
+		return toolOutcome{result: TextResult(fmt.Sprintf("Tool %s not found", call.Name)), isError: true}
 	default:
 		onUpdate := func(partial ToolResult) {
 			emit(&ToolExecutionUpdateEvent{ToolCallID: call.ID, ToolName: call.Name, Args: call.Arguments, PartialResult: partial})
 		}
-		result, isError = runTool(ctx, tool, call, onUpdate)
+		result, isError := runTool(ctx, prep.tool, call, onUpdate)
+		return toolOutcome{result: result, isError: isError}
 	}
+}
 
+func finishTool(ctx context.Context, cfg LoopConfig, call *ToolCall, out toolOutcome, emit func(Event)) *ToolResultMessage {
+	result, isError := out.result, out.isError
 	if cfg.AfterToolCall != nil {
 		result, isError = cfg.AfterToolCall(ctx, call, result, isError)
 	}

@@ -30,6 +30,7 @@ func NewReadTool(cwd string, opts ToolOptions) *agent.Tool {
 			"full file, continue with offset until complete.", MaxOutputLines, MaxOutputBytes/1024),
 		PromptSnippet:    "Read file contents",
 		PromptGuidelines: []string{"Use read to examine files instead of cat or sed."},
+		Parallel:         true,
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

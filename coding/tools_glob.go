@@ -31,6 +31,7 @@ func NewGlobTool(cwd string, opts ToolOptions) *agent.Tool {
 			"Use glob to find which files exist and grep to search inside them; glob first when you know the filename shape but not the file.",
 			"Prefer a specific pattern such as \"**/*.go\" over listing a directory, and a narrower pattern over raising limit: a smaller result costs less context.",
 		},
+		Parallel: true,
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

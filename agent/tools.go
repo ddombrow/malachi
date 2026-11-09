@@ -35,4 +35,7 @@ type Tool struct {
 	// application may fold into its system prompt.
 	PromptSnippet    string
 	PromptGuidelines []string
+	// Parallel marks a tool as safe to run concurrently with other Parallel
+	// tools in the same turn: no side effects that depend on order.
+	Parallel bool
 }

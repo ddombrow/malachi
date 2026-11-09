@@ -48,6 +48,7 @@ func NewGrepTool(cwd string, opts ToolOptions) *agent.Tool {
 			"Use grep to find where something is defined or used, instead of reading whole files or shelling out to grep/rg.",
 			"Search for a distinctive identifier rather than reading a file to see whether it contains something.",
 		},
+		Parallel: true,
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

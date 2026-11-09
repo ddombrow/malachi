@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -272,6 +274,208 @@ func TestToolUpdatesAreEmitted(t *testing.T) {
 	r, _ := run(t, p, agent.LoopConfig{Tools: []*agent.Tool{tool}}, "x")
 	if !slices.Contains(r.types(), "tool_execution_update") {
 		t.Fatal("missing tool_execution_update")
+	}
+}
+
+func TestParallelToolsRunConcurrentlyAndPreserveOrder(t *testing.T) {
+	firstStarted := make(chan struct{})
+	secondFinished := make(chan struct{})
+	tool := &agent.Tool{
+		Name:     "read",
+		Parallel: true,
+		Execute: func(_ context.Context, callID string, _ map[string]any, up func(agent.ToolResult)) (agent.ToolResult, error) {
+			switch callID {
+			case "c1":
+				close(firstStarted)
+				<-secondFinished
+				up(agent.TextResult("c1-part"))
+				return agent.TextResult("res-1"), nil
+			case "c2":
+				<-firstStarted
+				up(agent.TextResult("c2-part"))
+				close(secondFinished)
+				return agent.TextResult("res-2"), nil
+			default:
+				return agent.TextResult("other"), nil
+			}
+		},
+	}
+
+	var beforeOrder, afterOrder []string
+	p := fake.New(
+		fake.ToolCalls("", fake.Call{ID: "c1", Name: "read"}, fake.Call{ID: "c2", Name: "read"}),
+		fake.Text("done"),
+	)
+	r, out := run(t, p, agent.LoopConfig{
+		Tools: []*agent.Tool{tool},
+		BeforeToolCall: func(_ context.Context, call *agent.ToolCall) (bool, string) {
+			beforeOrder = append(beforeOrder, call.ID)
+			return false, ""
+		},
+		AfterToolCall: func(_ context.Context, call *agent.ToolCall, res agent.ToolResult, isErr bool) (agent.ToolResult, bool) {
+			afterOrder = append(afterOrder, call.ID)
+			return res, isErr
+		},
+	}, "read both")
+
+	if !slices.Equal(beforeOrder, []string{"c1", "c2"}) {
+		t.Fatalf("BeforeToolCall order = %v, want [c1 c2]", beforeOrder)
+	}
+	if !slices.Equal(afterOrder, []string{"c1", "c2"}) {
+		t.Fatalf("AfterToolCall order = %v, want [c1 c2]", afterOrder)
+	}
+	r1, r2 := out[2].(*agent.ToolResultMessage), out[3].(*agent.ToolResultMessage)
+	if r1.ToolCallID != "c1" || r1.Text() != "res-1" || r2.ToolCallID != "c2" || r2.Text() != "res-2" {
+		t.Fatalf("results out of order: %+v, %+v", r1, r2)
+	}
+
+	var toolEvents []string
+	for _, ev := range r.events {
+		switch e := ev.(type) {
+		case *agent.ToolExecutionStartEvent:
+			toolEvents = append(toolEvents, "start:"+e.ToolCallID)
+		case *agent.ToolExecutionEndEvent:
+			toolEvents = append(toolEvents, "end:"+e.ToolCallID)
+		}
+	}
+	wantEvents := []string{"start:c1", "start:c2", "end:c1", "end:c2"}
+	if !slices.Equal(toolEvents, wantEvents) {
+		t.Fatalf("tool events = %v, want %v", toolEvents, wantEvents)
+	}
+}
+
+func TestSequentialToolActsAsBarrierBetweenParallelGroups(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		phases []string
+		active atomic.Int32
+	)
+	record := func(s string) {
+		mu.Lock()
+		phases = append(phases, s)
+		mu.Unlock()
+	}
+
+	g1Ready := make(chan struct{})
+	par := &agent.Tool{
+		Name:     "par",
+		Parallel: true,
+		Execute: func(_ context.Context, callID string, _ map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
+			active.Add(1)
+			defer active.Add(-1)
+			switch callID {
+			case "p1":
+				close(g1Ready)
+			case "p2":
+				<-g1Ready
+			}
+			record("run:" + callID)
+			return agent.TextResult(callID), nil
+		},
+	}
+	seq := &agent.Tool{
+		Name:     "seq",
+		Parallel: false,
+		Execute: func(_ context.Context, callID string, _ map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
+			if n := active.Load(); n != 0 {
+				t.Errorf("sequential tool ran while %d parallel tools were active", n)
+			}
+			record("run:" + callID)
+			return agent.TextResult(callID), nil
+		},
+	}
+
+	p := fake.New(
+		fake.ToolCalls("",
+			fake.Call{ID: "p1", Name: "par"},
+			fake.Call{ID: "p2", Name: "par"},
+			fake.Call{ID: "s1", Name: "seq"},
+			fake.Call{ID: "p3", Name: "par"},
+		),
+		fake.Text("done"),
+	)
+	_, out := run(t, p, agent.LoopConfig{Tools: []*agent.Tool{par, seq}}, "go")
+	if len(out) != 7 {
+		t.Fatalf("want 7 messages, got %d", len(out))
+	}
+	if phases[2] != "run:s1" || phases[3] != "run:p3" {
+		t.Fatalf("barrier violated: phases = %v", phases)
+	}
+}
+
+func TestMaxParallelCapsConcurrentTools(t *testing.T) {
+	var current, maxSeen atomic.Int32
+	par := &agent.Tool{
+		Name:     "par",
+		Parallel: true,
+		Execute: func(_ context.Context, id string, _ map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
+			n := current.Add(1)
+			for {
+				prev := maxSeen.Load()
+				if n <= prev || maxSeen.CompareAndSwap(prev, n) {
+					break
+				}
+			}
+			time.Sleep(15 * time.Millisecond)
+			current.Add(-1)
+			return agent.TextResult(id), nil
+		},
+	}
+	p := fake.New(
+		fake.ToolCalls("",
+			fake.Call{ID: "1", Name: "par"},
+			fake.Call{ID: "2", Name: "par"},
+			fake.Call{ID: "3", Name: "par"},
+			fake.Call{ID: "4", Name: "par"},
+		),
+		fake.Text("done"),
+	)
+	_, out := run(t, p, agent.LoopConfig{Tools: []*agent.Tool{par}, MaxParallel: 2}, "go")
+	if len(out) != 7 {
+		t.Fatalf("want 7 messages, got %d", len(out))
+	}
+	if got := maxSeen.Load(); got > 2 {
+		t.Fatalf("max concurrent tools = %d, want <= 2", got)
+	}
+}
+
+func TestParallelToolCancellationAnswersEveryCall(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	par := &agent.Tool{
+		Name:     "par",
+		Parallel: true,
+		Execute: func(ctx context.Context, id string, _ map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
+			if id == "a" {
+				cancel()
+			}
+			<-ctx.Done()
+			return agent.ToolResult{}, ctx.Err()
+		},
+	}
+	seq := &agent.Tool{
+		Name: "seq",
+		Execute: func(ctx context.Context, _ string, _ map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
+			return agent.TextResult("should not run"), nil
+		},
+	}
+	p := fake.New(fake.ToolCalls("",
+		fake.Call{ID: "a", Name: "par"},
+		fake.Call{ID: "b", Name: "par"},
+		fake.Call{ID: "c", Name: "seq"},
+	))
+	r := &recorder{}
+	out := agent.Run(ctx, agent.LoopConfig{Provider: p, Model: "fake", Tools: []*agent.Tool{par, seq}}, nil, []agent.Message{agent.NewUserText("x")}, r.emit)
+	if p.Calls() != 1 {
+		t.Fatalf("provider should not be called again after cancel, calls=%d", p.Calls())
+	}
+	if len(out) != 5 {
+		t.Fatalf("want all 3 calls answered, got %d messages", len(out))
+	}
+	for i, id := range []string{"a", "b", "c"} {
+		res := out[2+i].(*agent.ToolResultMessage)
+		if res.ToolCallID != id || !res.IsError || res.Text() != "Operation aborted" {
+			t.Fatalf("result %d: %+v", i, res)
+		}
 	}
 }
 

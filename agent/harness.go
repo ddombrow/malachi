@@ -27,6 +27,7 @@ type HarnessConfig struct {
 	Tools          []*Tool
 	ThinkingLevel  string
 	MaxTurns       int
+	MaxParallel    int
 	QueueMode      QueueMode
 	SessionID      string
 	BeforeToolCall BeforeToolCall
@@ -201,6 +202,7 @@ func (h *Harness) run(parent context.Context, prompts []Message) error {
 		ThinkingLevel:       cfg.ThinkingLevel,
 		SessionID:           cfg.SessionID,
 		MaxTurns:            cfg.MaxTurns,
+		MaxParallel:         cfg.MaxParallel,
 		GetSteeringMessages: func() []Message { return h.drain(&h.steering, cfg.QueueMode) },
 		GetFollowUpMessages: func() []Message { return h.drain(&h.followUp, cfg.QueueMode) },
 		BeforeToolCall:      cfg.BeforeToolCall,
