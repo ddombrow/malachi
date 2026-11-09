@@ -86,6 +86,64 @@ func TestReadImage(t *testing.T) {
 	}
 }
 
+func TestReadPDFText(t *testing.T) {
+	dir := t.TempDir()
+	writePDF(t, filepath.Join(dir, "text.pdf"), "BT (alpha) Tj T* (beta) Tj ET")
+
+	r, err := run(t, NewReadTool(dir, ToolOptions{}), map[string]any{
+		"path": "text.pdf", "offset": float64(2), "limit": float64(1),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Text(); got != "beta" {
+		t.Fatalf("got %q, want extracted second line", got)
+	}
+	details := r.Details.(map[string]any)
+	if details["mime_type"] != "application/pdf" || details["pages"] != 1 {
+		t.Fatalf("PDF details: %#v", details)
+	}
+	truncation := details["truncation"].(Truncation)
+	if truncation.OutputLines != 1 {
+		t.Fatalf("output lines = %d, want 1", truncation.OutputLines)
+	}
+
+	writePDF(t, filepath.Join(dir, "scanned.pdf"), "q Q")
+	r, err = run(t, NewReadTool(dir, ToolOptions{}), map[string]any{"path": "scanned.pdf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.Text(), "may be scanned and require OCR") {
+		t.Fatalf("scanned PDF hint missing: %q", r.Text())
+	}
+}
+
+func writePDF(t *testing.T, path, content string) {
+	t.Helper()
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.4\n")
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources <<>> /Contents 4 0 R >>",
+		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+	}
+	offsets := make([]int, len(objects)+1)
+	for i, object := range objects {
+		offsets[i+1] = b.Len()
+		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", i+1, object)
+	}
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(offsets))
+	for _, offset := range offsets[1:] {
+		fmt.Fprintf(&b, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(offsets), xref)
+	if err := os.WriteFile(path, b.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWriteCreatesParents(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := run(t, NewWriteTool(dir, ToolOptions{}), map[string]any{"path": "a/b/c.txt", "content": "hi"}); err != nil {

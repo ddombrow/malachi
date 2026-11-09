@@ -24,8 +24,8 @@ func NewReadTool(cwd string, opts ToolOptions) *agent.Tool {
 	return &agent.Tool{
 		Name:  "read",
 		Label: "Read",
-		Description: fmt.Sprintf("Read the contents of a file. Supports text files and images (jpg, png, gif, webp). "+
-			"Images are sent to vision-capable models as attachments. For text files, output is truncated to "+
+		Description: fmt.Sprintf("Read the contents of a file. Supports text files, PDFs, and images (jpg, png, gif, webp). "+
+			"Images are sent to vision-capable models as attachments. For text and PDF content, output is truncated to "+
 			"%d lines or %dKB (whichever is hit first). Use offset/limit for large files. When you need the "+
 			"full file, continue with offset until complete.", MaxOutputLines, MaxOutputBytes/1024),
 		PromptSnippet:    "Read file contents",
@@ -93,7 +93,8 @@ func executeRead(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return agent.ToolResult{}, err
 	}
-	if mime := http.DetectContentType(sniff[:n]); imageTypes[mime] {
+	mime := http.DetectContentType(sniff[:n])
+	if imageTypes[mime] {
 		size := info.Size()
 		if size > MaxImageBytes {
 			return agent.ToolResult{
@@ -116,10 +117,32 @@ func executeRead(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 			Details: map[string]any{"path": path, "mime_type": mime, "bytes": len(data)},
 		}, nil
 	}
+	if mime == "application/pdf" {
+		reader, err := openPDF(f, info.Size())
+		if err != nil {
+			return agent.ToolResult{}, fmt.Errorf("Cannot read PDF %s: %w", path, err)
+		}
+		result, err := readText(raw, path, newPDFTextReader(reader), offset, limit, hasLimit, map[string]any{
+			"mime_type": "application/pdf",
+			"pages":     reader.NumPage(),
+		})
+		if err != nil {
+			return agent.ToolResult{}, fmt.Errorf("Cannot extract text from PDF %s: %w", path, err)
+		}
+		if strings.TrimSpace(result.Text()) == "" {
+			result.Content = []agent.Content{&agent.TextContent{Text: fmt.Sprintf(
+				"No selectable text found in PDF [%s]. It may be scanned and require OCR.", path)}}
+		}
+		return result, nil
+	}
 
 	// Text: stream the file, keeping only the requested window and only as
 	// much of it as the display limits can use. Lines past those limits are
 	// counted, not kept, so a huge file costs time, not memory.
+	return readText(raw, path, io.MultiReader(bytes.NewReader(sniff[:n]), f), offset, limit, hasLimit, nil)
+}
+
+func readText(raw, path string, content io.Reader, offset, limit int, hasLimit bool, details map[string]any) (agent.ToolResult, error) {
 	start := 0
 	if offset > 0 {
 		start = offset - 1
@@ -131,7 +154,7 @@ func executeRead(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 		firstLen  int // full length of the window's first line
 	)
 	inWindow := func(i int) bool { return i >= start && (!hasLimit || i < start+limit) }
-	total, valid, err := scanLines(io.MultiReader(bytes.NewReader(sniff[:n]), f), MaxOutputBytes+1,
+	total, valid, err := scanLines(content, MaxOutputBytes+1,
 		func(i int, line []byte, full int) {
 			if !inWindow(i) {
 				return
@@ -152,7 +175,7 @@ func executeRead(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 		return agent.ToolResult{}, err
 	}
 	if !valid {
-		return agent.ToolResult{}, fmt.Errorf("Cannot read %s: file is not UTF-8 text or a supported image", path)
+		return agent.ToolResult{}, fmt.Errorf("Cannot read %s: file is not UTF-8 text or a supported image or PDF", path)
 	}
 	if start >= total {
 		return agent.ToolResult{}, fmt.Errorf("Offset %d is beyond end of file (%d lines total)", offset, total)
@@ -183,9 +206,14 @@ func executeRead(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 	default:
 		out = t.Content
 	}
+	if details == nil {
+		details = make(map[string]any, 2)
+	}
+	details["path"] = path
+	details["truncation"] = t
 	return agent.ToolResult{
 		Content: []agent.Content{&agent.TextContent{Text: out}},
-		Details: map[string]any{"path": path, "truncation": t},
+		Details: details,
 	}, nil
 }
 
