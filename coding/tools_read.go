@@ -28,9 +28,12 @@ func NewReadTool(cwd string, opts ToolOptions) *agent.Tool {
 			"Images are sent to vision-capable models as attachments. For text and PDF content, output is truncated to "+
 			"%d lines or %dKB (whichever is hit first). Use offset/limit for large files. When you need the "+
 			"full file, continue with offset until complete.", MaxOutputLines, MaxOutputBytes/1024),
-		PromptSnippet:    "Read file contents",
-		PromptGuidelines: []string{"Use read to examine files instead of cat or sed."},
-		Parallel:         true,
+		PromptSnippet: "Read file contents",
+		PromptGuidelines: []string{
+			"Use read to examine files instead of cat or sed.",
+			"To read several files, call read once per file in the same response; the calls run in parallel. Do not combine files with cat.",
+		},
+		Parallel: true,
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
