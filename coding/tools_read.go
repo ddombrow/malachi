@@ -126,7 +126,8 @@ func executeRead(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 		if err != nil {
 			return agent.ToolResult{}, fmt.Errorf("Cannot read PDF %s: %w", path, err)
 		}
-		result, err := readText(raw, path, newPDFTextReader(reader), offset, limit, hasLimit, map[string]any{
+		pages := func() (io.Reader, error) { return newPDFTextReader(reader), nil }
+		result, err := readWindow(raw, path, pages, offset, limit, hasLimit, map[string]any{
 			"mime_type": "application/pdf",
 			"pages":     reader.NumPage(),
 		})
@@ -143,7 +144,62 @@ func executeRead(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 	// Text: stream the file, keeping only the requested window and only as
 	// much of it as the display limits can use. Lines past those limits are
 	// counted, not kept, so a huge file costs time, not memory.
-	return readText(raw, path, io.MultiReader(bytes.NewReader(sniff[:n]), f), offset, limit, hasLimit, nil)
+	first := true
+	text := func() (io.Reader, error) {
+		if first {
+			first = false
+			return io.MultiReader(bytes.NewReader(sniff[:n]), f), nil
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return nil, err
+		}
+		return f, nil
+	}
+	return readWindow(raw, path, text, offset, limit, hasLimit, nil)
+}
+
+// pastEndTailLines is how much of the end of a file read shows when asked
+// for an offset past it.
+const pastEndTailLines = 50
+
+// pastEndError is an offset beyond the last line of the content.
+type pastEndError struct{ offset, total int }
+
+func (e *pastEndError) Error() string {
+	return fmt.Sprintf("Offset %d is beyond end of file (%d lines total)", e.offset, e.total)
+}
+
+// readWindow is readText, except that an offset past the end shows the end
+// of the file instead of failing: the model asked for more than there is,
+// usually from a wrong guess at the length, and the last lines plus the
+// real length answer it in one call. open must return the content from the
+// start each time it is called.
+func readWindow(raw, path string, open func() (io.Reader, error), offset, limit int, hasLimit bool, details map[string]any) (agent.ToolResult, error) {
+	content, err := open()
+	if err != nil {
+		return agent.ToolResult{}, err
+	}
+	result, err := readText(raw, path, content, offset, limit, hasLimit, details)
+	past, ok := err.(*pastEndError)
+	if !ok {
+		return result, err
+	}
+	n := pastEndTailLines
+	if hasLimit {
+		n = min(limit, n)
+	}
+	start := max(past.total-n+1, 1)
+	if content, err = open(); err != nil {
+		return agent.ToolResult{}, err
+	}
+	result, err = readText(raw, path, content, start, n, true, details)
+	if err != nil {
+		return agent.ToolResult{}, err
+	}
+	note := fmt.Sprintf("[Offset %d is past the end of the file, which has %d lines. Showing lines %d-%d.]\n\n",
+		past.offset, past.total, start, past.total)
+	result.Content = []agent.Content{&agent.TextContent{Text: note + result.Text()}}
+	return result, nil
 }
 
 func readText(raw, path string, content io.Reader, offset, limit int, hasLimit bool, details map[string]any) (agent.ToolResult, error) {
@@ -182,7 +238,7 @@ func readText(raw, path string, content io.Reader, offset, limit int, hasLimit b
 		return agent.ToolResult{}, fmt.Errorf("Cannot read %s: file is not UTF-8 text or a supported image or PDF", path)
 	}
 	if start >= total {
-		return agent.ToolResult{}, fmt.Errorf("Offset %d is beyond end of file (%d lines total)", offset, total)
+		return agent.ToolResult{}, &pastEndError{offset, total}
 	}
 	end := total
 	if hasLimit {

@@ -53,8 +53,13 @@ func TestReadSlicesAndHints(t *testing.T) {
 	if want := "line 3\nline 4\n\n[6 more lines in file. Use offset=5 to continue.]"; r.Text() != want {
 		t.Fatalf("got %q", r.Text())
 	}
-	if _, err := run(t, read, map[string]any{"path": "f.txt", "offset": float64(50)}); err == nil || !strings.Contains(err.Error(), "beyond end of file") {
-		t.Fatalf("want offset error, got %v", err)
+	// Past the end: the end of the file and its real length, not an error.
+	r, err = run(t, read, map[string]any{"path": "f.txt", "offset": float64(50), "limit": float64(3)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "[Offset 50 is past the end of the file, which has 10 lines. Showing lines 8-10.]\n\nline 8\nline 9\nline 10"; r.Text() != want {
+		t.Fatalf("past end: got %q", r.Text())
 	}
 	if _, err := run(t, read, map[string]any{"path": "missing.txt"}); err == nil {
 		t.Fatal("want not found error")
