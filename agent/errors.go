@@ -20,6 +20,9 @@ const (
 	// otherwise successful stream. Error.Code holds the provider's own error
 	// code or type, when it gave one.
 	DiagnosticStreamError = "stream_error"
+	// DiagnosticMaxTurns marks the message the loop adds when a run reaches
+	// LoopConfig.MaxTurns. No provider was called for it.
+	DiagnosticMaxTurns = "max_turns"
 
 	// DiagnosticNameTimeout marks a network error that was a timeout.
 	DiagnosticNameTimeout = "Timeout"
@@ -55,6 +58,9 @@ const (
 	// ErrorBadRequest is a request the provider refused as invalid. Retrying
 	// it unchanged fails again.
 	ErrorBadRequest ErrorKind = "bad_request"
+	// ErrorMaxTurns is a run stopped by LoopConfig.MaxTurns before the model
+	// finished. The model did nothing wrong; it needed more turns.
+	ErrorMaxTurns ErrorKind = "max_turns"
 	// ErrorUnknown is a failure with nothing to classify it by.
 	ErrorUnknown ErrorKind = "unknown"
 )
@@ -83,6 +89,9 @@ func Classify(m *AssistantMessage) ErrorKind {
 		return ErrorNone
 	}
 	for _, d := range m.Diagnostics {
+		if d.Type == DiagnosticMaxTurns {
+			return ErrorMaxTurns
+		}
 		if d.Error == nil {
 			continue
 		}

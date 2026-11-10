@@ -25,6 +25,7 @@ func TestClassify(t *testing.T) {
 		{"success", NewAssistantMessage("m"), ErrorNone},
 		{"nil", nil, ErrorNone},
 		{"aborted", aborted, ErrorAborted},
+		{"max turns", failed("Agent stopped after max_turns=3", Diagnostic{Type: DiagnosticMaxTurns}), ErrorMaxTurns},
 		{"rejected key", failed("HTTP 401", http(401, `{"error":{"message":"invalid api key"}}`)), ErrorAuth},
 		{"forbidden", failed("HTTP 403", http(403, "nope")), ErrorAuth},
 		{"rate limited", failed("HTTP 429", http(429, "slow down")), ErrorRateLimit},

@@ -113,6 +113,7 @@ func Run(ctx context.Context, cfg LoopConfig, history []Message, prompts []Messa
 
 			if cfg.MaxTurns > 0 && turn > cfg.MaxTurns {
 				e := errorMessage(cfg.Model, fmt.Sprintf("Agent stopped after max_turns=%d", cfg.MaxTurns))
+				e.Diagnostics = []Diagnostic{{Type: DiagnosticMaxTurns, Timestamp: e.Timestamp}}
 				add(e)
 				emit(&TurnEndEvent{Message: e})
 				return finish()
