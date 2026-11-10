@@ -77,7 +77,7 @@ func executeRead(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 	f, err := opts.policy().OpenRead(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return agent.ToolResult{}, fmt.Errorf("File not found: %s", path)
+			return agent.ToolResult{}, fmt.Errorf("File not found: %s.%s", path, notFoundHint(cwd, path, opts.policy()))
 		}
 		return agent.ToolResult{}, err
 	}

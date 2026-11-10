@@ -347,7 +347,7 @@ func searchRoot(cwd string, pol sandbox.Policy, args map[string]any) (dir, singl
 	info, err := os.Stat(root)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", "", fmt.Errorf("Path not found: %s", root)
+			return "", "", fmt.Errorf("Path not found: %s.%s", root, notFoundHint(cwd, root, pol))
 		}
 		return "", "", err
 	}

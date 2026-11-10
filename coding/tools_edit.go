@@ -218,7 +218,7 @@ func executeEdit(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return agent.ToolResult{}, fmt.Errorf("Could not edit file: %s. File not found.", path)
+		return agent.ToolResult{}, fmt.Errorf("Could not edit file: %s. File not found.%s", path, notFoundHint(cwd, path, opts.policy()))
 	}
 	if info.IsDir() {
 		return agent.ToolResult{}, fmt.Errorf("Could not edit file: %s. Path is a directory.", path)
