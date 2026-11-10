@@ -501,3 +501,98 @@ func TestBashAlwaysHidesInlineAPIKeyReferences(t *testing.T) {
 		t.Fatalf("command saw inline API key reference: %q", got)
 	}
 }
+
+func TestEditMatchesLoosely(t *testing.T) {
+	cases := []struct {
+		name, content, old, new, want string
+	}{
+		{"alignment padding", "type m struct {\n\tlive    map[string]int\n\tx       int\n}\n",
+			"live map[string]int", "live map[string]bool", "type m struct {\n\tlive map[string]bool\n\tx       int\n}\n"},
+		{"trailing whitespace in the file", "a := 1   \nb := 2\n",
+			"a := 1\nb := 2", "a := 3\nb := 4", "a := 3\nb := 4\n"},
+		{"curly quotes from the model", "say(\"hi\")\n",
+			"say(“hi”)", "say(\"bye\")", "say(\"bye\")\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := write(t, dir, "f.go", tc.content)
+			r, err := run(t, NewEditTool(dir, ToolOptions{}), map[string]any{"path": "f.go",
+				"edits": []any{map[string]any{"oldText": tc.old, "newText": tc.new}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := os.ReadFile(p); string(got) != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+			if !strings.Contains(r.Text(), "ignoring whitespace differences") {
+				t.Fatalf("result does not say the match was loose: %s", r.Text())
+			}
+		})
+	}
+}
+
+func TestEditLooseMatchKeepsIndentationAndUniqueness(t *testing.T) {
+	dir := t.TempDir()
+	// Indentation differs: never matched loosely.
+	write(t, dir, "a.go", "\tx := 1\n")
+	_, err := run(t, NewEditTool(dir, ToolOptions{}), map[string]any{"path": "a.go",
+		"edits": []any{map[string]any{"oldText": "    x := 1", "newText": "x := 2"}}})
+	if err == nil {
+		t.Fatal("matched across different indentation")
+	}
+	// Two loose matches: refused.
+	write(t, dir, "b.go", "x  = 1\nx   = 1\n")
+	_, err = run(t, NewEditTool(dir, ToolOptions{}), map[string]any{"path": "b.go",
+		"edits": []any{map[string]any{"oldText": "x = 1", "newText": "x = 2"}}})
+	if err == nil || !strings.Contains(err.Error(), "matches 2 places") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestEditMissShowsTheClosestText(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "f.go", "package f\n\nfunc alpha() int {\n\treturn 1\n}\n\nfunc beta() {}\n")
+	_, err := run(t, NewEditTool(dir, ToolOptions{}), map[string]any{"path": "f.go",
+		"edits": []any{map[string]any{"oldText": "func alpha() string {\n\treturn 1\n}", "newText": "x"}}})
+	if err == nil {
+		t.Fatal("expected a miss")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "     3\tfunc alpha() int {\n     4\t\treturn 1\n     5\t}") {
+		t.Fatalf("message:\n%s", msg)
+	}
+	// Nothing similar: no hint rather than a misleading one.
+	_, err = run(t, NewEditTool(dir, ToolOptions{}), map[string]any{"path": "f.go",
+		"edits": []any{map[string]any{"oldText": "completely unrelated text here", "newText": "x"}}})
+	if err == nil || strings.Contains(err.Error(), "closest") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestEditReplaceAll(t *testing.T) {
+	dir := t.TempDir()
+	p := write(t, dir, "f.go", "foo(1)\nbar()\nfoo(2)\n")
+	_, err := run(t, NewEditTool(dir, ToolOptions{}), map[string]any{"path": "f.go",
+		"edits": []any{map[string]any{"oldText": "foo(", "newText": "baz(", "replaceAll": true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(p); string(got) != "baz(1)\nbar()\nbaz(2)\n" {
+		t.Fatalf("got %q", got)
+	}
+	// Without replaceAll the duplicate is refused and the error says how to
+	// change them all.
+	_, err = run(t, NewEditTool(dir, ToolOptions{}), map[string]any{"path": "f.go",
+		"edits": []any{map[string]any{"oldText": "baz(", "newText": "foo("}}})
+	if err == nil || !strings.Contains(err.Error(), "replaceAll") {
+		t.Fatalf("err %v", err)
+	}
+	// replaceAll spans still must not overlap other edits.
+	_, err = run(t, NewEditTool(dir, ToolOptions{}), map[string]any{"path": "f.go", "edits": []any{
+		map[string]any{"oldText": "baz(", "newText": "q(", "replaceAll": true},
+		map[string]any{"oldText": "baz(2)", "newText": "z"},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "overlap") {
+		t.Fatalf("err %v", err)
+	}
+}
