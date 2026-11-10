@@ -13,7 +13,22 @@ type Request struct {
 	Tools         []*Tool
 	ThinkingLevel string // "" or "off" disables reasoning; otherwise provider-specific
 	SessionID     string // routing / prompt-cache affinity hint; may be ignored
+	// ToolChoice restricts whether the model may call Tools. The tools are
+	// still sent with ToolChoiceNone: dropping them would change the start of
+	// the prompt and miss the cache, and some gateways reject a history of
+	// tool calls when no tools are defined.
+	ToolChoice ToolChoice
 }
+
+// ToolChoice says whether the model may call the request's tools.
+type ToolChoice string
+
+const (
+	// ToolChoiceAuto lets the model decide. It is the zero value.
+	ToolChoiceAuto ToolChoice = ""
+	// ToolChoiceNone asks the model to answer in text without calling tools.
+	ToolChoiceNone ToolChoice = "none"
+)
 
 // RequestPreparer may derive a provider-specific context view before a request
 // is streamed. Messages is a detached slice with immutable message values

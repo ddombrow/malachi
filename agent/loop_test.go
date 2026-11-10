@@ -498,3 +498,38 @@ func TestRepairToolHistory(t *testing.T) {
 		t.Fatalf("reorder: %#v", got)
 	}
 }
+
+func TestLoopAnswerOnLastTurn(t *testing.T) {
+	p := fake.New(
+		fake.ToolCalls("", fake.Call{ID: "c1", Name: "read", Args: map[string]any{"path": "a"}}),
+		fake.Text("answer"),
+	)
+	cfg := agent.LoopConfig{MaxTurns: 2, AnswerOnLastTurn: true, Tools: []*agent.Tool{echoTool("read")}}
+	_, out := run(t, p, cfg, "go")
+	if a := out[len(out)-1].(*agent.AssistantMessage); a.StopReason != agent.StopStop || a.Text() != "answer" {
+		t.Fatalf("last message %+v", a)
+	}
+	if p.Requests[0].ToolChoice != agent.ToolChoiceAuto || p.Requests[1].ToolChoice != agent.ToolChoiceNone {
+		t.Fatalf("tool choice: %q, %q", p.Requests[0].ToolChoice, p.Requests[1].ToolChoice)
+	}
+	if len(p.Requests[1].Tools) != 1 {
+		t.Fatal("last turn dropped the tools")
+	}
+}
+
+func TestLoopAnswerOnLastTurnStillStopsIfToolsAreCalled(t *testing.T) {
+	p := fake.New(fake.ToolCalls("", fake.Call{ID: "c1", Name: "read", Args: map[string]any{"path": "a"}}))
+	cfg := agent.LoopConfig{MaxTurns: 1, AnswerOnLastTurn: true, Tools: []*agent.Tool{echoTool("read")}}
+	_, out := run(t, p, cfg, "go")
+	if a := out[len(out)-1].(*agent.AssistantMessage); agent.Classify(a) != agent.ErrorMaxTurns {
+		t.Fatalf("last message %+v", a)
+	}
+}
+
+func TestLoopToolChoiceAutoWithoutAnswerOnLastTurn(t *testing.T) {
+	p := fake.New(fake.Text("answer"))
+	run(t, p, agent.LoopConfig{MaxTurns: 1}, "go")
+	if p.Requests[0].ToolChoice != agent.ToolChoiceAuto {
+		t.Fatalf("tool choice %q", p.Requests[0].ToolChoice)
+	}
+}

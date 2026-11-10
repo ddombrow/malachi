@@ -21,18 +21,20 @@ const (
 // HarnessConfig configures a Harness. Changes made with Harness.Update take
 // effect on the next run.
 type HarnessConfig struct {
-	Provider       Provider
-	Model          string
-	System         string
-	Tools          []*Tool
-	ThinkingLevel  string
-	MaxTurns       int
-	MaxParallel    int
-	QueueMode      QueueMode
-	SessionID      string
-	BeforeToolCall BeforeToolCall
-	AfterToolCall  AfterToolCall
-	PrepareRequest RequestPreparer
+	Provider      Provider
+	Model         string
+	System        string
+	Tools         []*Tool
+	ThinkingLevel string
+	MaxTurns      int
+	// AnswerOnLastTurn: see LoopConfig.AnswerOnLastTurn.
+	AnswerOnLastTurn bool
+	MaxParallel      int
+	QueueMode        QueueMode
+	SessionID        string
+	BeforeToolCall   BeforeToolCall
+	AfterToolCall    AfterToolCall
+	PrepareRequest   RequestPreparer
 	// RecoverOverflow rebuilds and retries a request that failed on context.
 	RecoverOverflow func(ctx context.Context, req Request, failed *AssistantMessage) (Request, []Message, bool)
 }
@@ -202,6 +204,7 @@ func (h *Harness) run(parent context.Context, prompts []Message) error {
 		ThinkingLevel:       cfg.ThinkingLevel,
 		SessionID:           cfg.SessionID,
 		MaxTurns:            cfg.MaxTurns,
+		AnswerOnLastTurn:    cfg.AnswerOnLastTurn,
 		MaxParallel:         cfg.MaxParallel,
 		GetSteeringMessages: func() []Message { return h.drain(&h.steering, cfg.QueueMode) },
 		GetFollowUpMessages: func() []Message { return h.drain(&h.followUp, cfg.QueueMode) },

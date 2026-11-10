@@ -23,7 +23,12 @@ type LoopConfig struct {
 	ThinkingLevel string
 	SessionID     string
 	MaxTurns      int // 0 means unlimited
-	MaxParallel   int // 0 means unlimited
+	// AnswerOnLastTurn sends the last turn MaxTurns allows with
+	// ToolChoiceNone, so the run ends with an answer built from what the
+	// model has gathered instead of a max_turns error. If the provider calls
+	// tools anyway, they run and the run stops with max_turns as usual.
+	AnswerOnLastTurn bool
+	MaxParallel      int // 0 means unlimited
 
 	// GetSteeringMessages is polled before every turn after the first; its
 	// messages are injected before the next provider call.
@@ -126,6 +131,9 @@ func Run(ctx context.Context, cfg LoopConfig, history []Message, prompts []Messa
 				Tools:         cfg.Tools,
 				ThinkingLevel: cfg.ThinkingLevel,
 				SessionID:     cfg.SessionID,
+			}
+			if cfg.AnswerOnLastTurn && cfg.MaxTurns > 0 && turn == cfg.MaxTurns {
+				req.ToolChoice = ToolChoiceNone
 			}
 			if cfg.PrepareRequest != nil {
 				req = cfg.PrepareRequest(req)

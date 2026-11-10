@@ -334,6 +334,9 @@ func (p *Provider) buildPayload(req agent.Request) map[string]any {
 			})
 		}
 		payload["tools"] = tools
+		if req.ToolChoice == agent.ToolChoiceNone {
+			payload["tool_choice"] = "none"
+		}
 	}
 	return payload
 }

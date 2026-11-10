@@ -296,3 +296,26 @@ func TestListModels(t *testing.T) {
 		t.Fatalf("ids=%v err=%v", ids, err)
 	}
 }
+
+func TestToolChoiceNoneKeepsTools(t *testing.T) {
+	p := New(Config{})
+	tools := []*agent.Tool{{Name: "read"}}
+	for name, build := range map[string]func(agent.Request) map[string]any{
+		"chat": p.buildPayload, "responses": p.buildResponsesPayload,
+	} {
+		auto := build(agent.Request{Model: "m", Tools: tools})
+		if _, ok := auto["tool_choice"]; ok {
+			t.Fatalf("%s: auto sent tool_choice: %v", name, auto["tool_choice"])
+		}
+		none := build(agent.Request{Model: "m", Tools: tools, ToolChoice: agent.ToolChoiceNone})
+		if none["tool_choice"] != "none" || len(none["tools"].([]any)) != 1 {
+			t.Fatalf("%s: payload %v", name, none)
+		}
+		// Without tools there is nothing to restrict, and some APIs reject
+		// tool_choice on its own.
+		bare := build(agent.Request{Model: "m", ToolChoice: agent.ToolChoiceNone})
+		if _, ok := bare["tool_choice"]; ok {
+			t.Fatalf("%s: tool_choice without tools", name)
+		}
+	}
+}
