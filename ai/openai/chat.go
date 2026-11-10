@@ -367,7 +367,20 @@ func toChatMessages(messages []agent.Message, vision bool) []any {
 		pendingImages = nil
 	}
 
-	for _, m := range messages {
+	// Reasoning is replayed only for the turn in progress: the assistant
+	// messages after the last user message. Models that need it back need it
+	// within a tool-call chain; across a user turn they ignore it or drop it.
+	// Replaying every turn's reasoning made it the largest part of each request
+	// in long sessions. Dropping it changes the request only once per user
+	// turn, and only from the previous turn on, so the cached prefix survives.
+	currentTurn := 0
+	for i, m := range messages {
+		if _, ok := m.(*agent.UserMessage); ok {
+			currentTurn = i + 1
+		}
+	}
+
+	for i, m := range messages {
 		if _, ok := m.(*agent.ToolResultMessage); !ok {
 			flushImages()
 		}
@@ -404,8 +417,9 @@ func toChatMessages(messages []agent.Message, vision bool) []any {
 				item["content"] = nil
 			}
 			// Replay reasoning under the field it arrived in; several
-			// OpenAI-compatible reasoning models require it on follow-ups.
-			if thinking := v.ThinkingText(); thinking != "" {
+			// OpenAI-compatible reasoning models require it on follow-ups
+			// within a turn.
+			if thinking := v.ThinkingText(); thinking != "" && i >= currentTurn {
 				field := "reasoning_content"
 				for _, c := range v.Content {
 					if t, ok := c.(*agent.ThinkingContent); ok && t.ThinkingSignature != "" {

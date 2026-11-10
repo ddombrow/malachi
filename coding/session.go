@@ -309,7 +309,7 @@ func Open(opts Options) (*Session, error) {
 	toolOpts.Sandbox = s.sandboxPolicy
 	tools := CodingTools(cwd, toolOpts)
 	s.trims = &trimLog{}
-	s.preparer = newCodingContextPreparer(cwd, s.trims)
+	s.preparer = newCodingContextPreparer(s.trims)
 	s.runtime = provider
 	s.system, s.tools = s.buildPrompt(tools), tools
 	s.Harness = agent.NewHarness(agent.HarnessConfig{
@@ -615,7 +615,7 @@ func (s *Session) toolOutputBudget(c ContextStats) int {
 
 // ForceTrim asks for the next provider request to trim tool output harder than
 // the default ceiling: everything above budget bytes is replaced by a marker
-// and the ledger is refreshed. A budget of 0 trims as much as possible. It
+// with the call's facts. A budget of 0 trims as much as possible. It
 // reports whether there was anything left to trim, so a caller can say so
 // instead of silently doing nothing.
 func (s *Session) ForceTrim(budget int) bool {

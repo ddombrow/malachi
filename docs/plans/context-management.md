@@ -10,9 +10,13 @@ Two independent mechanisms, both deliberate:
 
 1. **Request-view tool trim** (`coding/context.go`). Before every provider
    request, tool results older than the newest are replaced with
-   `[compacted <tool> tool output: N bytes]` markers until the context-visible
-   tool output fits a byte ceiling, and a deterministic ledger of tool facts
-   (`<untrusted_tool_ledger>`) is injected as a user message. Copy-on-write:
+   `[trimmed <tool> tool output: N bytes; <outcome>]` markers, where the
+   outcome is the exit code, first changed line or first error line (the
+   call's own arguments are already beside it). Trims are sticky and,
+   once the ceiling is exceeded, go down to half of it, so the request prefix
+   (and the provider's prompt cache) changes only when more is trimmed. This
+   replaced a separate ledger of the newest tool calls, which mostly described
+   output that was still visible and moved on every request. Copy-on-write:
    the transcript and the session file are untouched, so the history on disk
    stays complete and tau-compatible.
 2. **Context measurement** (`coding/context_stats.go`). Each finished assistant
@@ -150,8 +154,8 @@ than a spinner.
 
 ## Stage 6 — ledger consistency after a summary
 
-Truncate `c.records` to the retained tail when a summary compaction lands, so
-the ledger and the summary do not both describe the same span.
+Superseded: the ledger was removed, and each trim marker now carries its own
+call's outcome, so there is no separate account of tool history to reconcile.
 
 ## Sequencing
 

@@ -130,10 +130,11 @@ func TestIsContextLimitIgnoresServerErrors(t *testing.T) {
 
 // The ceiling on tool output comes from what the provider actually charged
 // for: the window, minus the reserve, minus everything that is not tool output.
-// Before there is a measurement, the fixed default stands.
+// Before there is a measurement, the fixed default stands; a measured budget
+// may shrink below that default but never expands above it.
 func budgetAt(tokens int) int { return int(float64(tokens) / 0.25) }
 
-func TestToolOutputBudgetIsDerived(t *testing.T) {
+func TestToolOutputBudgetIsDerivedAndCapped(t *testing.T) {
 	const window = 128_000
 	const ratio = 0.25 // four bytes per token, typical for prose
 
@@ -145,15 +146,14 @@ func TestToolOutputBudgetIsDerived(t *testing.T) {
 		t.Errorf("unmeasured budget = %d, want the default %d", got, defaultToolResultBudget)
 	}
 
-	// 20k input tokens of which 5k is tool output leaves 15k of conversation,
-	// so 128k - 16k reserve - 15k = 97k tokens for tool output.
-	if got, want := toolOutputBudgetBytes(window, 20_000, 5_000, ratio), budgetAt(97_000); got != want {
-		t.Errorf("light budget = %d, want %d", got, want)
+	// Even a roomy context cannot let tool output grow beyond the fixed ceiling.
+	if got := toolOutputBudgetBytes(window, 20_000, 5_000, ratio); got != defaultToolResultBudget {
+		t.Errorf("light budget = %d, want cap %d", got, defaultToolResultBudget)
 	}
 
-	// A fuller context allows less: 100k input with 80k of tool output leaves
-	// only 92k tokens against 97k.
-	heavy, light := toolOutputBudgetBytes(window, 100_000, 80_000, ratio), toolOutputBudgetBytes(window, 20_000, 5_000, ratio)
+	// A nearly full context shrinks the budget below the cap: 127k input with
+	// 24k of tool output leaves only 9k tokens after reserve and other content.
+	heavy, light := toolOutputBudgetBytes(window, 127_000, 24_000, ratio), toolOutputBudgetBytes(window, 20_000, 5_000, ratio)
 	if heavy >= light {
 		t.Errorf("a fuller context should allow less tool output: %d vs %d", heavy, light)
 	}
@@ -163,26 +163,29 @@ func TestToolOutputBudgetIsDerived(t *testing.T) {
 	if got := toolOutputBudgetBytes(window, 127_000, 20_000, ratio); got != defaultToolResultBudget {
 		t.Errorf("no headroom should fall back to the default, got %d", got)
 	}
-	// Just above the floor the derived value is used: 9k tokens left.
+	// Just above the floor there are 9k tokens left: the derived allowance
+	// falls below the fixed ceiling and is used.
 	if got, want := toolOutputBudgetBytes(window, 127_000, 24_000, ratio), budgetAt(9_000); got != want {
 		t.Errorf("just above the floor should use the derived value: %d, want %d", got, want)
 	}
 
-	// A larger window allows proportionally more tool output.
-	if big, light := toolOutputBudgetBytes(400_000, 20_000, 5_000, ratio), toolOutputBudgetBytes(window, 20_000, 5_000, ratio); big <= light {
-		t.Errorf("a larger window should allow more tool output: %d vs %d", big, light)
+	// A larger context window cannot expand beyond the fixed cap.
+	if got := toolOutputBudgetBytes(400_000, 20_000, 5_000, ratio); got != defaultToolResultBudget {
+		t.Errorf("large window budget = %d, want cap %d", got, defaultToolResultBudget)
 	}
 
-	// Denser output buys fewer bytes for the same token budget.
-	dense, sparse := toolOutputBudgetBytes(window, 20_000, 5_000, 0.5), toolOutputBudgetBytes(window, 20_000, 5_000, 0.15)
+	// When the budget is below the cap, denser output buys fewer bytes for the
+	// same token allowance.
+	dense := toolOutputBudgetBytes(window, 119_000, 24_000, 0.5)
+	sparse := toolOutputBudgetBytes(window, 119_000, 24_000, 0.15)
 	if dense >= sparse {
 		t.Errorf("dense tool output should get fewer bytes: %d vs %d", dense, sparse)
 	}
 }
 
-// The session reports the provider's window, and derives a ceiling from the
+// The session reports the provider's window and derives a ceiling from the
 // measurement while keeping the fixed default until there is something to
-// derive from.
+// derive from. Measured headroom can shrink the ceiling, but cannot expand it.
 func TestSessionDerivesCeilingFromUsage(t *testing.T) {
 	s, err := Open(Options{
 		Cwd: t.TempDir(), Home: t.TempDir(), Settings: &Settings{},
@@ -197,12 +200,10 @@ func TestSessionDerivesCeilingFromUsage(t *testing.T) {
 	if got := s.toolOutputBudget(s.ContextStats()); got != defaultToolResultBudget {
 		t.Errorf("budget before any measurement = %d, want the default %d", got, defaultToolResultBudget)
 	}
-	// 120 kB of tool output measured at a quarter token per byte is 30k tokens,
-	// which is all of the 30k the request was charged for, so nothing else is
-	// in the way and all 128k-16k is available.
+	// The measured tool output leaves ample headroom, but the fixed cap wins.
 	stats := ContextStats{PromptTokens: 30_000, ToolBytes: 120_000, Ratio: 0.25}
-	if got, want := s.toolOutputBudget(stats), budgetAt(112_000); got != want {
-		t.Errorf("derived budget = %d, want %d", got, want)
+	if got := s.toolOutputBudget(stats); got != defaultToolResultBudget {
+		t.Errorf("derived budget = %d, want cap %d", got, defaultToolResultBudget)
 	}
 }
 

@@ -219,6 +219,45 @@ func TestMessageConversion(t *testing.T) {
 	}
 }
 
+// Reasoning goes back only for the turn in progress: a tool-call chain after
+// the last user message keeps it, earlier turns do not. Resending every
+// turn's reasoning made it the largest part of a long session's requests.
+func TestReasoningReplayedOnlyForCurrentTurn(t *testing.T) {
+	thinking := func(text string) *agent.AssistantMessage {
+		a := agent.NewAssistantMessage("m")
+		a.Content = []agent.Content{
+			&agent.ThinkingContent{Thinking: text, ThinkingSignature: "reasoning_content"},
+			&agent.ToolCall{ID: text, Name: "read", Arguments: map[string]any{"path": "x"}},
+		}
+		return a
+	}
+	result := func(id string) agent.Message {
+		return &agent.ToolResultMessage{ToolCallID: id, ToolName: "read",
+			Content: []agent.Content{&agent.TextContent{Text: "ok"}}}
+	}
+	msgs := toChatMessages([]agent.Message{
+		agent.NewUserText("first"),
+		thinking("old"), result("old"),
+		agent.NewUserText("second"),
+		thinking("now-1"), result("now-1"),
+		thinking("now-2"), result("now-2"),
+	}, false)
+	reasoning := func(i int) any { return msgs[i].(map[string]any)["reasoning_content"] }
+	if r := reasoning(1); r != nil {
+		t.Errorf("a previous turn's reasoning was replayed: %v", r)
+	}
+	if reasoning(4) != "now-1" || reasoning(6) != "now-2" {
+		t.Errorf("the current tool-call chain lost its reasoning: %v, %v", reasoning(4), reasoning(6))
+	}
+
+	// With no user message in view (a tail that opens mid-turn), everything
+	// is the current turn.
+	msgs = toChatMessages([]agent.Message{thinking("tail"), result("tail")}, false)
+	if reasoning(0) != "tail" {
+		t.Errorf("a mid-turn tail lost its reasoning: %v", reasoning(0))
+	}
+}
+
 func TestListModels(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" || r.Header.Get("Authorization") != "Bearer k" || r.Header.Get("User-Agent") != "malachi" {

@@ -8,6 +8,7 @@ import (
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -458,30 +459,89 @@ func TestSummarizeAfterResumeKeepsTailOnDisk(t *testing.T) {
 	}
 }
 
-// The summariser is asked for the user's goal, so it has to see the user.
-func TestSummarizerSeesUserAndAssistantText(t *testing.T) {
+// The summariser is asked for the user's goal, so it has to see the user, and
+// it is asked for progress, so it has to see what was done: each tool call as
+// one line with its outcome, never its output.
+func TestSummarizerSeesUserAssistantAndToolActivity(t *testing.T) {
 	toolTurn := agent.NewAssistantMessage("m")
 	toolTurn.Content = []agent.Content{
 		&agent.TextContent{Text: "the bug is a missing lookahead; patching"},
-		&agent.ToolCall{ID: "c1", Name: "edit", Arguments: map[string]any{"path": "SECRET-ARG"}},
+		&agent.ToolCall{ID: "c1", Name: "edit", Arguments: map[string]any{"path": "internal/scan.go", "oldText": "a"}},
+		&agent.ToolCall{ID: "c2", Name: "bash", Arguments: map[string]any{"command": "go test ./internal/..."}},
 	}
 	toolTurn.StopReason = agent.StopToolUse
 	body := transcriptJSON([]agent.Message{
 		&agent.CompactionSummaryMessage{Summary: "PREVIOUS-SUMMARY"},
 		agent.NewUserText("please fix trailing commas"),
 		toolTurn,
-		&agent.ToolResultMessage{ToolCallID: "c1", ToolName: "edit", Content: []agent.Content{&agent.TextContent{Text: "TOOL-OUTPUT"}}},
+		&agent.ToolResultMessage{ToolCallID: "c1", ToolName: "edit", Content: []agent.Content{&agent.TextContent{Text: "TOOL-OUTPUT"}},
+			Details: map[string]any{"first_changed_line": 41}},
+		&agent.ToolResultMessage{ToolCallID: "c2", ToolName: "bash", IsError: true,
+			Content: []agent.Content{&agent.TextContent{Text: "FAIL scan_test.go:12\nMORE-OUTPUT"}},
+			Details: map[string]any{"exit_code": 1}},
 		assistantText("done"),
 	})
-	for _, want := range []string{`"role": "user", "text": "please fix trailing commas"`, "missing lookahead", `"text": "done"`} {
+	for _, want := range []string{
+		`"role": "user", "text": "please fix trailing commas"`, "missing lookahead", `"text": "done"`,
+		`"role": "tool", "text": "edit internal/scan.go (1 change) → first changed line 41"`,
+		`"role": "tool", "text": "$ go test ./internal/... → exit 1: \"FAIL scan_test.go:12\""`,
+	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("summariser input is missing %q:\n%s", want, body)
 		}
 	}
-	for _, leak := range []string{"TOOL-OUTPUT", "SECRET-ARG", "PREVIOUS-SUMMARY"} {
+	for _, leak := range []string{"TOOL-OUTPUT", "MORE-OUTPUT", "PREVIOUS-SUMMARY"} {
 		if strings.Contains(body, leak) {
 			t.Errorf("summariser input should not contain %q", leak)
 		}
+	}
+}
+
+// The files a summary's span changed are appended to it exactly, not left to
+// the model, and a later compaction carries them forward by merging rather
+// than by handing them back to the model to rewrite.
+func TestSummaryRecordsFilesChanged(t *testing.T) {
+	s := summarizeFixture(t, fake.Text(goodSummary), fake.Text(goodSummary))
+	var seen []agent.Request
+	s.runtime = recordingProvider{inner: s.runtime, seen: &seen}
+	edits := func(paths ...string) []agent.Message {
+		var out []agent.Message
+		for i, path := range paths {
+			id := fmt.Sprintf("%s-%d", path, i)
+			a := agent.NewAssistantMessage("m")
+			a.Content = []agent.Content{&agent.ToolCall{ID: id, Name: "edit", Arguments: map[string]any{"path": path}}}
+			a.StopReason = agent.StopToolUse
+			out = append(out, a, &agent.ToolResultMessage{ToolCallID: id, ToolName: "edit",
+				Content: []agent.Content{&agent.TextContent{Text: "ok"}}})
+		}
+		return out
+	}
+	failed := agent.NewAssistantMessage("m")
+	failed.Content = []agent.Content{&agent.ToolCall{ID: "bad", Name: "write", Arguments: map[string]any{"path": "never.go"}}}
+	failed.StopReason = agent.StopToolUse
+
+	history := append([]agent.Message{agent.NewUserText("start")}, edits("a.go", filepath.Join(s.cwd, "b.go"), "a.go")...)
+	history = append(history, failed, &agent.ToolResultMessage{ToolCallID: "bad", ToolName: "write", IsError: true,
+		Content: []agent.Content{&agent.TextContent{Text: "denied"}}})
+	s.Harness.ReplaceMessages(append(history, longConversation(20)...))
+	res, err := s.Summarize(context.Background(), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := goodSummary + filesChangedHeading + "\n- b.go\n- a.go"; res.Summary != want {
+		t.Fatalf("summary = %q, want %q", res.Summary, want)
+	}
+
+	s.Harness.ReplaceMessages(append(append(s.Harness.Messages(), edits("c.go", "b.go")...), longConversation(20)...))
+	res, err = s.Summarize(context.Background(), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(res.Summary, filesChangedHeading+"\n- a.go\n- c.go\n- b.go") {
+		t.Fatalf("second summary should merge the record: %q", res.Summary)
+	}
+	if body := agent.MessageText(seen[1].Messages[0]); strings.Contains(body, "Files changed") {
+		t.Error("the record must not be handed back to the model to rewrite")
 	}
 }
 

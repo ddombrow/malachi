@@ -302,7 +302,7 @@ const minToolBudgetTokens = 8_000
 // what the provider actually reports, rather than from a fixed byte count.
 //
 // Everything except tool output — system prompt, tool definitions, the
-// conversation, the ledger — is already known as tokens, because the provider
+// conversation — is already known as tokens, because the provider
 // counted it. What is left of the window after that, and after a reserve for
 // the reply, is what tool output may have. It is converted to bytes with the
 // measured ratio so the ceiling tracks the model's real density.
@@ -318,11 +318,11 @@ func toolOutputBudgetBytes(window int, inputTokens int, toolTokens int, ratio fl
 	if free < minToolBudgetTokens {
 		return defaultToolResultBudget
 	}
+	// The derived allowance may grow with the context window, but never above
+	// the default ceiling: keeping old tool output around costs tokens on every
+	// subsequent request even when the model has plenty of context left.
 	budget := int(float64(free) / ratio)
-	if budget < 1 {
-		budget = 1
-	}
-	return budget
+	return min(max(budget, 1), defaultToolResultBudget)
 }
 
 // exceedsConfiguredWindow reports whether the provider accepted a request
@@ -352,10 +352,10 @@ func ContextLine(model string, c ContextStats) string {
 	fmt.Fprintf(&b, "context: %s\n  last request   %s%s", model, tokenCount(c.PromptTokens), peak)
 	fmt.Fprintf(&b, "\n  tool output    %s ≈ %s (%.0f%% of the request)",
 		byteCount(c.ToolBytes), tokenCount(c.ToolTokens()), c.ToolShare()*100)
-	// What is left is the system prompt, the tool definitions, the ledger and
-	// the conversation. Nothing trims the conversation, which is why /trim can
+	// What is left is the system prompt, the tool definitions and the
+	// conversation. Nothing trims the conversation, which is why /trim can
 	// report nothing to do while the request is enormous.
-	fmt.Fprintf(&b, "\n  everything else %s (system prompt, tool definitions, ledger, conversation)",
+	fmt.Fprintf(&b, "\n  everything else %s (system prompt, tool definitions, conversation)",
 		tokenCount(c.PromptTokens-c.ToolTokens()))
 	if c.Ratio > 0 {
 		fmt.Fprintf(&b, "\n  measured       %.2f tokens per byte of tool output (%d deltas)",

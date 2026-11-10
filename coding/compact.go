@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -49,6 +50,15 @@ const (
 	// names and error strings are what a summariser loses first, and they are
 	// what an agent needs to keep working.
 	minKeptIdentifierSurvival = 0.25
+
+	// maxToolActivityBytes bounds one tool line in the summariser's input. A
+	// heredoc or a long pipeline is cut; the line is for orientation, not
+	// replay.
+	maxToolActivityBytes = 240
+	// maxFilesChanged bounds the files-changed record carried in a summary.
+	// The most recently changed are kept, since they are the likeliest to
+	// matter to the work in progress.
+	maxFilesChanged = 60
 )
 
 // ErrNothingToSummarize is returned when the conversation is too short or too
@@ -109,14 +119,15 @@ The concrete next actions, in order.
 Exact file paths, function and type names, error messages and commands.
 Reproduce these literally; never paraphrase an identifier or a path.
 
-Factual tool activity (commands run, files touched, exit codes) is recorded
-separately and is not part of this document. Do not repeat it.`
+Tool calls appear in the history as "tool" entries: what was run and how it
+ended, without its output. Use them to ground Progress, and keep the commands
+and paths that still matter in Critical Context. A list of the files that were
+changed is appended to this document automatically; do not write one.`
 
 // summarizationBody frames the conversation for the summariser.
 const summarizationBody = `Below is a coding session's history, oldest first, as JSON. Write the handover document described in your instructions.
 
-Facts about tool calls are recorded elsewhere and omitted here; only the user
-and assistant text is included.
+Tool calls are included as one-line "tool" entries; their output is not.
 
 %s
 
@@ -150,6 +161,10 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 			previous = c.Summary
 		}
 	}
+	// The files-changed record is exact and is carried forward by merging, not
+	// by handing it to the model to rewrite.
+	previous, previousFiles := splitFilesChanged(previous)
+	files := mergeFiles(previousFiles, filesChanged(prefix, s.cwd))
 
 	stats := s.ctxSampler.get()
 	body := fmt.Sprintf(summarizationBody, previousSection(previous), transcriptJSON(prefix))
@@ -187,6 +202,7 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 	if summary == "" {
 		return nil, errors.New("compact: the model returned an empty summary; nothing was changed")
 	}
+	summary += renderFilesChanged(files)
 
 	// Last point at which cancelling leaves the session untouched: past
 	// here the entry is written and the transcript replaced.
@@ -315,27 +331,32 @@ func compactBoundary(messages []agent.Message) (int, error) {
 }
 
 // transcriptJSON renders the conversation for the summariser: what the user
-// asked and what the assistant said. Tool calls and tool results are omitted:
-// the ledger already carries that, and sending it again invites the model to
-// restate it. An assistant turn that called tools still contributes its text,
-// which is usually where the reasoning about those calls is.
+// asked, what the assistant said, and one line per tool call saying what was
+// run and how it ended. Tool output is omitted: it is bulky, and the outcome is
+// what a handover needs. Without the tool lines the summariser cannot tell what
+// was actually done from what was only discussed.
 func transcriptJSON(messages []agent.Message) string {
 	var b strings.Builder
 	b.WriteString("```json\n[")
 	first := true
+	calls := map[string]*agent.ToolCall{}
 	for _, m := range messages {
-		var role string
-		switch m.(type) {
+		var role, text string
+		switch m := m.(type) {
 		case *agent.UserMessage:
-			role = "user"
+			role, text = "user", agent.MessageText(m)
 		case *agent.AssistantMessage:
-			role = "assistant"
+			role, text = "assistant", agent.MessageText(m)
+			for _, call := range m.ToolCalls() {
+				calls[call.ID] = call
+			}
+		case *agent.ToolResultMessage:
+			role, text = "tool", toolActivity(m, calls[m.ToolCallID])
 		default:
-			// Tool results, and a previous summary, which is passed on
-			// separately as the previous handover.
+			// A previous summary, which is passed on separately as the
+			// previous handover.
 			continue
 		}
-		text := agent.MessageText(m)
 		if strings.TrimSpace(text) == "" {
 			continue
 		}
@@ -359,6 +380,113 @@ func quoteJSON(s string) string {
 		return `""` // a string always encodes; this is unreachable
 	}
 	return strings.TrimSuffix(b.String(), "\n")
+}
+
+// toolActivity is one tool call as the summariser sees it: the call in its
+// short form, and how it ended.
+func toolActivity(result *agent.ToolResultMessage, call *agent.ToolCall) string {
+	line := result.ToolName
+	if call != nil {
+		line = SummarizeToolCall(call.Name, call.Arguments)
+	}
+	if fact := trimFact(result); fact != "" {
+		line += " → " + fact
+	} else if result.IsError {
+		line += " → error"
+	}
+	return truncateUTF8(line, maxToolActivityBytes)
+}
+
+// filesChangedHeading opens the record of changed files appended to a summary.
+// It is matched exactly when a later compaction carries the record forward.
+const filesChangedHeading = "\n\n## Files changed\n\nRecorded from tool calls, not written by the summariser.\n"
+
+// filesChanged lists the files that successful edit and write calls changed,
+// relative to cwd where they are inside it, in the order they were last
+// changed.
+func filesChanged(messages []agent.Message, cwd string) []string {
+	calls := map[string]*agent.ToolCall{}
+	var files []string
+	for _, m := range messages {
+		switch m := m.(type) {
+		case *agent.AssistantMessage:
+			for _, call := range m.ToolCalls() {
+				calls[call.ID] = call
+			}
+		case *agent.ToolResultMessage:
+			call := calls[m.ToolCallID]
+			if m.IsError || call == nil || (call.Name != "edit" && call.Name != "write") {
+				continue
+			}
+			path, _ := call.Arguments["path"].(string)
+			if path == "" {
+				continue
+			}
+			files = mergeFiles(files, []string{relativeTo(cwd, path)})
+		}
+	}
+	return files
+}
+
+func relativeTo(cwd, path string) string {
+	if cwd == "" {
+		return path
+	}
+	abs := resolvePath(cwd, path)
+	if rel, err := filepath.Rel(filepath.Clean(cwd), abs); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return rel
+	}
+	return abs
+}
+
+// mergeFiles appends newer to older, moving a file that appears again to the
+// end so the order stays most-recently-changed last, and keeps the newest
+// maxFilesChanged.
+func mergeFiles(older, newer []string) []string {
+	out := make([]string, 0, len(older)+len(newer))
+	seen := map[string]bool{}
+	all := append(append([]string(nil), older...), newer...)
+	for i := len(all) - 1; i >= 0; i-- {
+		if f := all[i]; !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	if len(out) > maxFilesChanged {
+		out = out[:maxFilesChanged]
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+func renderFilesChanged(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(filesChangedHeading)
+	for _, f := range files {
+		b.WriteString("\n- " + f)
+	}
+	return b.String()
+}
+
+// splitFilesChanged separates a summary written by Summarize into the model's
+// handover and the files-changed record appended to it.
+func splitFilesChanged(summary string) (string, []string) {
+	head, record, ok := strings.Cut(summary, filesChangedHeading)
+	if !ok {
+		return summary, nil
+	}
+	var files []string
+	for _, line := range strings.Split(record, "\n") {
+		if f, ok := strings.CutPrefix(line, "- "); ok && f != "" {
+			files = append(files, f)
+		}
+	}
+	return head, files
 }
 
 func previousSection(summary string) string {

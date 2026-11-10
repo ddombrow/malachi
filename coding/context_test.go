@@ -39,7 +39,7 @@ func TestCodingRequestTrimsOldResultsWithoutChangingTranscript(t *testing.T) {
 	}
 	p := fake.New(fake.Text("done"))
 	h := agent.NewHarness(agent.HarnessConfig{
-		Provider: p, Model: "fake", PrepareRequest: newCodingContextPreparer(cwd, nil).prepare,
+		Provider: p, Model: "fake", PrepareRequest: newCodingContextPreparer(nil).prepare,
 	}, history)
 
 	if err := h.Prompt(context.Background(), agent.NewUserText("continue")); err != nil {
@@ -71,17 +71,13 @@ func TestCodingRequestTrimsOldResultsWithoutChangingTranscript(t *testing.T) {
 	if transcriptResults["old-call"].Text() != oldText || transcriptResults["recent-call"].Text() != recentText {
 		t.Fatal("request compaction must not mutate the canonical transcript")
 	}
-	ledger := ""
-	for _, message := range requestMessages {
-		if user, ok := message.(*agent.UserMessage); ok && strings.Contains(user.Content.String(), "<untrusted_tool_ledger>") {
-			ledger = user.Content.String()
-		}
+	// The marker replaces the output in place; nothing else is added. A read's
+	// outcome says nothing its call does not, so the marker carries no facts.
+	if want := "[trimmed read tool output: 45000 bytes]"; oldInRequest.Text() != want {
+		t.Fatalf("marker = %q, want %q", oldInRequest.Text(), want)
 	}
-	if ledger == "" {
-		t.Fatal("request should include the deterministic activity ledger")
-	}
-	if !strings.Contains(ledger, `read "old.go"`) || !strings.Contains(ledger, `edit "new.go"`) {
-		t.Fatalf("ledger omitted tool facts: %q", ledger)
+	if len(requestMessages) != len(history)+1 {
+		t.Fatalf("trimming must not add messages: %d vs %d", len(requestMessages), len(history)+1)
 	}
 }
 
@@ -96,15 +92,15 @@ func TestCodingContextCacheReusesAppendOnlyPrefixAndInvalidatesReplacement(t *te
 		Details: map[string]any{"path": filepath.Join(cwd, "a.go")},
 	}
 	messages := []agent.Message{agent.NewUserText("start"), assistant, result}
-	cache := newCodingContextPreparer(cwd, nil)
+	cache := newCodingContextPreparer(nil)
 	request := agent.Request{Messages: messages}
 	prepared := cache.prepare(request)
 	if prepared.Messages[1] != assistant || prepared.Messages[2] != result {
 		t.Fatal("unmodified history entries should be shared, not deep-copied")
 	}
-	firstTotal, firstRecords := cache.totalSize, len(cache.records)
+	firstTotal := cache.totalSize
 	cache.prepare(request)
-	if cache.totalSize != firstTotal || len(cache.results) != 1 || len(cache.records) != firstRecords {
+	if cache.totalSize != firstTotal || len(cache.results) != 1 {
 		t.Fatal("preparing the same prefix should reuse cached facts")
 	}
 
@@ -118,7 +114,7 @@ func TestCodingContextCacheReusesAppendOnlyPrefixAndInvalidatesReplacement(t *te
 	}
 	appended := append(append([]agent.Message(nil), messages...), assistant2, result2)
 	cache.prepare(agent.Request{Messages: appended})
-	if len(cache.results) != 2 || cache.totalSize != firstTotal+len("two-two") || len(cache.records) != 2 {
+	if len(cache.results) != 2 || cache.totalSize != firstTotal+len("two-two") {
 		t.Fatal("cache should process only newly appended messages")
 	}
 
@@ -132,8 +128,7 @@ func TestCodingContextCacheReusesAppendOnlyPrefixAndInvalidatesReplacement(t *te
 	}
 	replaced := []agent.Message{agent.NewUserText("new history"), replacementAssistant, replacementResult}
 	cache.prepare(agent.Request{Messages: replaced})
-	if len(cache.results) != 1 || cache.totalSize != len("replacement-result") || len(cache.records) != 1 ||
-		!strings.Contains(cache.records[0], `edit "c.go"`) {
+	if len(cache.results) != 1 || cache.totalSize != len("replacement-result") {
 		t.Fatal("cache should rebuild when the transcript prefix is replaced")
 	}
 }
@@ -234,7 +229,7 @@ func TestTrimRetainsOversizedMostRecentResult(t *testing.T) {
 func TestTrimStatsAndForcedBudget(t *testing.T) {
 	cwd := t.TempDir()
 	log := &trimLog{}
-	p := newCodingContextPreparer(cwd, log)
+	p := newCodingContextPreparer(log)
 
 	small := agent.NewAssistantMessage("fake")
 	small.Content = []agent.Content{&agent.ToolCall{ID: "a", Name: "bash", Arguments: map[string]any{"command": "ls"}}}
@@ -267,17 +262,17 @@ func TestTrimStatsAndForcedBudget(t *testing.T) {
 		t.Fatalf("compacted below the default ceiling: %+v", got)
 	}
 
-	// Forcing it produces stats, including the ledger entry count.
+	// Forcing it produces stats.
 	if !p.forceBudget(0) {
 		t.Fatal("forceBudget should find output to compact")
 	}
-	p.prepare(agent.Request{Messages: messages})
+	view := p.prepare(agent.Request{Messages: messages}).Messages
 	got := log.get()
 	if got.Seq == 0 || got.Results != 1 || got.Before <= got.After || got.After <= 0 {
 		t.Fatalf("want one compacted result with before>after, got %+v", got)
 	}
-	if got.LedgerEntries != 3 {
-		t.Errorf("ledger entries = %d, want 3 (bash, read, bash)", got.LedgerEntries)
+	if text := agent.MessageText(view[4]); text != "[trimmed read tool output: 20000 bytes]" {
+		t.Errorf("trimmed read marker = %q", text)
 	}
 
 	// The override lasts one request; the next pass is back to the default.
@@ -298,7 +293,7 @@ func TestTrimStatsAndForcedBudget(t *testing.T) {
 // that once per request produced pairs of identical markers.
 func TestRepeatedPassesReportOnlyNewlyTrimmedResults(t *testing.T) {
 	log := &trimLog{}
-	p := newCodingContextPreparer(t.TempDir(), log)
+	p := newCodingContextPreparer(log)
 
 	var messages []agent.Message
 	turn := func(id string, n int) {
@@ -330,9 +325,17 @@ func TestRepeatedPassesReportOnlyNewlyTrimmedResults(t *testing.T) {
 		t.Fatalf("a repeat pass must not report again: %+v", got)
 	}
 
-	// Growth that pushes the ceiling over another result is a real event: one
-	// more result joins the trimmed set.
+	// The trim went well below the ceiling, so modest growth trims nothing.
 	turn("c8", 20_000)
+	p.prepare(agent.Request{Messages: messages})
+	if got := log.get(); got.Seq != 1 || got.NewResults != 0 || got.Results != first.Results {
+		t.Fatalf("growth under the ceiling must not trim: %+v", got)
+	}
+
+	// Growth that pushes past the ceiling again is a real event: more results
+	// join the trimmed set.
+	turn("c9", 20_000)
+	turn("c10", 20_000)
 	p.prepare(agent.Request{Messages: messages})
 	second := log.get()
 	if second.Seq != 2 || second.NewResults < 1 || second.Results <= first.Results {
@@ -346,26 +349,93 @@ func TestRepeatedPassesReportOnlyNewlyTrimmedResults(t *testing.T) {
 	}
 }
 
-func TestCodingLedgerIsBoundedAndDeterministic(t *testing.T) {
-	cwd := t.TempDir()
-	call := &agent.ToolCall{ID: "c", Name: "bash", Arguments: map[string]any{"command": "go test ./..."}}
-	assistant := agent.NewAssistantMessage("fake")
-	assistant.Content = []agent.Content{call}
-	result := &agent.ToolResultMessage{
-		ToolCallID: "c", ToolName: "bash",
-		Content: []agent.Content{&agent.TextContent{Text: "tests failed\nlong detail"}},
-		Details: map[string]any{"command": "go test ./...", "exit_code": 1},
+// Trimming must not rewrite the request on every turn: the provider caches the
+// prompt prefix, and a changed early message re-sends everything after it
+// uncached. Once trimmed, a result stays trimmed, an automatic trim goes well
+// below the ceiling, and requests between trims only append.
+func TestTrimIsStickyAndKeepsThePrefixStable(t *testing.T) {
+	p := newCodingContextPreparer(&trimLog{})
+	messages := []agent.Message{agent.NewUserText("go")}
+	var prev []agent.Message
+	rewrites := 0
+	for i := 0; i < 40; i++ {
+		id := fmt.Sprintf("c%d", i)
+		a := agent.NewAssistantMessage("fake")
+		a.Content = []agent.Content{&agent.ToolCall{ID: id, Name: "grep", Arguments: map[string]any{"pattern": "x"}}}
+		a.StopReason = agent.StopToolUse
+		messages = append(messages, a, &agent.ToolResultMessage{
+			ToolCallID: id, ToolName: "grep",
+			Content: []agent.Content{&agent.TextContent{Text: strings.Repeat("x", 8_000)}},
+		})
+		view := p.prepare(agent.Request{Messages: messages}).Messages
+		for j := range prev {
+			if agent.MessageText(prev[j]) != agent.MessageText(view[j]) {
+				rewrites++
+				if strings.HasPrefix(agent.MessageText(prev[j]), "[trimmed ") {
+					t.Fatalf("request %d un-trimmed result %d", i, j)
+				}
+				break
+			}
+		}
+		prev = view
 	}
-	messages := []agent.Message{assistant, result}
-	cache := newCodingContextPreparer(cwd, nil)
-	cache.update(messages)
-	first, _ := ledgerText(cache.records)
-	second, _ := ledgerText(cache.records)
-	if first == "" || first != second || len(first) > maxLedgerBytes {
-		t.Fatalf("ledger should be deterministic and bounded: len=%d", len(first))
+	// 320 kB through a 64 kB ceiling trimmed to 32 kB is a handful of trims,
+	// not one per request.
+	if rewrites == 0 || rewrites > 10 {
+		t.Fatalf("prefix rewritten on %d of 40 requests", rewrites)
 	}
-	if !strings.Contains(first, `bash "go test ./..." — exit 1`) {
-		t.Fatalf("ledger missing command result: %q", first)
+
+	// A forced trim to an exact budget trims to it, and what it trimmed stays
+	// trimmed for the requests after it.
+	if !p.forceBudget(0) {
+		t.Fatal("forceBudget should find output to trim")
+	}
+	p.prepare(agent.Request{Messages: messages})
+	if p.forceBudget(16_000) {
+		t.Fatal("after trimming everything but the last result, nothing but markers is left above the last result")
+	}
+	view := p.prepare(agent.Request{Messages: messages}).Messages
+	for j, m := range view[:len(view)-1] {
+		if r, ok := m.(*agent.ToolResultMessage); ok && !strings.HasPrefix(r.Text(), "[trimmed ") {
+			t.Fatalf("result %d came back after a forced trim", j)
+		}
+	}
+}
+
+// A trim marker keeps how the call ended, read from the result alone. The
+// call's arguments are already in the request beside it and are not repeated.
+func TestTrimFactsKeepTheOutcome(t *testing.T) {
+	result := func(isError bool, text string, details map[string]any) *agent.ToolResultMessage {
+		return &agent.ToolResultMessage{ToolName: "bash", IsError: isError,
+			Content: []agent.Content{&agent.TextContent{Text: text}}, Details: details}
+	}
+	cases := []struct {
+		name   string
+		result *agent.ToolResultMessage
+		want   string
+	}{
+		{"exit code", result(false, "ok", map[string]any{"command": "make", "exit_code": 0}), "exit 0"},
+		{"failure keeps the first error line",
+			result(true, "tests failed\nlong detail", map[string]any{"exit_code": 1}), `exit 1: "tests failed"`},
+		{"timeout", result(true, "", map[string]any{"timed_out": true}), "timed out"},
+		{"edit's first changed line", result(false, "done", map[string]any{"path": "/a.go", "first_changed_line": 12}),
+			"first changed line 12"},
+		{"error without details", result(true, "no such file", nil), `"no such file"`},
+		{"a plain read says nothing", result(false, "contents", map[string]any{"path": "/a.go"}), ""},
+	}
+	for _, tc := range cases {
+		if got := trimFact(tc.result); got != tc.want {
+			t.Errorf("%s: fact = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+
+	long := result(true, strings.Repeat("x", 10_000), nil)
+	if got := trimFact(long); len(got) > maxTrimFactFieldBytes+8 {
+		t.Errorf("a long error line must be truncated: %d bytes", len(got))
+	}
+	marker := trimMarker(result(false, "", nil), toolResultSize{bytes: 900, fact: "exit 0"})
+	if marker != "[trimmed bash tool output: 900 bytes; exit 0]" {
+		t.Errorf("marker = %q", marker)
 	}
 }
 
@@ -377,26 +447,4 @@ func toolResultsByID(messages []agent.Message) map[string]*agent.ToolResultMessa
 		}
 	}
 	return results
-}
-
-// The count reported is what was sent: the byte cap can leave fewer records
-// than the record cap.
-func TestLedgerCountsWhatFits(t *testing.T) {
-	var records []string
-	for i := 0; i < maxLedgerRecords; i++ {
-		records = append(records, fmt.Sprintf("read %03d %s", i, strings.Repeat("x", 400)))
-	}
-	text, n := ledgerText(records)
-	if n == 0 || n >= maxLedgerRecords || len(text) > maxLedgerBytes {
-		t.Fatalf("sent %d of %d records in %d bytes", n, len(records), len(text))
-	}
-	if got := strings.Count(text, "\nread "); got != n {
-		t.Fatalf("reported %d records, text holds %d", n, got)
-	}
-	if !strings.Contains(text, fmt.Sprintf("read %03d", maxLedgerRecords-1)) {
-		t.Fatal("the newest record was dropped")
-	}
-	if _, n := ledgerText(records[:3]); n != 3 {
-		t.Fatalf("small ledger reported %d", n)
-	}
 }
