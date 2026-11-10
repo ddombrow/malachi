@@ -2,6 +2,7 @@ package coding
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/ddombrow/malachi/agent"
+	"github.com/ddombrow/malachi/ai/fake"
+	"github.com/ddombrow/malachi/sandbox"
 )
 
 // readLog returns the parsed records from a diagnostics log.
@@ -191,5 +194,78 @@ func TestDiagnosticsLogRotates(t *testing.T) {
 	recs := readLog(t, d.Path())
 	if last := recs[len(recs)-1]["error"].(string); !strings.HasPrefix(last, "failure 99 ") {
 		t.Fatalf("the newest record was lost: %q", last)
+	}
+}
+
+// A real denial from a file tool, run through the loop, is logged with the
+// tool, the path refused and the policy's reason; an ordinary tool error is
+// not.
+func TestDiagnosticsRecordsSandboxDenials(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	secret := filepath.Join(home, "settings.json")
+	if err := os.WriteFile(secret, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pol := sandbox.Build(sandbox.Config{Cwd: cwd, Home: home})
+	tools := CodingTools(cwd, ToolOptions{Sandbox: func() sandbox.Policy { return pol }})
+	p := fake.New(
+		fake.ToolCalls("", fake.Call{ID: "c1", Name: "read", Args: map[string]any{"path": secret}}),
+		fake.ToolCalls("", fake.Call{ID: "c2", Name: "read", Args: map[string]any{"path": filepath.Join(cwd, "missing.go")}}),
+		fake.Text("done"),
+	)
+	d := NewDiagnostics(t.TempDir())
+	agent.Run(context.Background(), agent.LoopConfig{Provider: p, Model: "m", Tools: tools}, nil,
+		[]agent.Message{agent.NewUserText("go")}, d.observe)
+
+	var denials []map[string]any
+	for _, r := range readLog(t, d.Path()) {
+		if r["kind"] == "sandbox_denied" {
+			denials = append(denials, r)
+		}
+	}
+	if len(denials) != 1 {
+		t.Fatalf("want 1 denial, got %v", denials)
+	}
+	r := denials[0]
+	if r["tool"] != "read" || r["source"] != "policy" || r["target"] != secret ||
+		!strings.Contains(r["reason"].(string), "hidden") {
+		t.Fatalf("record %v", r)
+	}
+}
+
+func TestSandboxDenialFromCommandOutput(t *testing.T) {
+	on := sandbox.Policy{Enabled: true}
+	cases := []struct {
+		name   string
+		pol    sandbox.Policy
+		output string
+		want   string
+	}{
+		// gh prints Go's lowercase error; this used to go unnoticed.
+		{"lowercase EPERM", on, "warning: x\nopen /Users/u/.config/gh/config.yml: operation not permitted\n",
+			"open /Users/u/.config/gh/config.yml: operation not permitted"},
+		{"DNS with the network off", on, "fatal: unable to access 'https://github.com/x.git/': Could not resolve host: github.com\n",
+			"fatal: unable to access 'https://github.com/x.git/': Could not resolve host: github.com"},
+		{"DNS with the network on is not the sandbox", sandbox.Policy{Enabled: true, Network: true},
+			"Could not resolve host: github.com\n", ""},
+		{"sandbox off", sandbox.Policy{}, "operation not permitted\n", ""},
+		{"ordinary failure", on, "FAIL\tgithub.com/x\n", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sandboxDenial(tc.pol, tc.output); got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+
+	// A command denial reaches the log through the result's details.
+	d := NewDiagnostics(t.TempDir())
+	d.observe(&agent.ToolExecutionStartEvent{ToolCallID: "b", ToolName: "bash", Args: map[string]any{"command": "git push"}})
+	d.observe(&agent.ToolExecutionEndEvent{ToolCallID: "b", ToolName: "bash", Result: agent.ToolResult{
+		Details: map[string]any{"sandbox_denial": "Could not resolve host: github.com"}}})
+	recs := readLog(t, d.Path())
+	if len(recs) != 1 || recs[0]["source"] != "command" || recs[0]["target"] != "git push" || recs[0]["tool"] != "bash" {
+		t.Fatalf("records %v", recs)
 	}
 }

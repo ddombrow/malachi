@@ -386,9 +386,10 @@ wait:
 	if status != "" {
 		text = strings.TrimRight(text, "\n") + "\n\n" + status
 	}
+	denial := ""
 	if exitCode != 0 && !cancelled && !timedOut {
-		if hint := sandboxHint(pol, out.snapshot()); hint != "" {
-			text += "\n" + hint
+		if denial = sandboxDenial(pol, out.snapshot()); denial != "" {
+			text += "\n" + sandboxHint(pol)
 		}
 	}
 
@@ -404,21 +405,46 @@ wait:
 			"full_output_path": fullPath,
 			"output_bytes":     totalBytes,
 			"dropped_bytes":    dropped,
+			"sandbox_denial":   denial,
 		},
 	}, nil
 }
 
 // denialSigns are what a command prints when the sandbox refused it: EPERM
 // for file writes, hidden paths and (with the network off) sockets, and the
-// helper's own message when it could not start the command.
-var denialSigns = []string{"Operation not permitted", "Permission denied", "Read-only file system", "malachi sandbox:"}
+// helper's own message when it could not start the command. They are matched
+// case-insensitively: Go programs print "operation not permitted".
+var denialSigns = []string{"operation not permitted", "permission denied", "read-only file system", "malachi sandbox:"}
 
-// sandboxHint explains a failure that looks like a sandbox denial, so the
-// model asks instead of retrying or working around it; "" otherwise.
-func sandboxHint(p sandbox.Policy, output string) string {
-	if !p.Enabled || !slices.ContainsFunc(denialSigns, func(s string) bool { return strings.Contains(output, s) }) {
+// networkDenialSigns are how a failed name lookup reads with the network
+// off: the sandbox blocks DNS, so that is where a network command fails.
+var networkDenialSigns = []string{
+	"could not resolve host", "temporary failure in name resolution", "nodename nor servname provided",
+	"name or service not known", "no such host", "network is unreachable",
+}
+
+// sandboxDenial returns the first output line that looks like the sandbox
+// refusing the command, or "" if none does or the sandbox is off.
+func sandboxDenial(p sandbox.Policy, output string) string {
+	if !p.Enabled {
 		return ""
 	}
+	signs := denialSigns
+	if !p.Network {
+		signs = append(slices.Clone(denialSigns), networkDenialSigns...)
+	}
+	for line := range strings.Lines(output) {
+		lower := strings.ToLower(line)
+		if slices.ContainsFunc(signs, func(s string) bool { return strings.Contains(lower, s) }) {
+			return clipLine(strings.TrimSpace(line), MaxGrepLineWidth)
+		}
+	}
+	return ""
+}
+
+// sandboxHint explains a failure that looks like a sandbox denial, so the
+// model asks instead of retrying or working around it.
+func sandboxHint(p sandbox.Policy) string {
 	network := ""
 	if !p.Network {
 		network = " The network is off."
