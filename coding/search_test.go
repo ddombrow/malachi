@@ -398,3 +398,71 @@ func TestIgnoreRulesAreBoundedAndReported(t *testing.T) {
 		t.Fatalf("footer: %q", r.Text())
 	}
 }
+
+func TestGrepContextGroupsAndSeparates(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "a.go", "l1\nl2\nhit3\nl4\nhit5\nl6\nl7\nl8\nl9\nhit10\nl11\n")
+	write(t, dir, "b.go", "hit1\nl2\n")
+	r, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "hit", "context": float64(1), "path": "a.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2-6 overlap into one group; 9-11 is separate.
+	want := "a.go-2- l2\na.go:3: hit3\na.go-4- l4\na.go:5: hit5\na.go-6- l6\n--\na.go-9- l9\na.go:10: hit10\na.go-11- l11\n\n3 matches in 1 of 1 searched file"
+	if got := r.Text(); got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+
+	// A new file always starts a new group.
+	r, err = run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "hit1", "context": float64(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.Text(), "\n--\n") {
+		t.Fatalf("no separator between files:\n%s", r.Text())
+	}
+}
+
+func TestGrepContextStopsAtTheLimit(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "a.go", "hit1\nl2\nhit3\nl4\n")
+	r, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "hit", "context": float64(2), "limit": float64(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The trailing context ends before the next match, which is past the limit.
+	if out := r.Text(); !strings.HasPrefix(out, "a.go:1: hit1\na.go-2- l2\n\n") || !strings.Contains(out, "stopped at the limit") {
+		t.Fatalf("output:\n%s", out)
+	}
+}
+
+func TestGrepOutputModes(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "a.go", "x\nx\nx\n")
+	write(t, dir, "b.go", "x\n")
+	write(t, dir, "c.go", "y\n")
+	r, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "x", "output": "files"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Text(); got != "a.go\nb.go\n\n2 of 3 searched files match" {
+		t.Fatalf("files:\n%s", got)
+	}
+	r, err = run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "x", "output": "count"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Text(); got != "a.go: 3\nb.go: 1\n\n4 matches in 2 of 3 searched files" {
+		t.Fatalf("count:\n%s", got)
+	}
+	r, err = run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "x", "output": "files", "limit": float64(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Text(); !strings.HasPrefix(got, "a.go\n\n") || !strings.Contains(got, "stopped at the limit of 1") {
+		t.Fatalf("files limit:\n%s", got)
+	}
+	if _, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "x", "output": "paths"}); err == nil {
+		t.Fatal("accepted an unknown output mode")
+	}
+}

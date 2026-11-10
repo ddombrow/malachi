@@ -29,6 +29,16 @@ const (
 	// put entire documents on one line, and one match should not be able to
 	// fill the window.
 	MaxGrepLineWidth = 300
+	// MaxGrepContext caps the context argument. More than this is reading the
+	// file, which read does with less noise.
+	MaxGrepContext = 20
+)
+
+// Grep output modes.
+const (
+	grepLines = "lines" // matching lines, with any context
+	grepFiles = "files" // paths of files with a match
+	grepCount = "count" // matches per file
 )
 
 // binarySniffBytes is how much of a file is checked for a NUL byte.
@@ -41,12 +51,15 @@ func NewGrepTool(cwd string, opts ToolOptions) *agent.Tool {
 		Label: "Grep",
 		Description: fmt.Sprintf("Search file contents with a regular expression and return matching lines "+
 			"as path:line: text. Searches the working directory by default; pass path to target a file or "+
-			"subdirectory, and glob to restrict by filename (e.g. \"*_test.go\"). Returns at most %d matches; "+
-			"narrow the pattern or add a glob to see more.", DefaultGrepLimit),
+			"subdirectory, and glob to restrict by filename (e.g. \"*_test.go\"). Set context to also show "+
+			"that many lines around each match (shown as path-line- text, with -- between separate groups). "+
+			"Set output to \"files\" to list only matching paths, or \"count\" for matches per file. "+
+			"Returns at most %d results; narrow the pattern or add a glob to see more.", DefaultGrepLimit),
 		PromptSnippet: "Search file contents by regular expression",
 		PromptGuidelines: []string{
 			"Use grep to find where something is defined or used, instead of reading whole files or shelling out to grep/rg.",
 			"Search for a distinctive identifier rather than reading a file to see whether it contains something.",
+			"Use grep's context option to see the code around a match instead of grep -A/-B/-C in bash.",
 		},
 		Parallel: true,
 		Parameters: map[string]any{
@@ -56,7 +69,13 @@ func NewGrepTool(cwd string, opts ToolOptions) *agent.Tool {
 				"path":        map[string]any{"type": "string", "description": "File or directory to search (default: working directory)"},
 				"glob":        map[string]any{"type": "string", "description": "Only search files matching this pattern, e.g. \"*.go\" or \"src/**/*.ts\""},
 				"ignore_case": map[string]any{"type": "boolean", "description": "Case-insensitive match"},
-				"limit":       map[string]any{"type": "integer", "description": fmt.Sprintf("Maximum matches to return (default %d, max %d)", DefaultGrepLimit, MaxGrepLimit)},
+				"context":     map[string]any{"type": "integer", "description": fmt.Sprintf("Lines of context to show before and after each match (default 0, max %d)", MaxGrepContext)},
+				"output": map[string]any{
+					"type":        "string",
+					"enum":        []string{grepLines, grepFiles, grepCount},
+					"description": "lines (default): matching lines; files: only paths of matching files; count: number of matches per file",
+				},
+				"limit": map[string]any{"type": "integer", "description": fmt.Sprintf("Maximum results to return: matches, or files for output files/count (default %d, max %d)", DefaultGrepLimit, MaxGrepLimit)},
 			},
 			"required": []string{"pattern"},
 		},
@@ -96,6 +115,25 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 		return agent.ToolResult{}, fmt.Errorf("limit must be at least 1")
 	}
 	limit = min(limit, MaxGrepLimit)
+	contextLines, _, err := optInt(args, "context")
+	if err != nil {
+		return agent.ToolResult{}, err
+	}
+	if contextLines < 0 {
+		return agent.ToolResult{}, fmt.Errorf("context must be at least 0")
+	}
+	contextLines = min(contextLines, MaxGrepContext)
+	mode, _, err := optStr(args, "output")
+	if err != nil {
+		return agent.ToolResult{}, err
+	}
+	switch mode {
+	case "", "content": // "content" is what other harnesses call it
+		mode = grepLines
+	case grepLines, grepFiles, grepCount:
+	default:
+		return agent.ToolResult{}, fmt.Errorf("output must be %q, %q or %q", grepLines, grepFiles, grepCount)
+	}
 
 	expr := pattern
 	if ignoreCase {
@@ -139,23 +177,84 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 		}
 		searched++
 		found := 0
+		// Context state for this file: the lines held back in case a match
+		// follows, how many lines after the last match are still owed, and
+		// the last line printed, which decides where a -- separator goes.
+		type held struct {
+			n    int
+			text string
+		}
+		var before []held
+		after, printed := 0, 0
+		emit := func(n int, sep byte, text string) {
+			lines = append(lines, fmt.Sprintf("%s%c%d%c %s", rel, sep, n, sep, clipLine(text, MaxGrepLineWidth)))
+			printed = n
+		}
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 0, 64*1024), MaxGrepFileBytes)
 		for n := 1; sc.Scan(); n++ {
 			text := sc.Text()
 			if !re.MatchString(text) {
+				switch {
+				case after > 0:
+					emit(n, '-', text)
+					after--
+				case hitLimit:
+					return errStopWalk
+				case contextLines > 0:
+					if before = append(before, held{n, text}); len(before) > contextLines {
+						before = before[1:]
+					}
+				}
 				continue
+			}
+			if hitLimit {
+				// A match inside the trailing context of the last result
+				// would be a result past the limit; stop before it.
+				return errStopWalk
 			}
 			found++
 			matches++
-			lines = append(lines, fmt.Sprintf("%s:%d: %s", rel, n, clipLine(text, MaxGrepLineWidth)))
+			if mode != grepLines {
+				if mode == grepFiles {
+					break // one match is enough to list the file
+				}
+				continue
+			}
+			if contextLines > 0 {
+				first := n
+				if len(before) > 0 {
+					first = before[0].n
+				}
+				if len(lines) > 0 && (printed == 0 || first > printed+1) {
+					lines = append(lines, "--")
+				}
+				for _, h := range before {
+					emit(h.n, '-', h.text)
+				}
+				before, after = before[:0], contextLines
+			}
+			emit(n, ':', text)
 			if matches >= limit {
 				hitLimit = true
-				return errStopWalk
+				if after == 0 {
+					return errStopWalk
+				}
 			}
 		}
-		if found > 0 {
-			files++
+		if found == 0 {
+			return nil
+		}
+		files++
+		switch mode {
+		case grepFiles:
+			lines = append(lines, rel)
+		case grepCount:
+			lines = append(lines, fmt.Sprintf("%s: %d", rel, found))
+		}
+		if mode != grepLines && files >= limit {
+			hitLimit = true
+			return errStopWalk
 		}
 		return nil
 	}
@@ -165,7 +264,7 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 		return agent.ToolResult{}, err
 	}
 
-	scope := grepFooter(matches, files, searched, hitLimit, skippedBig, skippedBin, limit) + stats.note()
+	scope := grepFooter(mode, matches, files, searched, hitLimit, skippedBig, skippedBin, limit) + stats.note()
 	var out string
 	if matches == 0 {
 		// A negative result is only trustworthy if it says what was searched:
@@ -183,7 +282,7 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 	return agent.ToolResult{
 		Content: []agent.Content{&agent.TextContent{Text: out}},
 		Details: map[string]any{
-			"pattern": pattern, "path": root, "matches": matches,
+			"pattern": pattern, "path": root, "matches": matches, "output": mode,
 			"files": files, "searched": searched, "hit_limit": hitLimit,
 			"skipped_big": skippedBig, "skipped_binary": skippedBin,
 		},
@@ -192,14 +291,24 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 
 // grepFooter states what was searched and what was left out. A silent result
 // is indistinguishable from a broken search unless the scope is reported.
-func grepFooter(matches, files, searched int, hitLimit bool, skippedBig, skippedBin int, limit int) string {
-	unit := "matches"
-	if matches == 1 {
-		unit = "match"
-	}
-	s := fmt.Sprintf("%d %s in %d of %d searched file", matches, unit, files, searched)
-	if searched != 1 {
-		s += "s"
+func grepFooter(mode string, matches, files, searched int, hitLimit bool, skippedBig, skippedBin int, limit int) string {
+	var s string
+	if mode == grepFiles {
+		// Scanning stops at a file's first match, so only files are counted.
+		s = fmt.Sprintf("%d of %d searched file", files, searched)
+		if searched != 1 {
+			s += "s"
+		}
+		s += " match"
+	} else {
+		unit := "matches"
+		if matches == 1 {
+			unit = "match"
+		}
+		s = fmt.Sprintf("%d %s in %d of %d searched file", matches, unit, files, searched)
+		if searched != 1 {
+			s += "s"
+		}
 	}
 	if hitLimit {
 		s += fmt.Sprintf(" — stopped at the limit of %d, so results may continue", limit)
