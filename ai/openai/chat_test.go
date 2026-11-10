@@ -143,6 +143,30 @@ func TestHTTPErrorBecomesErrorMessage(t *testing.T) {
 	}
 }
 
+// Every failure path leaves a diagnostic agent.Classify can read, so an app
+// tells a bad key from a rate limit without matching on error text.
+func TestFailuresAreClassified(t *testing.T) {
+	srv := server(t, 401, `{"error":{"message":"invalid api key"}}`, nil)
+	if k := agent.Classify(final(t, collect(New(Config{BaseURL: srv.URL + "/v1"}), agent.Request{Model: "m"}))); k != agent.ErrorAuth {
+		t.Errorf("401: %q", k)
+	}
+
+	srv = server(t, 200, sseBody(`{"error":{"message":"slow down","type":"rate_limit_error"}}`), nil)
+	m := final(t, collect(New(Config{BaseURL: srv.URL + "/v1"}), agent.Request{Model: "m"}))
+	if k := agent.Classify(m); k != agent.ErrorRateLimit || !strings.Contains(m.ErrorMessage, "slow down") {
+		t.Errorf("stream error: %q %q", k, m.ErrorMessage)
+	}
+
+	// Nothing is listening: a transport failure, not an HTTP one.
+	srv = httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL
+	srv.Close()
+	p := New(Config{BaseURL: url + "/v1", MaxRetries: -1})
+	if k := agent.Classify(final(t, collect(p, agent.Request{Model: "m"}))); k != agent.ErrorNetwork {
+		t.Errorf("refused connection: %q", k)
+	}
+}
+
 func TestRetriesTransientStatus(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

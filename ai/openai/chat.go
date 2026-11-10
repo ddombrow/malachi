@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"net"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -107,14 +108,54 @@ func (p *Provider) failRequest(ctx context.Context, b *ai.Builder, err error) {
 	}
 	var he *httpError
 	if errors.As(err, &he) {
-		msg := b.Message()
-		msg.Diagnostics = append(msg.Diagnostics, agent.Diagnostic{
-			Type:      "http_error",
-			Timestamp: agent.NowMillis(),
-			Error:     &agent.DiagnosticError{Name: "HTTPError", Message: he.body, Code: he.status},
-		})
+		diagnose(b, agent.DiagnosticHTTPError, "HTTPError", he.body, he.status)
+	} else {
+		diagnoseNetwork(b, err)
 	}
 	b.Error(agent.StopError, err.Error())
+}
+
+// diagnose records why a request failed, in the shape agent.Classify reads.
+func diagnose(b *ai.Builder, typ, name, message string, code any) {
+	if s, ok := code.(string); ok && s == "" {
+		code = nil
+	}
+	msg := b.Message()
+	msg.Diagnostics = append(msg.Diagnostics, agent.Diagnostic{
+		Type:      typ,
+		Timestamp: agent.NowMillis(),
+		Error:     &agent.DiagnosticError{Name: name, Message: message, Code: code},
+	})
+}
+
+// diagnoseNetwork records a transport failure, marking timeouts so they can
+// be told from a dropped connection.
+func diagnoseNetwork(b *ai.Builder, err error) {
+	name := "NetworkError"
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		name = agent.DiagnosticNameTimeout
+	}
+	diagnose(b, agent.DiagnosticNetworkError, name, err.Error(), nil)
+}
+
+// streamErrorCode is the provider's own code for an error reported inside a
+// stream: "code" when it gives one, else "type".
+func streamErrorCode(raw json.RawMessage) any {
+	var e struct {
+		Code any    `json:"code"`
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(raw, &e) != nil {
+		return nil
+	}
+	if s, ok := e.Code.(string); ok && s != "" {
+		return s
+	}
+	if e.Type != "" {
+		return e.Type
+	}
+	return e.Code
 }
 
 // isProtocolMismatch reports a gateway refusing a model on this endpoint
@@ -578,6 +619,7 @@ func parseStream(ctx context.Context, body io.Reader, b *ai.Builder) {
 			if ctx.Err() != nil {
 				b.Error(agent.StopAborted, "Operation aborted")
 			} else {
+				diagnoseNetwork(b, err)
 				b.Error(agent.StopError, "stream read: "+err.Error())
 			}
 			return
@@ -596,7 +638,9 @@ func parseStream(ctx context.Context, body io.Reader, b *ai.Builder) {
 			return
 		}
 		if len(c.Error) > 0 && string(c.Error) != "null" {
-			b.Error(agent.StopError, "Provider stream error: "+errorText(`{"error":`+string(c.Error)+`}`))
+			text := errorText(`{"error":` + string(c.Error) + `}`)
+			diagnose(b, agent.DiagnosticStreamError, "StreamError", text, streamErrorCode(c.Error))
+			b.Error(agent.StopError, "Provider stream error: "+text)
 			return
 		}
 		if c.ID != "" && msg.ResponseID == "" {

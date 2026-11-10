@@ -224,70 +224,10 @@ func estimatedContextLine(model string, c ContextStats) string {
 	return b.String()
 }
 
-// contextLimitPhrases are how providers say "your request was too big". This is
-// a heuristic used for counting, and later for deciding to retry; it is not a
-// substitute for a per-provider error type.
-var contextLimitPhrases = []string{
-	"context length", "context_length", "maximum context", "too many tokens",
-	"too long", "prompt is too long", "reduce the length",
-}
-
-// isContextLimit reports whether a failed assistant message looks like the
-// provider rejecting the request for size.
+// isContextLimit reports whether a failed assistant message is the provider
+// rejecting the request for size.
 func isContextLimit(m *agent.AssistantMessage) bool {
-	if m == nil || m.StopReason != agent.StopError {
-		return false
-	}
-	for _, d := range m.Diagnostics {
-		if d.Type != "http_error" || d.Error == nil {
-			continue
-		}
-		text := strings.ToLower(d.Error.Message + " " + d.Error.Name)
-		if !mentionsSize(text) {
-			continue
-		}
-		// Only 400-class rejections are size complaints; a 503 whose body
-		// happens to say "too long" is an outage.
-		switch statusCode(d.Error.Code) {
-		case 400, 413:
-			return true
-		case 0: // no code recorded: the phrase is all we have
-			return true
-		}
-	}
-	// No classified diagnostic to go on, so fall back to the message text.
-	if len(m.Diagnostics) == 0 {
-		return mentionsSize(strings.ToLower(m.ErrorMessage))
-	}
-	return false
-}
-
-func mentionsSize(text string) bool {
-	for _, phrase := range contextLimitPhrases {
-		if strings.Contains(text, phrase) {
-			return true
-		}
-	}
-	return false
-}
-
-// statusCode reads an HTTP status from a decoded diagnostic, which may be a
-// float64 from JSON or an int set in this process.
-func statusCode(v any) int {
-	switch n := v.(type) {
-	case int:
-		return n
-	case int32:
-		return int(n)
-	case int64:
-		return int(n)
-	case float64:
-		return int(n)
-	case json.Number:
-		i, _ := n.Int64()
-		return int(i)
-	}
-	return 0
+	return agent.Classify(m) == agent.ErrorContextLimit
 }
 
 // contextReserveTokens is headroom kept for the next response and for the

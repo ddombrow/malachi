@@ -192,12 +192,26 @@ type responsesEvent struct {
 	Item        json.RawMessage `json:"item"`
 	Response    json.RawMessage `json:"response"`
 	Message     string          `json:"message"`
+	Code        string          `json:"code"`
 	Error       *apiError       `json:"error"`
 	OutputIndex int             `json:"output_index"`
 }
 
 type apiError struct {
 	Message string `json:"message"`
+	Code    string `json:"code"`
+	Type    string `json:"type"`
+}
+
+// code is the provider's own error code, or its type when it gave no code.
+func (e *apiError) code() string {
+	if e == nil {
+		return ""
+	}
+	if e.Code != "" {
+		return e.Code
+	}
+	return e.Type
 }
 
 type responsesItem struct {
@@ -300,6 +314,7 @@ func parseResponsesStream(ctx context.Context, body io.Reader, b *ai.Builder) {
 			if ctx.Err() != nil {
 				b.Error(agent.StopAborted, "Operation aborted")
 			} else {
+				diagnoseNetwork(b, err)
 				b.Error(agent.StopError, "stream read: "+err.Error())
 			}
 			return
@@ -383,6 +398,7 @@ func parseResponsesStream(ctx context.Context, body io.Reader, b *ai.Builder) {
 			if res.Error != nil && res.Error.Message != "" {
 				text = res.Error.Message
 			}
+			diagnose(b, agent.DiagnosticStreamError, "ResponseFailed", text, res.Error.code())
 			b.Error(agent.StopError, text)
 			return
 		case "error":
@@ -393,6 +409,11 @@ func parseResponsesStream(ctx context.Context, body io.Reader, b *ai.Builder) {
 			if text == "" {
 				text = "Provider stream error"
 			}
+			code := e.Code
+			if code == "" {
+				code = e.Error.code()
+			}
+			diagnose(b, agent.DiagnosticStreamError, "StreamError", text, code)
 			b.Error(agent.StopError, fmt.Sprintf("Provider stream error: %s", text))
 			return
 		}

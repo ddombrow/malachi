@@ -249,17 +249,25 @@ func TestOtherBadRequestsDoNotFallBack(t *testing.T) {
 }
 
 func TestResponsesFailuresBecomeErrorMessages(t *testing.T) {
-	cases := map[string]string{
-		responsesSSE(map[string]any{"type": "response.failed", "response": map[string]any{"error": map[string]any{"message": "overloaded"}}}): "overloaded",
-		responsesSSE(map[string]any{"type": "error", "message": "rate limited"}):                                                              "rate limited",
-		responsesSSE(map[string]any{"type": "response.output_text.delta", "delta": "par"}):                                                    "ended before completion",
+	type want struct {
+		text string
+		kind agent.ErrorKind
+	}
+	cases := map[string]want{
+		responsesSSE(map[string]any{"type": "response.failed", "response": map[string]any{"error": map[string]any{"message": "overloaded"}}}): {"overloaded", agent.ErrorServer},
+		responsesSSE(map[string]any{"type": "error", "message": "rate limited"}):                                                              {"rate limited", agent.ErrorRateLimit},
+		responsesSSE(map[string]any{"type": "error", "code": "context_length_exceeded", "message": "input exceeds the limit"}):                {"exceeds the limit", agent.ErrorContextLimit},
+		responsesSSE(map[string]any{"type": "response.output_text.delta", "delta": "par"}):                                                    {"ended before completion", agent.ErrorUnknown},
 	}
 	for stream, want := range cases {
 		g := &gateway{responses: stream}
 		srv := g.serve(t)
 		m := final(t, collect(New(Config{BaseURL: srv.URL + "/v1", ResponsesModels: []string{"m"}}), agent.Request{Model: "m"}))
-		if m.StopReason != agent.StopError || !strings.Contains(m.ErrorMessage, want) {
-			t.Errorf("want error containing %q, got stop=%s %q", want, m.StopReason, m.ErrorMessage)
+		if m.StopReason != agent.StopError || !strings.Contains(m.ErrorMessage, want.text) {
+			t.Errorf("want error containing %q, got stop=%s %q", want.text, m.StopReason, m.ErrorMessage)
+		}
+		if k := agent.Classify(m); k != want.kind {
+			t.Errorf("%q classified %q, want %q", want.text, k, want.kind)
 		}
 	}
 }
