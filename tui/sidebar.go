@@ -12,8 +12,8 @@ import (
 )
 
 // The sidebar is a panel beside the transcript showing the session's
-// surroundings, one section after another: today the sandbox, later MCP
-// servers and Code Mode. Each section draws from session state cached in
+// surroundings, one section after another: today the sandbox and project
+// trust, later MCP servers and Code Mode. Each section draws from session state cached in
 // sidebarState and refreshed from the session's events; the UI keeps no
 // rules of its own.
 const (
@@ -84,7 +84,7 @@ func (m *model) toggleNetwork() tea.Cmd {
 
 // sidebarSections are the sidebar's sections, top to bottom.
 func (m *model) sidebarSections() [][]sideRow {
-	return [][]sideRow{m.sandboxSection()}
+	return [][]sideRow{m.sandboxSection(), m.trustSection()}
 }
 
 // sidePair puts label on the left of a row and value on the right.
@@ -141,6 +141,55 @@ func (m *model) sandboxSection() []sideRow {
 	}
 	add(sidePair("hidden", s.dim.Render(fmt.Sprintf("%d paths", len(st.Hidden)))))
 	return rows
+}
+
+// trustSection shows whether the project's instruction files are in the
+// prompt, and what decided it. It reads the session's trust state directly:
+// that is held in memory, and only this frontend's /trust changes it. It
+// offers no click: trusting a project is a decision to make by typing.
+func (m *model) trustSection() []sideRow {
+	t, s := m.s.TrustState(), m.r.st
+	var rows []sideRow
+	add := func(text string) { rows = append(rows, sideRow{text: text}) }
+	files := fmt.Sprintf("  %d instruction file", t.Resources.Total)
+	if t.Resources.Total != 1 {
+		files += "s"
+	}
+	switch {
+	case t.Resources.Empty():
+		add(sidePair(s.accent.Render("trust"), s.dim.Render("no project files")))
+		return rows
+	case t.Trusted():
+		add(sidePair(s.accent.Render("trust"), s.toolOK.Render("yes")))
+		add(s.dim.Render(files + " loaded"))
+	case t.Pending:
+		add(sidePair(s.accent.Render("trust"), s.toolRun.Render("undecided")))
+		add(s.dim.Render(files + " withheld"))
+		add(s.dim.Render("  /trust to decide"))
+		return rows
+	default:
+		add(sidePair(s.accent.Render("trust"), s.toolErr.Render("no")))
+		add(s.dim.Render(files + " withheld"))
+	}
+	add(s.dim.Render("  " + trustSourceText(t)))
+	return rows
+}
+
+// trustSourceText says where a trust decision came from.
+func trustSourceText(t coding.TrustState) string {
+	switch t.Source {
+	case "run":
+		return "for this run (-trust)"
+	case "session":
+		return "for this session"
+	case "saved":
+		return "saved for this directory"
+	case "inherited":
+		return "saved for " + shortenHome(t.InheritedFrom)
+	case "always", "never":
+		return "projectTrust: " + t.Source
+	}
+	return t.Source
 }
 
 // sidebarRows lays the sidebar out as exactly height rows: a close row on

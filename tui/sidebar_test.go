@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/ddombrow/malachi/ai/fake"
 	"github.com/ddombrow/malachi/coding"
 )
 
@@ -120,6 +122,39 @@ func TestSidebarClipsToHeight(t *testing.T) {
 	for _, l := range lines {
 		if lipgloss.Width(l) != sidebarWidth {
 			t.Fatalf("line %q is %d columns", ansi.Strip(l), lipgloss.Width(l))
+		}
+	}
+}
+
+func TestSidebarShowsTrust(t *testing.T) {
+	m := newTestModel(t)
+	if text := sidebarText(m); !strings.Contains(text, "no project files") {
+		t.Fatalf("trust without project files:\n%s", text)
+	}
+
+	home, cwd := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(cwd, "AGENTS.md"), []byte("project rules"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := coding.Open(coding.Options{
+		Cwd: cwd, Home: home, Settings: &coding.Settings{}, Provider: fake.New(), NoSession: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	m = newModel(s, "")
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	for _, step := range []struct{ cmd, want string }{
+		{"", "undecided"},
+		{"/trust yes", "for this session"},
+		{"/trust no --save", "saved for this directory"},
+	} {
+		if step.cmd != "" {
+			m.command(step.cmd)
+		}
+		if text := sidebarText(m); !strings.Contains(text, step.want) || !strings.Contains(text, "1 instruction file ") {
+			t.Fatalf("after %q want %q:\n%s", step.cmd, step.want, text)
 		}
 	}
 }
