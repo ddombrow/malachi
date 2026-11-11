@@ -106,7 +106,11 @@ func TestNetworkToggleKeyAndClick(t *testing.T) {
 func TestSidebarFollowsSandboxEvents(t *testing.T) {
 	m := newTestModel(t)
 	st := m.s.Sandbox()
-	st.Readable = append(st.Readable, filepath.Join(t.TempDir(), "granted-elsewhere"))
+	granted := filepath.Join(t.TempDir(), "granted-elsewhere")
+	if err := os.Mkdir(granted, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st.Readable = append(st.Readable, granted)
 	m.handleEvent(coding.SandboxChangedEvent{State: st})
 	if !strings.Contains(sidebarText(m), "granted-elsewhere") {
 		t.Fatalf("event not shown:\n%s", sidebarText(m))

@@ -2,6 +2,7 @@ package coding
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 
@@ -55,14 +56,14 @@ func (st SandboxState) Describe() string {
 		sockets = "any (local daemons such as Docker are reachable)"
 	}
 	fmt.Fprintf(&b, "  network: %s\n  unix sockets: %s\n  writable:\n", network, sockets)
-	for _, w := range st.Writable {
+	for _, w := range existing(st.Writable) {
 		b.WriteString("    " + w + "\n")
 	}
 	if len(st.Private) == 0 {
 		b.WriteString("  readable: everything not hidden\n")
 	} else {
 		fmt.Fprintf(&b, "  readable in %s: only these and the writable directories\n", strings.Join(st.Private, ", "))
-		for _, r := range st.Readable {
+		for _, r := range existing(st.Readable) {
 			b.WriteString("    " + r + "\n")
 		}
 	}
@@ -83,14 +84,26 @@ type SandboxGrants struct {
 	BuiltinRead, BuiltinWrite int
 }
 
-// Grants arranges st's roots for display. It resolves the defaults afresh,
-// so a frontend computes it when the sandbox changes, not every frame.
+// Grants arranges st's roots for display. It resolves the defaults afresh
+// and checks which roots exist, so a frontend computes it when the sandbox
+// changes, not every frame.
 func (st SandboxState) Grants() SandboxGrants {
 	base := sandbox.Build(sandbox.Config{})
 	var g SandboxGrants
-	g.Read, g.BuiltinRead = splitBuiltin(st.Readable, base.Readable)
-	g.Write, g.BuiltinWrite = splitBuiltin(st.Writable, base.Writable)
+	g.Read, g.BuiltinRead = splitBuiltin(existing(st.Readable), base.Readable)
+	g.Write, g.BuiltinWrite = splitBuiltin(existing(st.Writable), base.Writable)
 	return g
+}
+
+// existing keeps the roots that exist. The defaults name every common
+// toolchain and cache location, granted whether or not it exists so a tool
+// installed mid-session works at once; displays leave out the missing ones,
+// which would only be noise.
+func existing(roots []string) []string {
+	return slices.DeleteFunc(slices.Clone(roots), func(r string) bool {
+		_, err := os.Stat(r)
+		return err != nil
+	})
 }
 
 // splitBuiltin separates roots into those not in builtin and a count of

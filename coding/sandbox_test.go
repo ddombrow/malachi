@@ -342,3 +342,28 @@ func TestSandboxGrants(t *testing.T) {
 		t.Fatalf("write %v, builtin %d", g.Write, g.BuiltinWrite)
 	}
 }
+
+// Displays leave out default roots that do not exist, while the sandbox
+// still grants them.
+func TestSandboxDisplayOmitsMissingRoots(t *testing.T) {
+	s, project, _, _ := homeSession(t)
+	cargo := filepath.Join(filepath.Dir(filepath.Dir(project)), ".cargo")
+	line := " " + sandbox.Canonical(cargo) + "\n" // its own line, not .cargo/credentials
+	st := s.Sandbox()
+	if !slices.Contains(st.Readable, sandbox.Canonical(cargo)) {
+		t.Fatalf("readable %v lacks %s", st.Readable, cargo)
+	}
+	before := st.Grants().BuiltinRead
+	if strings.Contains(st.Describe(), line) {
+		t.Fatalf("describe lists the missing %s:\n%s", cargo, st.Describe())
+	}
+	if err := os.Mkdir(cargo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if after := st.Grants().BuiltinRead; after != before+1 {
+		t.Fatalf("toolchain count %d after creating %s, want %d", after, cargo, before+1)
+	}
+	if !strings.Contains(st.Describe(), line) {
+		t.Fatalf("describe lacks the existing %s:\n%s", cargo, st.Describe())
+	}
+}
