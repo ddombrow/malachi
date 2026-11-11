@@ -83,7 +83,7 @@ func TestNetworkToggleKeyAndClick(t *testing.T) {
 		t.Fatal("network on by default")
 	}
 	m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
-	if !m.s.Sandbox().Network || !strings.Contains(sidebarText(m), "network                  on") {
+	if !m.s.Sandbox().Network || !strings.Contains(sidebarText(m), "^o on\n") {
 		t.Fatalf("ctrl+o: network=%v\n%s", m.s.Sandbox().Network, sidebarText(m))
 	}
 	// Clicking the network row switches it back, and starts no selection.

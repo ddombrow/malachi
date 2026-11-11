@@ -120,7 +120,7 @@ func (m *model) sandboxSection() []sideRow {
 	if st.Network {
 		network = s.toolRun.Render("on")
 	}
-	rows = append(rows, sideRow{text: sidePair("network", network+s.dim.Render(" ^o")), click: m.toggleNetwork})
+	rows = append(rows, sideRow{text: sidePair("network", s.dim.Render("^o ")+network), click: m.toggleNetwork})
 	scope := s.dim.Render(" anywhere")
 	if len(st.Private) > 0 {
 		scope = s.dim.Render(" in ~: only")
