@@ -2,6 +2,7 @@ package tui
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -57,6 +58,19 @@ func TestSidebarToggleKey(t *testing.T) {
 	}
 }
 
+func TestSidebarCloseButton(t *testing.T) {
+	m := newTestModel(t)
+	top := ansi.Strip(m.sidebarLines(m.vp.Height())[0])
+	x := strings.Index(top, "×")
+	if x < 0 {
+		t.Fatalf("no close button: %q", top)
+	}
+	m.Update(tea.MouseClickMsg{X: m.width - 1, Y: 0, Button: tea.MouseLeft})
+	if m.sidebarShown() || m.vp.Width() != m.width {
+		t.Fatal("clicking × left the sidebar shown")
+	}
+}
+
 func sidebarText(m *model) string {
 	return ansi.Strip(strings.Join(m.sidebarLines(m.vp.Height()), "\n"))
 }
@@ -71,11 +85,15 @@ func TestNetworkToggleKeyAndClick(t *testing.T) {
 		t.Fatalf("ctrl+o: network=%v\n%s", m.s.Sandbox().Network, sidebarText(m))
 	}
 	// Clicking the network row switches it back, and starts no selection.
-	m.Update(tea.MouseClickMsg{X: m.contentWidth() + 3, Y: sidebarNetworkRow, Button: tea.MouseLeft})
+	row := slices.IndexFunc(m.sidebarLines(m.vp.Height()), func(l string) bool { return strings.Contains(ansi.Strip(l), "network") })
+	if row < 0 {
+		t.Fatal("no network row")
+	}
+	m.Update(tea.MouseClickMsg{X: m.contentWidth() + 3, Y: row, Button: tea.MouseLeft})
 	if m.s.Sandbox().Network || m.sel.dragging {
 		t.Fatalf("click: network=%v dragging=%v", m.s.Sandbox().Network, m.sel.dragging)
 	}
-	m.Update(tea.MouseClickMsg{X: m.contentWidth() + 3, Y: sidebarNetworkRow + 3, Button: tea.MouseLeft})
+	m.Update(tea.MouseClickMsg{X: m.contentWidth() + 3, Y: row + 2, Button: tea.MouseLeft})
 	if m.s.Sandbox().Network || m.sel.dragging {
 		t.Fatal("a click elsewhere in the sidebar did something")
 	}

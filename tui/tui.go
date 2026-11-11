@@ -413,8 +413,8 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		}
 		if mouse := msg.Mouse(); m.sidebarHit(mouse.X, mouse.Y) {
 			m.sel = selection{}
-			if mouse.Button == tea.MouseLeft && mouse.Y == sidebarNetworkRow && m.side.st.Enabled {
-				return m.toggleNetwork()
+			if mouse.Button == tea.MouseLeft {
+				return m.sidebarClick(mouse.Y)
 			}
 			return nil
 		}

@@ -26,7 +26,7 @@ const helpText = `Commands:
   /allow-read <dir>   allow reading a directory in your home for this session
   /allow-write <dir>  allow writes to a directory for this session
   /network [on|off]   show, or turn commands' network access on or off (ctrl+o)
-  /sidebar            show or hide the sandbox sidebar (ctrl+s)
+  /sidebar            show or hide the sidebar (ctrl+s)
   /ctx               measured context: tokens, tool output share, trim passes
   /new                start a fresh session
   /resume [n|name]    list recent sessions, or resume one

@@ -11,9 +11,10 @@ import (
 	"github.com/ddombrow/malachi/coding"
 )
 
-// The sidebar shows what the sandbox lets model-run tools touch, beside the
-// transcript. It is drawn from the session's state and redrawn when the
-// session reports a change (SandboxChangedEvent); the UI keeps no sandbox
+// The sidebar is a panel beside the transcript showing the session's
+// surroundings, one section after another: today the sandbox, later MCP
+// servers and Code Mode. Each section draws from session state cached in
+// sidebarState and refreshed from the session's events; the UI keeps no
 // rules of its own.
 const (
 	// sidebarWidth is the columns the sidebar takes, its border included.
@@ -23,6 +24,8 @@ const (
 	sidebarMinWidth = 100
 	// sidebarBorder separates the sidebar from the transcript.
 	sidebarBorder = "│ "
+	// sidebarInner is the columns a section's rows get: all but the border.
+	sidebarInner = sidebarWidth - 2
 )
 
 const (
@@ -30,15 +33,23 @@ const (
 	keyNetwork = "ctrl+o"
 )
 
-// sidebarState is what the sidebar draws, computed when the sandbox changes
-// rather than every frame (resolving the default roots touches the disk).
+// sidebarState is what the sections draw, computed when its source changes
+// rather than every frame (resolving the sandbox's default roots touches
+// the disk).
 type sidebarState struct {
-	st     coding.SandboxState
-	grants coding.SandboxGrants
+	sandbox coding.SandboxState
+	grants  coding.SandboxGrants
+}
+
+// sideRow is one row of the sidebar. A row with click set does something
+// when clicked.
+type sideRow struct {
+	text  string
+	click func() tea.Cmd
 }
 
 func (m *model) syncSandbox(st coding.SandboxState) {
-	m.side = sidebarState{st: st, grants: st.Grants()}
+	m.side.sandbox, m.side.grants = st, st.Grants()
 }
 
 // sidebarShown reports whether the sidebar is on screen: wanted, and the
@@ -71,88 +82,110 @@ func (m *model) toggleNetwork() tea.Cmd {
 	return m.networkCommand("on")
 }
 
-// sidebarNetworkRow is the sidebar row showing the network, which a click
-// toggles.
-const sidebarNetworkRow = 1
+// sidebarSections are the sidebar's sections, top to bottom.
+func (m *model) sidebarSections() [][]sideRow {
+	return [][]sideRow{m.sandboxSection()}
+}
+
+// sidePair puts label on the left of a row and value on the right.
+func sidePair(label, value string) string {
+	gap := max(1, sidebarInner-lipgloss.Width(label)-lipgloss.Width(value))
+	return label + strings.Repeat(" ", gap) + value
+}
+
+// sidePath is a path listed under a heading, its end kept when too long.
+func sidePath(p string) string {
+	return "  " + truncateLeft(shortenHome(p), sidebarInner-2)
+}
+
+// sandboxSection shows what the sandbox lets model-run tools touch.
+func (m *model) sandboxSection() []sideRow {
+	st, g, s := m.side.sandbox, m.side.grants, m.r.st
+	var rows []sideRow
+	add := func(text string) { rows = append(rows, sideRow{text: text}) }
+
+	switch {
+	case !st.Enabled:
+		add(sidePair(s.accent.Render("sandbox"), s.toolErr.Render("off")))
+		add(s.dim.Render("tools reach everything"))
+		add(s.dim.Render("you can"))
+		return rows
+	case st.Unavailable != nil:
+		add(sidePair(s.accent.Render("sandbox"), s.toolErr.Render("unavailable")))
+		add(s.toolErr.Render("commands will fail"))
+	default:
+		add(sidePair(s.accent.Render("sandbox"), s.toolOK.Render("on")))
+	}
+	network := s.toolOK.Render("off")
+	if st.Network {
+		network = s.toolRun.Render("on")
+	}
+	rows = append(rows, sideRow{text: sidePair("network", network+s.dim.Render(" ^o")), click: m.toggleNetwork})
+	scope := s.dim.Render(" anywhere")
+	if len(st.Private) > 0 {
+		scope = s.dim.Render(" in ~: only")
+	}
+	add("read" + scope)
+	for _, r := range g.Read {
+		add(sidePath(r))
+	}
+	if g.BuiltinRead > 0 {
+		add(s.dim.Render(fmt.Sprintf("  + %d toolchain dirs", g.BuiltinRead)))
+	}
+	add("write")
+	for _, w := range g.Write {
+		add(sidePath(w))
+	}
+	if g.BuiltinWrite > 0 {
+		add(s.dim.Render(fmt.Sprintf("  + %d cache & temp dirs", g.BuiltinWrite)))
+	}
+	add(sidePair("hidden", s.dim.Render(fmt.Sprintf("%d paths", len(st.Hidden)))))
+	return rows
+}
+
+// sidebarRows lays the sidebar out as exactly height rows: a close row on
+// top, then the sections with a blank row after each.
+func (m *model) sidebarRows(height int) []sideRow {
+	closeRow := sideRow{
+		text:  sidePair(m.r.st.dim.Render("^s"), m.r.st.accent.Render("×")),
+		click: func() tea.Cmd { m.toggleSidebar(); return nil },
+	}
+	rows := []sideRow{closeRow}
+	for _, sec := range m.sidebarSections() {
+		rows = append(rows, sec...)
+		rows = append(rows, sideRow{})
+	}
+	if len(rows) > height {
+		rows = rows[:max(0, height)]
+		if height > 0 {
+			rows[height-1] = sideRow{text: m.r.st.dim.Render("  …")}
+		}
+	}
+	for len(rows) < height {
+		rows = append(rows, sideRow{})
+	}
+	return rows
+}
 
 // sidebarLines renders the sidebar as exactly height lines, each
 // sidebarWidth columns wide.
 func (m *model) sidebarLines(height int) []string {
-	st, g := m.side.st, m.side.grants
-	inner := sidebarWidth - lipgloss.Width(sidebarBorder)
-	s := m.r.st
-	var rows []string
-	add := func(line string) { rows = append(rows, line) }
-	// pair puts label on the left and value on the right of a row.
-	pair := func(label, value string) string {
-		gap := max(1, inner-lipgloss.Width(label)-lipgloss.Width(value))
-		return label + strings.Repeat(" ", gap) + value
+	border := m.r.st.dim.Render(sidebarBorder)
+	var lines []string
+	for _, r := range m.sidebarRows(height) {
+		text := ansi.Truncate(r.text, sidebarInner, "…")
+		lines = append(lines, border+text+strings.Repeat(" ", max(0, sidebarInner-lipgloss.Width(text))))
 	}
-	path := func(p string) string {
-		return "  " + truncateLeft(shortenHome(p), inner-2)
-	}
+	return lines
+}
 
-	switch {
-	case !st.Enabled:
-		add(pair(s.accent.Render("sandbox"), s.toolErr.Render("off")))
-	case st.Unavailable != nil:
-		add(pair(s.accent.Render("sandbox"), s.toolErr.Render("unavailable")))
-	default:
-		add(pair(s.accent.Render("sandbox"), s.toolOK.Render("on")))
+// sidebarClick runs whatever the clicked sidebar row does.
+func (m *model) sidebarClick(y int) tea.Cmd {
+	rows := m.sidebarRows(m.vp.Height())
+	if y < 0 || y >= len(rows) || rows[y].click == nil {
+		return nil
 	}
-	if !st.Enabled {
-		add(s.dim.Render("tools reach everything"))
-		add(s.dim.Render("you can"))
-	} else {
-		network := s.toolOK.Render("off")
-		if st.Network {
-			network = s.toolRun.Render("on")
-		}
-		add(pair("network", network+s.dim.Render(" ^o"))) // sidebarNetworkRow
-		if st.Unavailable != nil {
-			add(s.toolErr.Render("commands will fail"))
-		}
-		add("")
-		scope := s.dim.Render(" anywhere")
-		if len(st.Private) > 0 {
-			scope = s.dim.Render(" in ~: only")
-		}
-		add("read" + scope)
-		for _, r := range g.Read {
-			add(path(r))
-		}
-		if g.BuiltinRead > 0 {
-			add(s.dim.Render(fmt.Sprintf("  + %d toolchain dirs", g.BuiltinRead)))
-		}
-		add("")
-		add("write")
-		for _, w := range g.Write {
-			add(path(w))
-		}
-		if g.BuiltinWrite > 0 {
-			add(s.dim.Render(fmt.Sprintf("  + %d cache & temp dirs", g.BuiltinWrite)))
-		}
-		add("")
-		add(pair("hidden", s.dim.Render(fmt.Sprintf("%d paths", len(st.Hidden)))))
-	}
-	add("")
-	add(s.dim.Render("/sandbox · ^s hide"))
-
-	if len(rows) > height {
-		rows = rows[:max(0, height)]
-		if height > 0 {
-			rows[height-1] = s.dim.Render("  …")
-		}
-	}
-	for len(rows) < height {
-		rows = append(rows, "")
-	}
-	border := s.dim.Render(sidebarBorder)
-	for i, r := range rows {
-		r = ansi.Truncate(r, inner, "…")
-		rows[i] = border + r + strings.Repeat(" ", max(0, inner-lipgloss.Width(r)))
-	}
-	return rows
+	return rows[y].click()
 }
 
 // withSidebar puts the sidebar to the right of the transcript's lines.
