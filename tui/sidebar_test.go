@@ -165,4 +165,7 @@ func TestSidebarShowsVersionOnTop(t *testing.T) {
 	if !strings.Contains(top, "malachi "+coding.Version) || !strings.HasSuffix(strings.TrimRight(top, " "), "×") {
 		t.Fatalf("top row is %q, want the version and the close button", top)
 	}
+	if divider := ansi.Strip(m.sidebarLines(m.vp.Height())[1]); !strings.Contains(divider, strings.Repeat("─", sidebarInner)) {
+		t.Fatalf("no divider under the top row: %q", divider)
+	}
 }
