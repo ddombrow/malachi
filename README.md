@@ -348,6 +348,7 @@ press `ctrl+o`, to switch), the readable and writable directories (built-in
 toolchain, cache and temp directories are counted rather than listed), and
 how many paths are hidden. Its trust section shows whether the project's
 instruction files are loaded and what decided it (`/trust` changes it).
+malachi's version sits at the bottom of the sidebar.
 The status bar says `unsandboxed`, `sandbox unavailable` or `network on` when
 those apply. When a command fails in a way that looks like the sandbox, its
 result tells the model to ask you rather than work around it.

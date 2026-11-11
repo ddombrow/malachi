@@ -116,7 +116,7 @@ func TestSidebarFollowsSandboxEvents(t *testing.T) {
 func TestSidebarClipsToHeight(t *testing.T) {
 	m := newTestModel(t)
 	lines := m.sidebarLines(4)
-	if len(lines) != 4 || !strings.Contains(ansi.Strip(lines[3]), "…") {
+	if len(lines) != 4 || !strings.Contains(ansi.Strip(lines[2]), "…") || !strings.Contains(ansi.Strip(lines[3]), "malachi") {
 		t.Fatalf("clipped sidebar: %q", lines)
 	}
 	for _, l := range lines {
@@ -156,5 +156,21 @@ func TestSidebarShowsTrust(t *testing.T) {
 		if text := sidebarText(m); !strings.Contains(text, step.want) || !strings.Contains(text, "1 instruction file ") {
 			t.Fatalf("after %q want %q:\n%s", step.cmd, step.want, text)
 		}
+	}
+}
+
+func TestSidebarShowsVersionAtTheBottom(t *testing.T) {
+	m := newTestModel(t)
+	lines := m.sidebarLines(m.vp.Height())
+	if last := ansi.Strip(lines[len(lines)-1]); !strings.Contains(last, "malachi "+coding.Version) {
+		t.Fatalf("bottom row is %q, want the version", last)
+	}
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: chromeRows + 4}) // too short for the sections
+	lines = m.sidebarLines(m.vp.Height())
+	if last := ansi.Strip(lines[len(lines)-1]); !strings.Contains(last, "malachi") {
+		t.Fatalf("clipped sidebar lost the version: %q", last)
+	}
+	if clipped := ansi.Strip(lines[len(lines)-2]); !strings.Contains(clipped, "…") {
+		t.Fatalf("no ellipsis above the version: %q", clipped)
 	}
 }
