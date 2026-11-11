@@ -51,6 +51,11 @@ tasks:
     cmds:
       - go test -race -p 1 ./...
 
+  wasm:
+    desc: Rebuild codemode/quickjs.wasm from pinned QuickJS-ng source (needs zig)
+    cmds:
+      - codemode/wasm/build.sh
+
   lint:
     desc: Check formatting and run go vet
     cmds:

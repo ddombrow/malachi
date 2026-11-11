@@ -17,7 +17,9 @@ agent/     messages, events, tools, loop, harness, session primitives. Imports n
 ai/...     providers (raw net/http + SSE). Import agent for message/stream types.
 sandbox/   what commands and file tools may touch, and the OS backends that
            confine commands. Imports nothing else in this module.
-coding/    coding tools, system prompt, config, coding.Session. Imports agent, ai and sandbox.
+codemode/  scripts that call tools: QuickJS-ng compiled to WASI (quickjs.wasm,
+           rebuilt by `go tool task wasm`) run under wazero. Imports agent only.
+coding/    coding tools, system prompt, config, coding.Session. Imports agent, ai, sandbox and codemode.
 tui/       Bubble Tea frontend. Consumes coding.Session events and state.
 rpc/       headless JSONL protocol (tau/Pi RPC mode). Consumes coding.Session events and state.
 cmd/       entrypoints.

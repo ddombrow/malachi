@@ -11,6 +11,7 @@ require (
 	github.com/elastic/go-seccomp-bpf v1.6.0
 	github.com/landlock-lsm/go-landlock v0.10.1
 	github.com/ledongthuc/pdf v0.0.0-20261020125853-5e46805f718e
+	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/sys v0.48.0
 )
 
