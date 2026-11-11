@@ -15,7 +15,8 @@ import (
 // Hard links cannot stand in for hidden files, since sandboxed commands
 // cannot create links to them.
 
-// OpenRead opens path for reading if the file it reaches is not hidden.
+// OpenRead opens path for reading if the file it reaches is readable: not
+// hidden, and not private outside the readable roots.
 func (p Policy) OpenRead(path string) (*os.File, error) {
 	f, err := os.Open(path)
 	if err != nil || !p.Enabled {
@@ -98,6 +99,9 @@ func (p Policy) checkOpened(f *os.File, path string, write bool) error {
 	}
 	if h := p.HiddenAtCanonical(real); h != "" {
 		return fmt.Errorf("%w: %s leads to %s, which is hidden; ask the user if access is needed", ErrDenied, path, real)
+	}
+	if !write && p.PrivateAtCanonical(real) != "" {
+		return fmt.Errorf("%w: %s leads to %s, outside the readable directories; ask the user to add it as a read root if access is needed", ErrDenied, path, real)
 	}
 	if write {
 		for _, w := range p.Writable {

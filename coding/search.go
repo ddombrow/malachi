@@ -64,7 +64,7 @@ func walkSearch(root string, pol sandbox.Policy, fn func(rel string, d fs.DirEnt
 		if rel == "." {
 			return nil
 		}
-		if canonRoot != "" && pol.HiddenAtCanonical(filepath.Join(canonRoot, rel)) != "" {
+		if canonRoot != "" && !pol.ReadableCanonical(filepath.Join(canonRoot, rel)) {
 			st.hidden++
 			if d.IsDir() {
 				return filepath.SkipDir
@@ -93,7 +93,7 @@ func walkSearch(root string, pol sandbox.Policy, fn func(rel string, d fs.DirEnt
 // walkStats are what a search left out, for its footer.
 type walkStats struct {
 	skippedRules int // .gitignore rules beyond the limits
-	hidden       int // files and directories hidden by the sandbox
+	hidden       int // files and directories the sandbox keeps from being read
 }
 
 // note is the footer remark for what was left out, or "".

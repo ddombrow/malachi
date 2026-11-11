@@ -39,13 +39,14 @@ func runHelper(raw string) error {
 	return syscall.Exec(path, append([]string{s.Name}, s.Args...), os.Environ())
 }
 
-// restrictFS applies p with Landlock: read everything but hidden paths,
-// write only under writable roots (minus hidden paths) and a few devices.
-// Directories split around a hidden path stay listable, so "ls ~" works;
-// on Linux that shows the names inside hidden directories, not their
-// contents.
+// restrictFS applies p with Landlock: read everything but hidden paths and
+// private directories outside the readable roots, write only under writable
+// roots (minus hidden paths) and a few devices. Directories split around a
+// hidden path stay listable, so "ls ~" works when the home directory is
+// readable; on Linux that shows the names inside hidden directories, not
+// their contents. A private directory itself is not split, so not listable.
 func restrictFS(p Policy) error {
-	readable, split := carve("/", p.Hidden)
+	readable, split := readGrants(p)
 	roDirs, roFiles := partition(readable)
 	var writable []string
 	for _, w := range p.Writable {

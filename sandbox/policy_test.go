@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -148,4 +149,149 @@ func TestCanonical(t *testing.T) {
 	if got := Canonical(filepath.Join(dir, "missing", "x")); got != filepath.Join(real, "missing", "x") {
 		t.Fatalf("Canonical = %s, want under %s", got, real)
 	}
+}
+
+// privateFixture points HOME at a fake home directory holding a project, a
+// toolchain, other private files and a credential directory. It returns the
+// canonical home and project, and builds the default policy for the project
+// with c, whose paths may lie in that home.
+func privateFixture(t *testing.T, c func(userHome string) Config) (p Policy, userHome, project string) {
+	t.Helper()
+	root := t.TempDir()
+	userHome = filepath.Join(root, "home")
+	project = filepath.Join(userHome, "src", "proj")
+	for _, f := range []string{
+		filepath.Join(project, "main.go"),
+		filepath.Join(userHome, "other", "notes.txt"),
+		filepath.Join(userHome, ".cargo", "bin", "cargo"),
+		filepath.Join(userHome, ".ssh", "id_ed25519"),
+		filepath.Join(userHome, "extra", "ref.go"),
+		filepath.Join(root, "outside", "x"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(f), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(f, []byte("content"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", userHome)
+	var cfg Config
+	if c != nil {
+		cfg = c(userHome)
+	}
+	cfg.Cwd, cfg.Home = project, filepath.Join(root, "malachi")
+	return Build(cfg), Canonical(userHome), Canonical(project)
+}
+
+func TestPrivateHome(t *testing.T) {
+	p, userHome, project := privateFixture(t, nil)
+	if !slices.Equal(p.Private, []string{userHome}) {
+		t.Fatalf("private %v, want the user's home", p.Private)
+	}
+	outside := filepath.Join(filepath.Dir(userHome), "outside", "x")
+	for _, c := range []struct {
+		name string
+		path string
+		read bool
+	}{
+		{"project file", filepath.Join(project, "main.go"), true},
+		{"toolchain", filepath.Join(userHome, ".cargo", "bin", "cargo"), true},
+		{"other private file", filepath.Join(userHome, "other", "notes.txt"), false},
+		{"home itself", userHome, false},
+		{"project's parent", filepath.Dir(project), false},
+		{"outside home", outside, true},
+		{"credentials", filepath.Join(userHome, ".ssh", "id_ed25519"), false},
+	} {
+		if got := p.CheckRead(c.path) == nil; got != c.read {
+			t.Errorf("%s: read allowed=%v, want %v", c.name, got, c.read)
+		}
+	}
+	err := p.CheckRead(filepath.Join(userHome, "other", "notes.txt"))
+	if !errors.Is(err, ErrDenied) || !strings.Contains(err.Error(), "readable directories") {
+		t.Fatalf("denial = %v", err)
+	}
+	// A write outside the writable roots is refused for that reason, even
+	// where reading is refused too.
+	if err := p.CheckWrite(filepath.Join(userHome, "other", "new.txt")); err == nil || !strings.Contains(err.Error(), "writable") {
+		t.Fatalf("write denial = %v", err)
+	}
+	off := p
+	off.Enabled = false
+	if off.CheckRead(filepath.Join(userHome, "other", "notes.txt")) != nil {
+		t.Fatal("a disabled policy denied a read")
+	}
+}
+
+func TestReadRootsExtendTheDefaults(t *testing.T) {
+	p, userHome, _ := privateFixture(t, func(h string) Config {
+		return Config{Readable: []string{filepath.Join(h, "extra")}, Writable: []string{filepath.Join(h, "other")}}
+	})
+	if err := p.CheckRead(filepath.Join(userHome, "extra", "ref.go")); err != nil {
+		t.Fatalf("read root: %v", err)
+	}
+	if err := p.CheckRead(filepath.Join(userHome, "other", "notes.txt")); err != nil {
+		t.Fatalf("writable root not readable: %v", err)
+	}
+	// Hidden paths win over read roots.
+	p.Readable = append(p.Readable, userHome)
+	if p.CheckRead(filepath.Join(userHome, ".ssh", "id_ed25519")) == nil {
+		t.Fatal("a read root uncovered a hidden path")
+	}
+}
+
+func TestReadAnywhere(t *testing.T) {
+	p, userHome, _ := privateFixture(t, func(string) Config { return Config{ReadAnywhere: true} })
+	if len(p.Private) != 0 {
+		t.Fatalf("private %v with ReadAnywhere", p.Private)
+	}
+	if err := p.CheckRead(filepath.Join(userHome, "other", "notes.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if p.CheckRead(filepath.Join(userHome, ".ssh", "id_ed25519")) == nil {
+		t.Fatal("ReadAnywhere uncovered a hidden path")
+	}
+}
+
+// The default read roots stay inside the home directory and never cover it
+// whole, whatever PATH holds.
+func TestDefaultReadableStaysNarrow(t *testing.T) {
+	root := t.TempDir()
+	userHome := filepath.Join(root, "home")
+	t.Setenv("PATH", strings.Join([]string{userHome, filepath.Join(userHome, "bin"), "/usr/bin", "."}, string(filepath.ListSeparator)))
+	t.Setenv("GOPATH", filepath.Join(userHome, "gp"))
+	got := defaultReadable(userHome)
+	home := Canonical(userHome)
+	for _, r := range got {
+		if c := Canonical(r); c == home || !within(c, home) {
+			t.Errorf("default read root %s is the home directory or outside it", r)
+		}
+	}
+	for _, want := range []string{filepath.Join(userHome, "bin"), filepath.Join(userHome, "gp", "bin"), filepath.Join(userHome, ".gitconfig")} {
+		if !slices.Contains(got, want) {
+			t.Errorf("default read roots %v lack %s", got, want)
+		}
+	}
+}
+
+func TestOpenReadRefusesPrivateTargets(t *testing.T) {
+	p, userHome, project := privateFixture(t, nil)
+	link := filepath.Join(project, "notes-link")
+	if err := os.Symlink(filepath.Join(userHome, "other", "notes.txt"), link); err != nil {
+		t.Fatal(err)
+	}
+	if p.CheckRead(link) == nil {
+		t.Error("CheckRead allowed a link to a private file")
+	}
+	if f, err := p.OpenRead(link); err == nil || !errors.Is(err, ErrDenied) {
+		if f != nil {
+			f.Close()
+		}
+		t.Errorf("OpenRead through a link to a private file: %v", err)
+	}
+	f, err := p.OpenRead(filepath.Join(project, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
 }

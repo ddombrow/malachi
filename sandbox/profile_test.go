@@ -56,3 +56,37 @@ func TestProfile(t *testing.T) {
 		}
 	}
 }
+
+func TestProfilePrivate(t *testing.T) {
+	p := Policy{Enabled: true, Network: true, Writable: []string{"/home/u/proj"},
+		Private: []string{"/home/u"}, Readable: []string{"/home/u/.cargo"}, Hidden: []string{"/home/u/.ssh"}}
+	prof := Profile(p)
+	deny := strings.Index(prof, "(deny file-read-data file-read-xattr\n  (subpath \"/home/u\"))")
+	allow := strings.Index(prof, "(allow file-read-data file-read-xattr")
+	hidden := strings.Index(prof, "(deny file-read* file-write*")
+	if deny < 0 || allow < 0 || hidden < 0 {
+		t.Fatalf("profile lacks a read rule:\n%s", prof)
+	}
+	// The last match wins: deny private, re-allow roots, deny hidden.
+	if deny >= allow || allow >= hidden {
+		t.Errorf("read rules out of order:\n%s", prof)
+	}
+	for _, root := range []string{`(subpath "/home/u/.cargo")`, `(subpath "/home/u/proj")`} {
+		if !strings.Contains(prof[allow:hidden], root) {
+			t.Errorf("read allow lacks %s:\n%s", root, prof)
+		}
+	}
+	// Metadata stays readable, so walking up through the home works.
+	if strings.Contains(prof, "file-read-metadata") {
+		t.Error("private metadata denied")
+	}
+
+	// With no roots at all, an allow with no filters would allow everything.
+	bare := Policy{Enabled: true, Private: []string{"/home/u"}}
+	if strings.Contains(Profile(bare), "(allow file-read-data file-read-xattr)") {
+		t.Errorf("unfiltered read allow:\n%s", Profile(bare))
+	}
+	if strings.Contains(Profile(Policy{Enabled: true}), "file-read-data") {
+		t.Error("read rules without private directories")
+	}
+}

@@ -65,3 +65,21 @@ func partition(paths []string) (dirs, files []string) {
 	slices.Sort(files)
 	return dirs, files
 }
+
+// readGrants returns the paths Landlock grants read access to under p, and
+// the directories split to carve them: everything outside hidden and private
+// directories, plus each readable root that lies in (or holds) a private
+// directory, minus hidden paths. Writable roots are granted separately, with
+// reading included.
+func readGrants(p Policy) (grant, split []string) {
+	grant, split = carve("/", slices.Concat(p.Hidden, p.Private))
+	for _, r := range p.Readable {
+		if !slices.ContainsFunc(p.Private, func(priv string) bool { return within(r, priv) || within(priv, r) }) {
+			continue // readable already, unless hidden
+		}
+		g, s := carve(r, p.Hidden)
+		grant = append(grant, g...)
+		split = append(split, s...)
+	}
+	return grant, split
+}

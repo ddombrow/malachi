@@ -304,3 +304,42 @@ except OSError as e:
 		}
 	}
 }
+
+// Commands read inside a private directory only under the read roots, and
+// can still run from a project inside one.
+func TestSandboxedPrivateReads(t *testing.T) {
+	requireBackend(t)
+	p, userHome, project := privateFixture(t, nil)
+	if err := os.WriteFile(filepath.Join(userHome, "other", "notes.txt"), []byte("private-words\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(userHome, "other")
+	for _, c := range []struct {
+		name, script string
+		ok           bool
+	}{
+		{"read project", "cat main.go", true},
+		{"pwd in project", "pwd", true},
+		{"write project", "echo x > new.txt && cat new.txt", true},
+		{"read toolchain", "cat " + filepath.Join(userHome, ".cargo", "bin", "cargo"), true},
+		{"read private", "cat " + filepath.Join(other, "notes.txt"), false},
+		{"list private", "ls " + other, false},
+		{"list home", "ls " + userHome, false},
+		{"stat private", "test -e " + filepath.Join(other, "notes.txt"), true},
+		{"read via ..", "cat ../../other/notes.txt", false},
+		{"read outside home", "cat /etc/hosts >/dev/null", true},
+	} {
+		out, ok := sh(t, p, project, c.script)
+		if ok != c.ok {
+			t.Errorf("%s: succeeded=%v, want %v; output: %s", c.name, ok, c.ok, out)
+		}
+		if strings.Contains(out, "private-words") {
+			t.Errorf("%s: private content leaked: %s", c.name, out)
+		}
+	}
+
+	p.Readable = append(p.Readable, other)
+	if out, ok := sh(t, p, project, "cat "+filepath.Join(other, "notes.txt")); !ok || !strings.Contains(out, "private-words") {
+		t.Errorf("read root added: %v %s", ok, out)
+	}
+}

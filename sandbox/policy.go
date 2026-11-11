@@ -1,6 +1,7 @@
 // Package sandbox confines what model-chosen commands and file tools may
-// touch: writes only under a set of writable roots, no access at all to
-// hidden paths (credentials, malachi's own home), and optionally no network.
+// touch: writes only under a set of writable roots, reads inside the user's
+// home only under a set of readable roots, no access at all to hidden paths
+// (credentials, malachi's own home), and optionally no network.
 //
 // Commands are confined by the operating system (Seatbelt on macOS, Landlock
 // and seccomp on Linux); the file tools, which run inside malachi, check the
@@ -32,7 +33,13 @@ type Policy struct {
 	// work; on Linux no Unix sockets can be created.
 	UnixSockets bool
 	Writable    []string // roots under which writes are allowed
-	Hidden      []string // neither readable nor writable; wins over Writable
+	// Private directories (the user's home) are readable only under a
+	// Readable or Writable root. Everything outside them stays readable:
+	// commands need the system's files to run at all, and private data
+	// lives in the home directory.
+	Private  []string
+	Readable []string // roots readable inside Private directories
+	Hidden   []string // neither readable nor writable; wins over everything
 }
 
 // Config is everything a Policy is built from: settings, per-project grants
@@ -44,9 +51,13 @@ type Config struct {
 	NoNet    bool
 	// UnixSockets allows connecting to any Unix socket; see Policy.
 	UnixSockets bool
-	// Writable and Hidden extend the defaults. Unhidden removes defaults:
-	// a hidden path equal to or under one of these is dropped.
+	// ReadAnywhere lifts the read confinement: the user's home becomes
+	// readable outside the readable roots too, hidden paths aside.
+	ReadAnywhere bool
+	// Writable, Readable and Hidden extend the defaults. Unhidden removes
+	// defaults: a hidden path equal to or under one of these is dropped.
 	Writable []string
+	Readable []string
 	Hidden   []string
 	Unhidden []string
 }
@@ -71,6 +82,13 @@ func Build(c Config) Policy {
 		inHome(".npm"), inHome(".cargo/registry"), inHome(".cargo/git"), inHome(".rustup"))
 	writable = append(writable, c.Writable...)
 
+	var private, readable []string
+	if !c.ReadAnywhere && userHome != "" {
+		private = []string{userHome}
+		readable = append(defaultReadable(userHome), c.Cwd)
+		readable = append(readable, c.Readable...)
+	}
+
 	hidden := []string{c.Home}
 	for _, rel := range defaultHidden {
 		hidden = append(hidden, inHome(rel))
@@ -82,7 +100,48 @@ func Build(c Config) Policy {
 	})
 
 	p.Writable, p.Hidden = canonicalAll(writable), hidden
+	p.Private, p.Readable = canonicalAll(private), canonicalAll(readable)
 	return p
+}
+
+// defaultReadable are the places in the user's home that ordinary commands
+// read to run: toolchains and package managers, binaries on PATH, git's
+// configuration and the malachi binary itself (on Linux the sandbox helper
+// is malachi). Writable roots are readable anyway.
+func defaultReadable(userHome string) []string {
+	var out []string
+	for _, rel := range []string{
+		".cargo", ".rustup", ".nvm", ".pyenv", ".rbenv", ".asdf", ".volta", ".bun", ".deno",
+		".local/bin", ".local/share/mise", ".local/share/pnpm", ".local/share/uv",
+		".sdkman", ".gradle", ".m2", ".nix-profile",
+		".gitconfig", ".config/git", ".config/mise",
+		"go/bin",
+	} {
+		out = append(out, filepath.Join(userHome, rel))
+	}
+	if dir, err := os.UserConfigDir(); err == nil {
+		out = append(out, filepath.Join(dir, "go")) // go env -w settings
+	}
+	if gopath := os.Getenv("GOPATH"); gopath != "" {
+		out = append(out, filepath.Join(filepath.SplitList(gopath)[0], "bin"))
+	}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		// A PATH entry naming the home directory itself would make the
+		// confinement pointless; relative entries such as "." are skipped.
+		if filepath.IsAbs(dir) && Canonical(dir) != Canonical(userHome) {
+			out = append(out, dir)
+		}
+	}
+	if exe, err := os.Executable(); err == nil {
+		out = append(out, filepath.Dir(exe))
+	}
+	// Anything not under the home directory is readable already; keeping
+	// those out keeps the list short enough to show.
+	home := Canonical(userHome)
+	return slices.DeleteFunc(out, func(p string) bool {
+		c := Canonical(p)
+		return c == home || !within(c, home)
+	})
 }
 
 // safeDerivedRoot validates writable roots inferred from process environment
@@ -190,11 +249,51 @@ func (p Policy) HiddenAtCanonical(c string) string {
 	return ""
 }
 
-// CheckRead allows reading the absolute path unless it is hidden. A symlink
-// is judged by where it leads.
+// PrivateAtCanonical reports the private directory that keeps the canonical
+// path c from being read, or "" when c is outside every private directory or
+// under a readable or writable root.
+func (p Policy) PrivateAtCanonical(c string) string {
+	if !p.Enabled {
+		return ""
+	}
+	for _, priv := range p.Private {
+		if !within(c, priv) {
+			continue
+		}
+		for _, roots := range [][]string{p.Readable, p.Writable} {
+			for _, r := range roots {
+				if within(c, r) {
+					return ""
+				}
+			}
+		}
+		return priv
+	}
+	return ""
+}
+
+// ReadableCanonical reports whether the canonical path c may be read.
+func (p Policy) ReadableCanonical(c string) bool {
+	return p.HiddenAtCanonical(c) == "" && p.PrivateAtCanonical(c) == ""
+}
+
+// CheckRead allows reading the absolute path unless it is hidden or in a
+// private directory outside the readable roots. A symlink is judged by where
+// it leads.
 func (p Policy) CheckRead(path string) error {
-	if h := p.HiddenAt(path); h != "" {
+	if !p.Enabled {
+		return nil
+	}
+	return p.checkReadCanonical(path, Canonical(path))
+}
+
+// checkReadCanonical is CheckRead for path, whose canonical form is c.
+func (p Policy) checkReadCanonical(path, c string) error {
+	if h := p.HiddenAtCanonical(c); h != "" {
 		return fmt.Errorf("%w: %s is hidden (%s); ask the user if access is needed", ErrDenied, path, h)
+	}
+	if p.PrivateAtCanonical(c) != "" {
+		return fmt.Errorf("%w: %s is outside the readable directories; ask the user to add it as a read root if access is needed", ErrDenied, path)
 	}
 	return nil
 }
@@ -206,10 +305,10 @@ func (p Policy) CheckWrite(path string) error {
 	if !p.Enabled {
 		return nil
 	}
-	if err := p.CheckRead(path); err != nil {
-		return err
-	}
 	c := Canonical(path)
+	if h := p.HiddenAtCanonical(c); h != "" {
+		return fmt.Errorf("%w: %s is hidden (%s); ask the user if access is needed", ErrDenied, path, h)
+	}
 	for _, w := range p.Writable {
 		if within(c, w) {
 			return nil

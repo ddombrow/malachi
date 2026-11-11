@@ -1,11 +1,20 @@
 package sandbox
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Profile renders p as a Seatbelt (SBPL) profile. In SBPL the last matching
 // rule wins, so the order matters: allow everything, deny all writes,
-// re-allow writable roots, then deny hidden paths, which therefore beat
-// writable roots. Unix-socket connects are allowed only to an allow-list. Seatbelt matches resolved paths, which is why Policy paths
+// re-allow writable roots, deny reading private directories, re-allow
+// readable and writable roots, then deny hidden paths, which therefore beat
+// everything.
+//
+// Reading a private directory's contents is denied, not its metadata: like
+// Landlock, which cannot restrict stat, a command can tell that a path
+// exists but not list or read it. Walking up through the home directory to a
+// project (getcwd, git looking for .git) keeps working. Unix-socket connects are allowed only to an allow-list. Seatbelt matches resolved paths, which is why Policy paths
 // are canonical.
 func Profile(p Policy) string {
 	var b strings.Builder
@@ -18,6 +27,21 @@ func Profile(p Policy) string {
   (literal "/dev/null") (literal "/dev/zero") (literal "/dev/stdout") (literal "/dev/stderr")
   (literal "/dev/dtracehelper") (regex #"^/dev/tty") (regex #"^/dev/fd/"))
 `)
+	if len(p.Private) > 0 {
+		b.WriteString("(deny file-read-data file-read-xattr")
+		for _, d := range p.Private {
+			b.WriteString("\n  (subpath " + sbplString(d) + ")")
+		}
+		b.WriteString(")\n")
+		// An allow with no filters would allow everything.
+		if roots := slices.Concat(p.Readable, p.Writable); len(roots) > 0 {
+			b.WriteString("(allow file-read-data file-read-xattr")
+			for _, r := range roots {
+				b.WriteString("\n  (subpath " + sbplString(r) + ")")
+			}
+			b.WriteString(")\n")
+		}
+	}
 	if len(p.Hidden) > 0 {
 		b.WriteString("(deny file-read* file-write*")
 		for _, h := range p.Hidden {
