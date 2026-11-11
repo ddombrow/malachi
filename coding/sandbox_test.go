@@ -332,6 +332,11 @@ func TestSandboxGrants(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(project, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// A default write root that exists, to be counted: on Linux the fake
+	// home sits under /tmp, which leaves /tmp and TMPDIR out.
+	if err := os.Mkdir(filepath.Join(filepath.Dir(filepath.Dir(project)), ".npm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	st := s.Sandbox()
 	st.Readable = append(st.Readable, filepath.Join(project, "sub")) // inside a shown root
 	g := st.Grants()
