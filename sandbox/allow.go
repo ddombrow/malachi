@@ -67,11 +67,27 @@ func partition(paths []string) (dirs, files []string) {
 }
 
 // readGrants returns the paths Landlock grants read access to under p, and
-// the directories split to carve them: everything outside hidden and private
-// directories, plus each readable root that lies in (or holds) a private
-// directory, minus hidden paths. Writable roots are granted separately, with
-// reading included.
-func readGrants(p Policy) (grant, split []string) {
+// the directories that may still be listed: everything outside hidden and
+// private directories, plus each readable root that lies in (or holds) a
+// private directory, minus hidden paths. Writable roots are granted
+// separately, with reading included.
+//
+// Directories split to carve the grants are listable, except those holding a
+// private directory: Landlock grants listing for a whole tree, so listing /
+// would list everything in the home directory too. That costs "ls /" and
+// "ls /home" while the home directory is private; reading and walking
+// through them still work.
+func readGrants(p Policy) (grant, listable []string) {
+	grant, split := readGrantsSplit(p)
+	listable = slices.DeleteFunc(split, func(d string) bool {
+		return slices.ContainsFunc(p.Private, func(priv string) bool {
+			return within(priv, d) && p.PrivateAtCanonical(priv) != ""
+		})
+	})
+	return grant, listable
+}
+
+func readGrantsSplit(p Policy) (grant, split []string) {
 	grant, split = carve("/", slices.Concat(p.Hidden, p.Private))
 	for _, r := range p.Readable {
 		if !slices.ContainsFunc(p.Private, func(priv string) bool { return within(r, priv) || within(priv, r) }) {

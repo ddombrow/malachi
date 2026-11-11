@@ -379,7 +379,9 @@ What it does not stop:
   ask system services for things, such as opening a URL in your browser
   (`open`), which then runs outside the sandbox.
 - **On Linux**, the names inside a hidden directory can be listed, though not
-  their contents.
+  their contents. While the home directory is private, the directories that
+  hold it (`/`, `/home`) cannot be listed either: Landlock would extend the
+  listing to everything under them.
 - **On Linux**, a writable directory that itself contains a hidden path (say,
   malachi run in your home directory) cannot gain new entries at its top
   level.

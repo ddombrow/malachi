@@ -44,9 +44,10 @@ func runHelper(raw string) error {
 // roots (minus hidden paths) and a few devices. Directories split around a
 // hidden path stay listable, so "ls ~" works when the home directory is
 // readable; on Linux that shows the names inside hidden directories, not
-// their contents. A private directory itself is not split, so not listable.
+// their contents. Neither a private directory nor one holding it is
+// listable (see readGrants).
 func restrictFS(p Policy) error {
-	readable, split := readGrants(p)
+	readable, listable := readGrants(p)
 	roDirs, roFiles := partition(readable)
 	var writable []string
 	for _, w := range p.Writable {
@@ -61,7 +62,7 @@ func restrictFS(p Policy) error {
 	rules := []landlock.Rule{
 		landlock.RODirs(roDirs...).IgnoreIfMissing(),
 		landlock.ROFiles(roFiles...).IgnoreIfMissing(),
-		landlock.PathAccess(ll.AccessFSReadDir, split...).IgnoreIfMissing(),
+		landlock.PathAccess(ll.AccessFSReadDir, listable...).IgnoreIfMissing(),
 		landlock.RWDirs(rwDirs...).WithRefer().IgnoreIfMissing(),
 		landlock.RWFiles(rwFiles...).IgnoreIfMissing(),
 		landlock.RWFiles(devices...).IgnoreIfMissing(),

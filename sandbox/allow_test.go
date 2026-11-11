@@ -60,7 +60,7 @@ func TestReadGrants(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := Policy{Enabled: true, Private: []string{home}, Readable: []string{filepath.Join(home, "proj")}, Hidden: []string{filepath.Join(home, ".ssh")}}
-	grant, split := readGrants(p)
+	grant, listable := readGrants(p)
 	if !slices.Contains(grant, filepath.Join(home, "proj")) || !slices.Contains(grant, filepath.Join(root, "sys")) {
 		t.Fatalf("grants %v lack the read root or a path outside home", grant)
 	}
@@ -69,16 +69,20 @@ func TestReadGrants(t *testing.T) {
 			t.Errorf("granted %s inside the private home", g)
 		}
 	}
-	// The home directory itself is not split, so not listable.
-	if slices.Contains(split, home) || !slices.Contains(split, root) {
-		t.Errorf("split %v", split)
+	// Neither the home directory nor a directory holding it is listable:
+	// Landlock would extend the listing to everything beneath.
+	if slices.ContainsFunc(listable, func(d string) bool { return within(home, d) }) {
+		t.Errorf("listable %v holds the private home", listable)
 	}
 
 	// A read root holding the private directory makes it readable, hidden
 	// paths aside.
 	p.Readable = []string{root}
-	grant, _ = readGrants(p)
+	grant, listable = readGrants(p)
 	if !slices.Contains(grant, filepath.Join(home, "other")) || slices.Contains(grant, filepath.Join(home, ".ssh")) {
 		t.Errorf("grants %v with the home under a read root", grant)
+	}
+	if !slices.Contains(listable, home) {
+		t.Errorf("listable %v lacks the home directory, readable now save .ssh", listable)
 	}
 }
