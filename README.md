@@ -94,7 +94,8 @@ to cancel, and use `/help` for the full command list.
 | `/sandbox` | Show what commands and file tools may touch |
 | `/allow-read <dir>` | Let the model read an existing directory in your home for this session only |
 | `/allow-write <dir>` | Add an existing directory as writable for this session only |
-| `/network [on\|off]` | Switch commands' network access for this session |
+| `/network [on\|off]` | Switch commands' network access for this session (`ctrl+o` toggles it) |
+| `/sidebar` | Show or hide the sandbox sidebar (`ctrl+s`) |
 | `/copy`, `/quit` | Copy the transcript, exit |
 
 `/compact` and `/trim` are different tools: `/compact` is a lossy,
@@ -340,6 +341,11 @@ and is lost when starting or resuming another session. Model-run tools can
 modify or delete everything in an allowed directory.
 RPC clients hear about every such change as a `sandbox_changed` event
 carrying the sandbox as `get_state` reports it.
+On a terminal at least 100 columns wide, a sidebar beside the transcript
+shows the sandbox in force: whether it is on, the network (click it, or press
+`ctrl+o`, to switch), the readable and writable directories (built-in
+toolchain, cache and temp directories are counted rather than listed), and
+how many paths are hidden. `ctrl+s` or `/sidebar` hides it.
 The status bar says `unsandboxed`, `sandbox unavailable` or `network on` when
 those apply. When a command fails in a way that looks like the sandbox, its
 result tells the model to ask you rather than work around it.

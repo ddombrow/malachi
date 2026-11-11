@@ -25,7 +25,8 @@ const helpText = `Commands:
   /sandbox            show what commands and file tools may touch
   /allow-read <dir>   allow reading a directory in your home for this session
   /allow-write <dir>  allow writes to a directory for this session
-  /network [on|off]   show, or turn commands' network access on or off
+  /network [on|off]   show, or turn commands' network access on or off (ctrl+o)
+  /sidebar            show or hide the sandbox sidebar (ctrl+s)
   /ctx               measured context: tokens, tool output share, trim passes
   /new                start a fresh session
   /resume [n|name]    list recent sessions, or resume one
@@ -110,15 +111,23 @@ func (m *model) command(line string) tea.Cmd {
 		if err != nil {
 			return m.printErr(err)
 		}
+		m.syncSandbox(m.s.Sandbox())
 		return m.printDim(fmt.Sprintf("Added readable root %s for this session. Whatever model-run tools read there is sent to your model provider.", root))
 	case "allow-write":
 		root, err := m.s.AddWritableRoot(arg)
 		if err != nil {
 			return m.printErr(err)
 		}
+		m.syncSandbox(m.s.Sandbox())
 		return m.printDim(fmt.Sprintf("Added writable root %s for this session. Model-run tools can modify or delete its contents.", root))
 	case "network":
 		return m.networkCommand(arg)
+	case "sidebar":
+		m.toggleSidebar()
+		if !m.sidebarHidden && !m.sidebarShown() {
+			return m.printDim(fmt.Sprintf("the sidebar needs a terminal at least %d columns wide", sidebarMinWidth))
+		}
+		return nil
 	case "compact":
 		return m.compactCommand(arg)
 	case "ctx":
@@ -415,6 +424,7 @@ func (m *model) reopen(resume string) tea.Cmd {
 		m.contextEstimated = false
 	}
 	m.toolArgs = map[string]map[string]any{}
+	m.syncSandbox(next.Sandbox())
 
 	m.showSession(next)
 	m.vp.GotoBottom()
@@ -464,6 +474,7 @@ func (m *model) networkCommand(arg string) tea.Cmd {
 		if err := m.s.SetNetwork(strings.EqualFold(arg, "on")); err != nil {
 			return m.printErr(err)
 		}
+		m.syncSandbox(m.s.Sandbox()) // at once; the session's event follows
 		return m.printDim(state() + ", from the next command, for this session")
 	}
 	return m.printErr(fmt.Errorf("usage: /network [on|off]"))

@@ -140,6 +140,10 @@ type model struct {
 	phaseStart  time.Time
 	quitting    bool
 	initial     string
+	// side is the sandbox the sidebar draws; sidebarHidden is the user
+	// hiding it (it also hides itself on a small terminal).
+	side          sidebarState
+	sidebarHidden bool
 }
 
 // Run starts the interactive UI. initialPrompt, if non-empty, is sent first.
@@ -195,7 +199,8 @@ func newModel(s *coding.Session, initialPrompt string) *model {
 	if st := m.s.ContextStats(); st.PromptEstimated() {
 		m.context, m.contextEstimated = st.EffectivePrompt(), true
 	}
-	m.r = newRenderer(m.width, m.isDark, m.s.Settings().Icons, m.s.Cwd())
+	m.syncSandbox(s.Sandbox())
+	m.r = newRenderer(m.contentWidth(), m.isDark, m.s.Settings().Icons, m.s.Cwd())
 	m.applyInputStyles()
 	m.vp.MouseWheelEnabled = true
 	m.vp.MouseWheelDelta = 3
@@ -319,7 +324,7 @@ func bytesHuman(n int) string {
 // live area, keeping the view pinned to the bottom if it already was.
 func (m *model) refresh() {
 	follow := m.vp.AtBottom() || m.vp.TotalLineCount() == 0
-	m.vp.SetWidth(m.width)
+	m.vp.SetWidth(m.contentWidth())
 	// The input box yields rows to the transcript on a short terminal, and
 	// below four spare rows the rules are dropped, so the view can never grow
 	// past the screen and scroll the transcript off the top.
@@ -359,7 +364,7 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		if st := m.s.ContextStats(); st.PromptEstimated() {
 			m.context, m.contextEstimated = st.EffectivePrompt(), true
 		}
-		m.r = newRenderer(m.width, m.isDark, m.s.Settings().Icons, m.s.Cwd())
+		m.r = newRenderer(m.contentWidth(), m.isDark, m.s.Settings().Icons, m.s.Cwd())
 		m.applyInputStyles()
 		m.sel = selection{} // the transcript re-wraps; old positions are stale
 		return nil
@@ -371,7 +376,7 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		if st := m.s.ContextStats(); st.PromptEstimated() {
 			m.context, m.contextEstimated = st.EffectivePrompt(), true
 		}
-		m.r = newRenderer(m.width, m.isDark, m.s.Settings().Icons, m.s.Cwd())
+		m.r = newRenderer(m.contentWidth(), m.isDark, m.s.Settings().Icons, m.s.Cwd())
 		m.applyInputStyles()
 		return nil
 
@@ -404,6 +409,13 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		if m.jumpWidgetHit(msg) {
 			m.sel = selection{}
 			m.vp.GotoBottom()
+			return nil
+		}
+		if mouse := msg.Mouse(); m.sidebarHit(mouse.X, mouse.Y) {
+			m.sel = selection{}
+			if mouse.Button == tea.MouseLeft && mouse.Y == sidebarNetworkRow && m.side.st.Enabled {
+				return m.toggleNetwork()
+			}
 			return nil
 		}
 		return m.handleMouse(msg)
@@ -466,6 +478,11 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 				m.s.ClearQueue()
 				return nil
 			}
+		case keySidebar:
+			m.toggleSidebar()
+			return nil
+		case keyNetwork:
+			return m.toggleNetwork()
 		case "pgup":
 			m.vp.PageUp()
 			return nil
@@ -535,6 +552,8 @@ func (m *model) submitInput(text, restore string) tea.Cmd {
 // handleEvent updates the live area and prints completed items.
 func (m *model) handleEvent(e any) tea.Cmd {
 	switch ev := e.(type) {
+	case coding.SandboxChangedEvent:
+		m.syncSandbox(ev.State)
 	case coding.CompactionStartEvent:
 		m.phaseReason, m.phaseStart = ev.Reason, time.Now()
 		m.phase = compactionHead(ev.Reason)
@@ -658,7 +677,7 @@ func (m *model) View() tea.View {
 	// background separates it from the status text.
 	lower := m.r.st.dim.Render(strings.Repeat(lowRule, max(1, m.width)))
 	input := m.input.View()
-	transcript := m.highlightSelection(m.vp.View())
+	transcript := m.withSidebar(m.highlightSelection(m.vp.View()))
 	body := transcript + "\n" + input
 	if m.chrome >= chromeRows {
 		pad := m.jumpWidget()
@@ -676,14 +695,14 @@ const jumpWidgetText = "↓ jump to bottom ↓"
 // jumpWidget occupies the pad row below the viewport, so it never covers
 // transcript text or steals rows from the pinned input.
 func (m *model) jumpWidget() string {
-	if m.chrome < chromeRows || m.vp.AtBottom() || m.width < 16 {
+	if m.chrome < chromeRows || m.vp.AtBottom() || m.contentWidth() < 16 {
 		return ""
 	}
 	return m.r.st.jump.Render(jumpWidgetText)
 }
 
 func (m *model) jumpWidgetStart() int {
-	return max(0, (m.width-lipgloss.Width(m.jumpWidget()))/2)
+	return max(0, (m.contentWidth()-lipgloss.Width(m.jumpWidget()))/2)
 }
 
 func (m *model) jumpWidgetHit(msg tea.MouseClickMsg) bool {
@@ -702,11 +721,11 @@ func (m *model) live() string {
 	var b strings.Builder
 	if m.partial != nil {
 		if th := strings.TrimSpace(m.partial.ThinkingText()); th != "" && m.partial.Text() == "" {
-			lines := lastN(wrapLines(th, m.width-m.r.gutterWidth(iconThinking)-1), 3)
+			lines := lastN(wrapLines(th, m.contentWidth()-m.r.gutterWidth(iconThinking)-1), 3)
 			b.WriteString(item(m.r.gutter(iconThinking, m.r.st.thinking, m.r.st.thinking.Render(strings.Join(lines, "\n")))))
 		}
 		if text := strings.TrimLeft(m.partial.Text(), "\n"); text != "" {
-			lines := wrapLines(text, m.width-m.r.gutterWidth(iconReply)-1)
+			lines := wrapLines(text, m.contentWidth()-m.r.gutterWidth(iconReply)-1)
 			b.WriteString(item(m.r.gutter(iconReply, lipgloss.NewStyle(), strings.Join(lines, "\n"))))
 		}
 		for _, c := range m.partial.ToolCalls() {

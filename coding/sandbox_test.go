@@ -323,3 +323,22 @@ func TestAddReadableRootRequiresTheSandbox(t *testing.T) {
 		t.Fatal("added a read root with the sandbox off")
 	}
 }
+
+func TestSandboxGrants(t *testing.T) {
+	s, project, private, _ := homeSession(t)
+	if _, err := s.AddReadableRoot(private); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st := s.Sandbox()
+	st.Readable = append(st.Readable, filepath.Join(project, "sub")) // inside a shown root
+	g := st.Grants()
+	if !slices.Equal(g.Read, []string{private, project}) && !slices.Equal(g.Read, []string{project, private}) {
+		t.Fatalf("read %v", g.Read)
+	}
+	if !slices.Contains(g.Write, project) || g.BuiltinWrite == 0 {
+		t.Fatalf("write %v, builtin %d", g.Write, g.BuiltinWrite)
+	}
+}

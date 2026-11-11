@@ -297,7 +297,8 @@ func TestJumpWidgetAppearsAndJumpsToBottom(t *testing.T) {
 	}
 	widget := m.jumpWidget()
 	start := m.jumpWidgetStart()
-	if want := (m.width - lipgloss.Width(widget)) / 2; start != want {
+	// Centered over the transcript, which yields columns to the sidebar.
+	if want := (m.contentWidth() - lipgloss.Width(widget)) / 2; start != want {
 		t.Fatalf("widget starts at %d, want centered start %d", start, want)
 	}
 	m.Update(tea.MouseClickMsg{X: start + 1, Y: m.vp.Height(), Button: tea.MouseLeft})

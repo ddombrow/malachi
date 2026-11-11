@@ -2,7 +2,10 @@ package coding
 
 import (
 	"fmt"
+	"slices"
 	"strings"
+
+	"github.com/ddombrow/malachi/sandbox"
 )
 
 // Notice is what a frontend says at startup about a sandbox that is not
@@ -69,4 +72,39 @@ func (st SandboxState) Describe() string {
 	}
 	b.WriteString("  /allow-read and /allow-write add directories for this session; settings.json \"sandbox\" changes the defaults")
 	return b.String()
+}
+
+// SandboxGrants is the sandbox's roots arranged for display. Read and Write
+// are the ones a user looks for: the project, its repository, and roots from
+// settings or granted this session. Built-in defaults (toolchains, caches,
+// temp directories) are only counted, since every session has them.
+type SandboxGrants struct {
+	Read, Write               []string
+	BuiltinRead, BuiltinWrite int
+}
+
+// Grants arranges st's roots for display. It resolves the defaults afresh,
+// so a frontend computes it when the sandbox changes, not every frame.
+func (st SandboxState) Grants() SandboxGrants {
+	base := sandbox.Build(sandbox.Config{})
+	var g SandboxGrants
+	g.Read, g.BuiltinRead = splitBuiltin(st.Readable, base.Readable)
+	g.Write, g.BuiltinWrite = splitBuiltin(st.Writable, base.Writable)
+	return g
+}
+
+// splitBuiltin separates roots into those not in builtin and a count of
+// those that are. A shown root inside another shown root (the project inside
+// its repository) adds nothing and is left out.
+func splitBuiltin(roots, builtin []string) (shown []string, n int) {
+	for _, r := range roots {
+		if slices.Contains(builtin, r) {
+			n++
+		} else {
+			shown = append(shown, r)
+		}
+	}
+	return slices.DeleteFunc(slices.Clone(shown), func(r string) bool {
+		return slices.ContainsFunc(shown, func(o string) bool { return o != r && withinPath(r, o) })
+	}), n
 }
