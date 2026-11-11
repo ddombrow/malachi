@@ -192,22 +192,14 @@ func trustSourceText(t coding.TrustState) string {
 	return t.Source
 }
 
-// sidebarRows lays the sidebar out as exactly height rows: a close row on
-// top, then the sections with a blank row after each, and malachi's version
-// pinned to the bottom row.
+// sidebarRows lays the sidebar out as exactly height rows: a top row with
+// malachi's version and the close button, then the sections with a blank row
+// after each.
 func (m *model) sidebarRows(height int) []sideRow {
-	if height < 2 {
-		return m.sectionRows(height)
-	}
-	version := sideRow{text: m.r.st.dim.Render(ansi.Truncate("malachi "+coding.Version, sidebarInner, "…"))}
-	return append(m.sectionRows(height-1), version)
-}
-
-// sectionRows lays the close row and the sections out as exactly height rows,
-// clipped with an ellipsis when they do not fit.
-func (m *model) sectionRows(height int) []sideRow {
+	closeBtn := m.r.st.dim.Render("^s ") + m.r.st.accent.Render("×")
+	version := ansi.Truncate("malachi "+coding.Version, sidebarInner-lipgloss.Width(closeBtn)-1, "…")
 	closeRow := sideRow{
-		text:  sidePair(m.r.st.dim.Render("^s"), m.r.st.accent.Render("×")),
+		text:  sidePair(m.r.st.dim.Render(version), closeBtn),
 		click: func() tea.Cmd { m.toggleSidebar(); return nil },
 	}
 	rows := []sideRow{closeRow}
