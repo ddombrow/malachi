@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -294,4 +295,48 @@ func TestOpenReadRefusesPrivateTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Close()
+}
+
+// A Go installed under the home directory is readable whole, since go reads
+// its standard library from beside the bin on PATH; other bins stay alone.
+func TestDefaultReadableIncludesGoRoots(t *testing.T) {
+	userHome := filepath.Join(t.TempDir(), "home")
+	goroot := filepath.Join(userHome, "toolcache", "go", "1.25", "x64")
+	other := filepath.Join(userHome, "node", "bin")
+	for _, d := range []string{filepath.Join(goroot, "bin"), filepath.Join(goroot, "src", "runtime"), other} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", strings.Join([]string{filepath.Join(goroot, "bin"), other}, string(filepath.ListSeparator)))
+	t.Setenv("GOROOT", "")
+	got := defaultReadable(userHome)
+	if !slices.Contains(got, goroot) {
+		t.Errorf("default read roots %v lack the Go root %s", got, goroot)
+	}
+	if slices.Contains(got, filepath.Dir(other)) {
+		t.Errorf("default read roots %v widened a plain bin to %s", got, filepath.Dir(other))
+	}
+}
+
+// With HOME under /tmp, as in some containers, /tmp stops being writable
+// rather than taking the home directory with it.
+func TestTmpHoldingHomeIsNotWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no /tmp")
+	}
+	userHome, err := os.MkdirTemp("/tmp", "malachi-home-")
+	if err != nil {
+		t.Skip(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(userHome) })
+	t.Setenv("HOME", userHome)
+	project := filepath.Join(userHome, "proj")
+	p := Build(Config{Cwd: project, Home: "/nonexistent/malachi-home"})
+	if err := p.CheckWrite(filepath.Join(userHome, "elsewhere", "x")); err == nil {
+		t.Fatal("home under /tmp is writable")
+	}
+	if err := p.CheckRead(filepath.Join(userHome, "elsewhere", "x")); err == nil {
+		t.Fatal("home under /tmp is readable")
+	}
 }

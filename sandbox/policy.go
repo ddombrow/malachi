@@ -74,7 +74,9 @@ func Build(c Config) Policy {
 		return filepath.Join(userHome, rel)
 	}
 
-	writable := []string{c.Cwd, "/tmp", safeDerivedRoot(os.TempDir(), userHome)}
+	// /tmp is checked like the derived roots: with HOME under it, as in some
+	// containers, it would make the whole home directory writable.
+	writable := []string{c.Cwd, safeDerivedRoot("/tmp", userHome), safeDerivedRoot(os.TempDir(), userHome)}
 	if dir, err := os.UserCacheDir(); err == nil {
 		writable = append(writable, safeDerivedRoot(dir, userHome)) // go-build, pip, and most other caches
 	}
@@ -115,7 +117,7 @@ func defaultReadable(userHome string) []string {
 		".local/bin", ".local/share/mise", ".local/share/pnpm", ".local/share/uv",
 		".sdkman", ".gradle", ".m2", ".nix-profile",
 		".gitconfig", ".config/git", ".config/mise",
-		"go/bin",
+		"go/bin", "sdk", // sdk: Go toolchains from golang.org/dl
 	} {
 		out = append(out, filepath.Join(userHome, rel))
 	}
@@ -130,7 +132,13 @@ func defaultReadable(userHome string) []string {
 		// confinement pointless; relative entries such as "." are skipped.
 		if filepath.IsAbs(dir) && Canonical(dir) != Canonical(userHome) {
 			out = append(out, dir)
+			if root := goRootOf(dir); root != "" {
+				out = append(out, root)
+			}
 		}
+	}
+	if goroot := os.Getenv("GOROOT"); filepath.IsAbs(goroot) {
+		out = append(out, goroot)
 	}
 	if exe, err := os.Executable(); err == nil {
 		out = append(out, filepath.Dir(exe))
@@ -142,6 +150,21 @@ func defaultReadable(userHome string) []string {
 		c := Canonical(p)
 		return c == home || !within(c, home)
 	})
+}
+
+// goRootOf returns the Go installation whose bin directory is dir, if it is
+// one. go reads its standard library and tools from there, so a Go installed
+// under the home directory (a CI runner's tool cache, a tarball unpacked in
+// ~/go1.x) needs the whole installation, not just the bin on PATH.
+func goRootOf(dir string) string {
+	if filepath.Base(dir) != "bin" {
+		return ""
+	}
+	root := filepath.Dir(dir)
+	if st, err := os.Stat(filepath.Join(root, "src", "runtime")); err != nil || !st.IsDir() {
+		return ""
+	}
+	return root
 }
 
 // safeDerivedRoot validates writable roots inferred from process environment
