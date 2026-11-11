@@ -134,26 +134,30 @@ type sandboxWire struct {
 	Network       bool     `json:"network"`
 	UnixSockets   bool     `json:"unixSockets"`
 	WritableRoots []string `json:"writableRoots"`
+	// PrivatePaths (the user's home) are readable only under ReadableRoots
+	// or WritableRoots; empty, everything not hidden is readable.
+	PrivatePaths  []string `json:"privatePaths"`
+	ReadableRoots []string `json:"readableRoots"`
 	HiddenPaths   []string `json:"hiddenPaths"`
 }
 
 func sandboxOf(st coding.SandboxState) sandboxWire {
 	w := sandboxWire{
 		Enabled: st.Enabled, Available: st.Unavailable == nil, Network: st.Network, UnixSockets: st.UnixSockets,
-		WritableRoots: st.Writable, HiddenPaths: st.Hidden,
+		WritableRoots: st.Writable, PrivatePaths: st.Private, ReadableRoots: st.Readable, HiddenPaths: st.Hidden,
 	}
 	if st.Unavailable != nil {
 		w.Reason = st.Unavailable.Error()
 	}
 	if !st.Enabled {
 		// Off, nothing is confined: the lists would only mislead.
-		w.Network, w.UnixSockets, w.WritableRoots, w.HiddenPaths = true, true, nil, nil
+		w.Network, w.UnixSockets = true, true
+		w.WritableRoots, w.PrivatePaths, w.ReadableRoots, w.HiddenPaths = nil, nil, nil, nil
 	}
-	if w.WritableRoots == nil {
-		w.WritableRoots = []string{}
-	}
-	if w.HiddenPaths == nil {
-		w.HiddenPaths = []string{}
+	for _, list := range []*[]string{&w.WritableRoots, &w.PrivatePaths, &w.ReadableRoots, &w.HiddenPaths} {
+		if *list == nil {
+			*list = []string{}
+		}
 	}
 	return w
 }
@@ -253,6 +257,10 @@ func eventJSON(e any) ([]byte, error) {
 	raw, err := json.Marshal(e)
 	if err != nil {
 		return nil, err
+	}
+	if sc, ok := e.(coding.SandboxChangedEvent); ok {
+		// A malachi extension carrying the sandbox as get_state reports it.
+		return json.Marshal(map[string]any{"type": "sandbox_changed", "sandbox": sandboxOf(sc.State)})
 	}
 	if _, ok := e.(*agent.AgentEndEvent); ok {
 		var fields map[string]json.RawMessage

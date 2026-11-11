@@ -4,9 +4,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/ai/fake"
@@ -224,5 +226,100 @@ func TestSetNetworkSwitchesCommandsNetwork(t *testing.T) {
 	off, _, _, _ := sandboxedSession(t, "off")
 	if off.SetNetwork(true) == nil {
 		t.Fatal("SetNetwork accepted with the sandbox off")
+	}
+}
+
+// homeSession opens a sandboxed session for a project inside a fake home
+// directory, beside a private directory the project may not read. Events
+// the session emits are sent on the returned channel.
+func homeSession(t *testing.T) (s *Session, project, private string, events <-chan any) {
+	t.Helper()
+	root := t.TempDir()
+	userHome := filepath.Join(root, "user")
+	project, private = filepath.Join(userHome, "src", "proj"), filepath.Join(userHome, "private")
+	for _, d := range []string{project, private, filepath.Join(userHome, ".ssh"), filepath.Join(root, "outside")} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, project, "main.go", "package main\n")
+	write(t, private, "notes.txt", "private-words\n")
+	t.Setenv("HOME", userHome)
+	s, err := Open(Options{Cwd: project, Home: filepath.Join(root, "malachi"), Settings: &Settings{}, Provider: fake.New(), NoSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	ch := make(chan any, 16)
+	s.Subscribe(func(e any) { ch <- e })
+	return s, sandbox.Canonical(project), sandbox.Canonical(private), ch
+}
+
+func sandboxChanged(t *testing.T, events <-chan any) SandboxState {
+	t.Helper()
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case e := <-events:
+			if sc, ok := e.(SandboxChangedEvent); ok {
+				return sc.State
+			}
+		case <-timeout:
+			t.Fatal("no sandbox_changed event")
+		}
+	}
+}
+
+func TestAddReadableRoot(t *testing.T) {
+	s, project, private, events := homeSession(t)
+	r, err := run(t, tool(t, s, "read"), map[string]any{"path": filepath.Join(private, "notes.txt")})
+	if err == nil && !strings.Contains(r.Text(), "readable directories") || strings.Contains(r.Text(), "private-words") {
+		t.Fatalf("read a private file before allowing it: %v %s", err, r.Text())
+	}
+
+	root, err := s.AddReadableRoot(private)
+	if err != nil || root != private {
+		t.Fatalf("AddReadableRoot = %q, %v", root, err)
+	}
+	if st := sandboxChanged(t, events); !slices.Contains(st.Readable, private) {
+		t.Fatalf("event state lacks the new root: %v", st.Readable)
+	}
+	r, err = run(t, tool(t, s, "read"), map[string]any{"path": filepath.Join(private, "notes.txt")})
+	if err != nil || !strings.Contains(r.Text(), "private-words") {
+		t.Fatalf("read after allowing: %v %s", err, r.Text())
+	}
+
+	for _, c := range []struct{ name, path string }{
+		{"already readable", project},
+		{"outside home", filepath.Join(filepath.Dir(filepath.Dir(private)), "outside")},
+		{"filesystem root", string(filepath.Separator)},
+		{"missing", filepath.Join(private, "missing")},
+		{"a file", filepath.Join(private, "notes.txt")},
+		{"empty", " "},
+	} {
+		if _, err := s.AddReadableRoot(c.path); err == nil {
+			t.Errorf("%s: allowed %s", c.name, c.path)
+		}
+	}
+	userHome, _ := os.UserHomeDir()
+	if _, err := s.AddReadableRoot(filepath.Join(userHome, ".ssh")); err == nil {
+		t.Error("allowed a hidden directory")
+	}
+}
+
+func TestSetNetworkEmitsSandboxChanged(t *testing.T) {
+	s, _, _, events := homeSession(t)
+	if err := s.SetNetwork(true); err != nil {
+		t.Fatal(err)
+	}
+	if st := sandboxChanged(t, events); !st.Network {
+		t.Fatal("event reports the network off")
+	}
+}
+
+func TestAddReadableRootRequiresTheSandbox(t *testing.T) {
+	s, _, outside, _ := sandboxedSession(t, "off")
+	if _, err := s.AddReadableRoot(outside); err == nil {
+		t.Fatal("added a read root with the sandbox off")
 	}
 }

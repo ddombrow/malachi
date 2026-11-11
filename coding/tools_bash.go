@@ -449,6 +449,10 @@ func sandboxHint(p sandbox.Policy) string {
 	if !p.Network {
 		network = " The network is off."
 	}
-	return "[This may be the sandbox: commands can write only in the project, temp and build-cache directories, and cannot read credentials or malachi's own files." +
+	reads := "cannot read credentials or malachi's own files"
+	if len(p.Private) > 0 {
+		reads = "inside the user's home directory can read only the project, toolchains and directories the user allowed"
+	}
+	return "[This may be the sandbox: commands can write only in the project, temp and build-cache directories, and " + reads + "." +
 		network + " If the task needs more access, ask the user; do not try to work around the sandbox.]"
 }

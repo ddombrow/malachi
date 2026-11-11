@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -540,9 +541,46 @@ func TestSetNetwork(t *testing.T) {
 	if r["success"] != true || r["data"].(map[string]any)["network"] != true || !s.Sandbox().Network {
 		t.Fatalf("set_network: %v", r)
 	}
+	if ev := c.event("sandbox_changed"); ev["sandbox"].(map[string]any)["network"] != true {
+		t.Fatalf("sandbox_changed: %v", ev)
+	}
 	c.send(`{"id":"bad","type":"set_network","enabled":"no"}`)
 	if r := c.response("bad"); r["success"] != false {
 		t.Fatalf("non-boolean accepted: %v", r)
+	}
+	c.close()
+}
+
+// add_readable_root lets tools read a directory in the user's home, a malachi
+// extension like add_writable_root.
+func TestAddReadableRoot(t *testing.T) {
+	userHome := t.TempDir()
+	t.Setenv("HOME", userHome)
+	ref := filepath.Join(userHome, "ref")
+	if err := os.Mkdir(ref, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := serve(t, openSession(t, fake.New()))
+	c.send(`{"id":"s","type":"get_state"}`)
+	sb := c.response("s")["data"].(map[string]any)["sandbox"].(map[string]any)
+	if private, _ := sb["privatePaths"].([]any); len(private) != 1 || private[0] != sandbox.Canonical(userHome) {
+		t.Fatalf("privatePaths: %v", sb)
+	}
+	body, _ := json.Marshal(map[string]any{"id": "r", "type": "add_readable_root", "path": ref})
+	c.send(string(body))
+	r := c.response("r")
+	data, _ := r["data"].(map[string]any)
+	if r["success"] != true || data["path"] != sandbox.Canonical(ref) {
+		t.Fatalf("add_readable_root: %v", r)
+	}
+	roots, _ := data["sandbox"].(map[string]any)["readableRoots"].([]any)
+	if !slices.Contains(roots, any(sandbox.Canonical(ref))) {
+		t.Fatalf("readableRoots %v lack %s", roots, ref)
+	}
+	c.event("sandbox_changed")
+	c.send(`{"id":"bad","type":"add_readable_root"}`)
+	if r := c.response("bad"); r["success"] != false {
+		t.Fatalf("missing path accepted: %v", r)
 	}
 	c.close()
 }

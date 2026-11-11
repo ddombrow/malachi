@@ -123,6 +123,20 @@ func (sv *Server) dispatch(id any, typ string, cmd map[string]any) {
 			return
 		}
 		sv.ok(id, typ, map[string]any{"path": root, "sandbox": sandboxOf(s.Sandbox())})
+	case "add_readable_root":
+		// A malachi extension, like add_writable_root: the user letting
+		// model-run tools read a directory in their home for this session.
+		path, err := requiredString(cmd, "path")
+		if err != nil {
+			sv.fail(id, typ, err.Error())
+			return
+		}
+		root, err := s.AddReadableRoot(path)
+		if err != nil {
+			sv.fail(id, typ, err.Error())
+			return
+		}
+		sv.ok(id, typ, map[string]any{"path": root, "sandbox": sandboxOf(s.Sandbox())})
 	default:
 		sv.fail(id, typ, "Unknown command: "+typ)
 	}

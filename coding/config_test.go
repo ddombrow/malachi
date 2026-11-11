@@ -95,6 +95,13 @@ func TestSandboxSettings(t *testing.T) {
 	if !slices.Equal(c.Hidden, []string{"/etc/secret"}) {
 		t.Fatalf("hidden %v", c.Hidden)
 	}
+	if err := json.Unmarshal([]byte(`{"sandbox":{"readableRoots":["~/src/tau"],"readAnywhere":true}}`), &s); err != nil {
+		t.Fatal(err)
+	}
+	c = s.SandboxConfig(cwd, home)
+	if !slices.Equal(c.Readable, []string{filepath.Join(userHome, "src", "tau")}) || !c.ReadAnywhere {
+		t.Fatalf("readable %v readAnywhere %v", c.Readable, c.ReadAnywhere)
+	}
 	if (&Settings{}).SandboxConfig(cwd, home).Disabled {
 		t.Fatal("sandbox off by default")
 	}

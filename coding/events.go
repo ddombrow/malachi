@@ -63,6 +63,13 @@ type ThinkingLevelChangedEvent struct {
 	Level string `json:"level"`
 }
 
+// SandboxChangedEvent reports that the user changed the sandbox in force for
+// this session: the network, or a writable or readable root. It is a malachi
+// addition; State is the sandbox now, which RPC encodes as get_state does.
+type SandboxChangedEvent struct {
+	State SandboxState `json:"-"`
+}
+
 func (e CompactionStartEvent) MarshalJSON() ([]byte, error) {
 	type a CompactionStartEvent
 	return withType("compaction_start", a(e))
@@ -91,6 +98,10 @@ func (e QueueUpdateEvent) MarshalJSON() ([]byte, error) {
 
 func (AgentSettledEvent) MarshalJSON() ([]byte, error) {
 	return []byte(`{"type":"agent_settled"}`), nil
+}
+
+func (SandboxChangedEvent) MarshalJSON() ([]byte, error) {
+	return []byte(`{"type":"sandbox_changed"}`), nil
 }
 
 func (e ThinkingLevelChangedEvent) MarshalJSON() ([]byte, error) {

@@ -9,9 +9,11 @@ events, and sessions, and reads tau session files.
 > to run a shell command, write a file, or edit one, it happens immediately:
 > there is no approval prompt and no undo. A [sandbox](#sandbox), on by
 > default on macOS and Linux, confines what that can touch: writes only in
-> the project, temp and build-cache directories; no reading credentials
-> (`~/.ssh`, cloud and registry tokens) or malachi's own files; no network
-> and no local daemons such as Docker or ssh-agent unless you allow them.
+> the project, temp and build-cache directories; in your home directory,
+> reads only in the project, toolchains and directories you allow; no reading
+> credentials (`~/.ssh`, cloud and registry tokens) or malachi's own files; no
+> network and no local daemons such as Docker or ssh-agent unless you allow
+> them.
 > But it is a fence, not a VM:
 >
 > - Inside the project the model can delete or rewrite anything, including
@@ -90,6 +92,7 @@ to cancel, and use `/help` for the full command list.
 | `/ctx` | Context budget: prompt tokens, tool output share, compaction count |
 | `/trust [yes\|no\|parent]` | Decide whether this directory's `AGENTS.md` is obeyed |
 | `/sandbox` | Show what commands and file tools may touch |
+| `/allow-read <dir>` | Let the model read an existing directory in your home for this session only |
 | `/allow-write <dir>` | Add an existing directory as writable for this session only |
 | `/network [on\|off]` | Switch commands' network access for this session |
 | `/copy`, `/quit` | Copy the transcript, exit |
@@ -129,7 +132,8 @@ which follows Pi's, so clients written for those should work here.
 | `get_messages`, `get_last_assistant_text` | the transcript; the last reply's text |
 | `get_available_models`, `set_model` (`provider?`, `modelId`) | model descriptions |
 | `get_available_thinking_levels`, `set_thinking_level` (`level`) | `levels` |
-| `add_writable_root` (`path`) | canonical path and updated sandbox state |
+| `add_writable_root` (`path`), `add_readable_root` (`path`) | canonical path and updated sandbox state |
+| `set_network` (`enabled`) | updated sandbox state |
 | `compact` (`customInstructions?`), `set_auto_compaction` (`enabled`) | the summary, `firstKeptEntryId`, token estimates before and after |
 | `new_session`, `switch_session` (`sessionPath` or `sessionId`) | `cancelled` |
 | `get_session_stats` | message and token counts, cost, context usage |
@@ -264,6 +268,17 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
 - **Writes** only under the project, the temp directories, the user cache
   directory (Go's build cache, among others), the Go module cache, and npm,
   cargo and rustup caches.
+- **Reads in your home directory** only under the project, the writable
+  directories and the toolchains commands need to run: cargo, rustup, nvm,
+  pyenv, rbenv, asdf, volta, bun, deno, mise, uv, pnpm, sdkman, gradle and
+  maven directories, `~/go/bin`, `PATH` entries, git's configuration, and the
+  directory holding malachi. Everything outside your home stays readable,
+  since commands need the system's files. When malachi starts inside a git
+  repository, the repository's top level is readable and its git directories
+  (including a linked worktree's shared `.git`) are writable, so git works
+  from a subdirectory or a worktree; a repository holding your whole home
+  directory is ignored. A command can still tell whether a path in your home
+  exists, but not list it or read it.
 - **No reading or writing** malachi's home (`~/.malachi`: your API keys,
   sessions, settings) or credential stores: `~/.ssh`, `~/.gnupg`, `~/.aws`,
   `~/.azure`, `~/.kube`, `~/.docker/config.json`, `~/.config/gh`,
@@ -298,12 +313,16 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
     "network": false,
     "unixSockets": false,
     "writableRoots": ["~/scratch"],
+    "readableRoots": ["~/src/tau"],
+    "readAnywhere": false,
     "hiddenPaths": ["~/.config/my-token"]
   }
 }
 ```
 
-`writableRoots` and `hiddenPaths` add to the defaults. Settings are read only
+`writableRoots`, `readableRoots` and `hiddenPaths` add to the defaults, and
+`readAnywhere` lets the model read your whole home directory, hidden paths
+aside. Settings are read only
 from `~/.malachi/settings.json`, which the sandbox hides, so a project cannot
 widen its own sandbox. `-sandbox off` turns the sandbox off for one run, and
 `-sandbox on` turns it on over a setting. `/network on` and `/network off`
@@ -311,12 +330,16 @@ switch commands' network access for the rest of the session, from the next
 command; `-network on` does it for one run, and RPC clients send
 `set_network` with `{"enabled": true}`.
 `/sandbox` shows what is in force.
+`/allow-read <dir>` lets the model read one existing directory in your home
+for this session only, the same way; hidden paths stay unreadable.
 `/allow-write <dir>` adds one existing directory to the writable roots for
 this session only; the path is resolved and printed, and the grant takes effect
 on the next tool call. Filesystem roots, your entire home directory, and paths
 overlapping hidden locations are refused. The grant is not saved in settings
 and is lost when starting or resuming another session. Model-run tools can
 modify or delete everything in an allowed directory.
+RPC clients hear about every such change as a `sandbox_changed` event
+carrying the sandbox as `get_state` reports it.
 The status bar says `unsandboxed`, `sandbox unavailable` or `network on` when
 those apply. When a command fails in a way that looks like the sandbox, its
 result tells the model to ask you rather than work around it.
@@ -338,8 +361,9 @@ What it does not stop:
 - **Anything in the project.** The model can delete or rewrite files there.
   That includes `.git/hooks`, which run with no sandbox when *you* next use
   git.
-- **Anything readable and not hidden** can be read, and with the network on
-  it can be sent somewhere. Whatever a tool returns is sent to the model
+- **Anything readable and not hidden** can be read: everything outside your
+  home directory, and the readable directories inside it. With the network
+  on it can be sent somewhere. Whatever a tool returns is sent to the model
   provider, network on or off.
 - **On macOS, other programs acting for a command.** The profile allows by
   default and confines files, IP and Unix sockets, but a command can still

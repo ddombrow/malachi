@@ -219,7 +219,12 @@ type SandboxSettings struct {
 	Network       *bool    `json:"network,omitempty"` // default false
 	UnixSockets   bool     `json:"unixSockets,omitempty"`
 	WritableRoots []string `json:"writableRoots,omitempty"`
+	ReadableRoots []string `json:"readableRoots,omitempty"`
 	HiddenPaths   []string `json:"hiddenPaths,omitempty"`
+	// ReadAnywhere lets commands and file tools read your whole home
+	// directory, hidden paths aside, instead of only the project and the
+	// readable roots.
+	ReadAnywhere bool `json:"readAnywhere,omitempty"`
 }
 
 // SandboxConfig is the sandbox these settings describe for a project in cwd,
@@ -234,13 +239,15 @@ func (s *Settings) SandboxConfig(cwd, home string) sandbox.Config {
 		return out
 	}
 	return sandbox.Config{
-		Disabled:    sb.Enabled != nil && !*sb.Enabled,
-		NoNet:       sb.Network == nil || !*sb.Network, // off unless asked for
-		UnixSockets: sb.UnixSockets,
-		Cwd:         cwd,
-		Home:        home,
-		Writable:    expand(sb.WritableRoots),
-		Hidden:      expand(sb.HiddenPaths),
+		Disabled:     sb.Enabled != nil && !*sb.Enabled,
+		NoNet:        sb.Network == nil || !*sb.Network, // off unless asked for
+		UnixSockets:  sb.UnixSockets,
+		Cwd:          cwd,
+		Home:         home,
+		Writable:     expand(sb.WritableRoots),
+		Readable:     expand(sb.ReadableRoots),
+		Hidden:       expand(sb.HiddenPaths),
+		ReadAnywhere: sb.ReadAnywhere,
 	}
 }
 

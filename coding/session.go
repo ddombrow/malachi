@@ -285,6 +285,7 @@ func Open(opts Options) (*Session, error) {
 	sweepSpill(spillRoot(), time.Now())
 	s.spillDir = filepath.Join(spillRoot(), sessionID+"-"+session.NewID()[:8])
 	sbCfg := opts.Settings.SandboxConfig(cwd, opts.Home)
+	addRepoRoots(&sbCfg, cwd)
 	switch opts.Sandbox {
 	case "":
 	case "on":
@@ -802,7 +803,11 @@ type SandboxState struct {
 
 // Sandbox reports the sandbox in force.
 func (s *Session) Sandbox() SandboxState {
-	st := SandboxState{Policy: s.sandboxPolicy()}
+	return stateOf(s.sandboxPolicy())
+}
+
+func stateOf(p sandbox.Policy) SandboxState {
+	st := SandboxState{Policy: p}
 	if st.Enabled {
 		st.Unavailable = sandbox.Available()
 	}
@@ -824,6 +829,7 @@ func (s *Session) SetNetwork(on bool) error {
 	if on {
 		s.networkSet = "on"
 	}
+	s.emitSandboxLocked()
 	return nil
 }
 
@@ -866,11 +872,61 @@ func (s *Session) AddWritableRoot(path string) (string, error) {
 		}
 	}
 
-	writable := slices.Clone(s.sandbox.Writable)
-	writable = append(writable, root)
-	slices.Sort(writable)
-	s.sandbox.Writable = slices.Compact(writable)
+	s.sandbox.Writable = addRoot(s.sandbox.Writable, root)
+	s.emitSandboxLocked()
 	return root, nil
+}
+
+// AddReadableRoot lets model-run commands and file tools read an existing
+// directory inside the user's home for this session only, like
+// AddWritableRoot. Hidden paths stay unreadable.
+func (s *Session) AddReadableRoot(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("usage: /allow-read <existing directory>")
+	}
+	resolved := resolvePath(s.cwd, path)
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("cannot access %q: %w", path, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%q is not a directory", path)
+	}
+	root := sandbox.Canonical(resolved)
+
+	s.sbMu.Lock()
+	defer s.sbMu.Unlock()
+	p := s.sandbox
+	if !p.Enabled {
+		return "", errors.New("the sandbox is off; everything is readable already")
+	}
+	if h := p.HiddenAtCanonical(root); h != "" {
+		return "", fmt.Errorf("%s is hidden (%s), and hidden paths stay unreadable", root, h)
+	}
+	if volumeRoot := filepath.Clean(filepath.VolumeName(root) + string(filepath.Separator)); root == volumeRoot {
+		return "", errors.New("refusing to add a filesystem root; choose a narrower directory")
+	}
+	holdsPrivate := slices.ContainsFunc(p.Private, func(priv string) bool { return withinPath(priv, root) })
+	if p.PrivateAtCanonical(root) == "" && !holdsPrivate {
+		return "", fmt.Errorf("%s is readable already", root)
+	}
+	s.sandbox.Readable = addRoot(s.sandbox.Readable, root)
+	s.emitSandboxLocked()
+	return root, nil
+}
+
+// emitSandboxLocked tells frontends the sandbox in force changed. The caller
+// holds sbMu; emit only queues the event.
+func (s *Session) emitSandboxLocked() {
+	s.emit(SandboxChangedEvent{State: stateOf(s.sandbox)})
+}
+
+// addRoot returns roots with root added, sorted and without duplicates.
+func addRoot(roots []string, root string) []string {
+	out := append(slices.Clone(roots), root)
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // withinPath reports whether path is root or one of its descendants.

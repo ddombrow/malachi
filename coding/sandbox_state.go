@@ -55,10 +55,18 @@ func (st SandboxState) Describe() string {
 	for _, w := range st.Writable {
 		b.WriteString("    " + w + "\n")
 	}
+	if len(st.Private) == 0 {
+		b.WriteString("  readable: everything not hidden\n")
+	} else {
+		fmt.Fprintf(&b, "  readable in %s: only these and the writable directories\n", strings.Join(st.Private, ", "))
+		for _, r := range st.Readable {
+			b.WriteString("    " + r + "\n")
+		}
+	}
 	b.WriteString("  hidden (no reading or writing):\n")
 	for _, h := range st.Hidden {
 		b.WriteString("    " + h + "\n")
 	}
-	b.WriteString("  change these in settings.json under \"sandbox\"")
+	b.WriteString("  /allow-read and /allow-write add directories for this session; settings.json \"sandbox\" changes the defaults")
 	return b.String()
 }

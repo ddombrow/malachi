@@ -759,6 +759,27 @@ func TestAllowWriteCommandRequiresDirectory(t *testing.T) {
 	}
 }
 
+func TestAllowReadCommand(t *testing.T) {
+	userHome := t.TempDir()
+	t.Setenv("HOME", userHome)
+	ref := filepath.Join(userHome, "ref")
+	if err := os.Mkdir(ref, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := newTestModel(t)
+	m.command("/allow-read")
+	if out := m.tr.text(m.r); !strings.Contains(out, "usage: /allow-read <existing directory>") {
+		t.Fatalf("missing directory was not rejected: %s", out)
+	}
+	m.command("/allow-read " + ref)
+	if out := m.tr.text(m.r); !strings.Contains(out, "Added readable root") {
+		t.Fatalf("not added: %s", out)
+	}
+	if err := m.s.Sandbox().CheckRead(filepath.Join(ref, "x")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTrustCommandSavesToSessionUnlessExplicitlyAsked(t *testing.T) {
 	home, cwd := t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(cwd, "AGENTS.md"), []byte("project rules"), 0o600); err != nil {

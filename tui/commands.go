@@ -23,6 +23,7 @@ const helpText = `Commands:
   /trust [yes|no] [--save] load this directory's AGENTS.md into the prompt
   /trust parent    do the same for every directory beneath the parent
   /sandbox            show what commands and file tools may touch
+  /allow-read <dir>   allow reading a directory in your home for this session
   /allow-write <dir>  allow writes to a directory for this session
   /network [on|off]   show, or turn commands' network access on or off
   /ctx               measured context: tokens, tool output share, trim passes
@@ -104,6 +105,12 @@ func (m *model) command(line string) tea.Cmd {
 		return m.trustCommand(arg)
 	case "sandbox":
 		return m.printDim(m.s.Sandbox().Describe())
+	case "allow-read":
+		root, err := m.s.AddReadableRoot(arg)
+		if err != nil {
+			return m.printErr(err)
+		}
+		return m.printDim(fmt.Sprintf("Added readable root %s for this session. Whatever model-run tools read there is sent to your model provider.", root))
 	case "allow-write":
 		root, err := m.s.AddWritableRoot(arg)
 		if err != nil {
