@@ -33,8 +33,9 @@ events, and sessions, and reads tau session files.
 cmd/malachi   CLI: interactive TUI or print mode (-p)
 tui/          full-screen Bubble Tea frontend
 rpc/          headless JSONL protocol (-mode rpc)
-coding/       tools (read, write, edit, bash, fetch, script), system prompt, config, sessions
+coding/       tools (read, write, edit, bash, fetch, script), MCP servers, system prompt, config, sessions
 codemode/     scripts that call tools: QuickJS-ng (WebAssembly) under wazero
+mcp/          MCP client over stdio (2026-07-28, falling back to the 2025 handshake)
 sandbox/      what commands and file tools may touch; Seatbelt and Landlock backends
 ai/           providers over raw net/http + SSE (openai-compatible today)
 agent/        portable brain: messages, events, loop, harness, session tree
@@ -96,6 +97,7 @@ to cancel, and use `/help` for the full command list.
 | `/allow-read <dir>` | Let the model read an existing directory in your home for this session only |
 | `/allow-write <dir>` | Add an existing directory as writable for this session only |
 | `/network [on\|off]` | Switch commands' network access for this session (`ctrl+o` toggles it) |
+| `/mcp [server]`, `/mcp restart <server>` | Show MCP servers; restart one now |
 | `/sidebar` | Show or hide the sidebar (`ctrl+s`) |
 | `/copy`, `/quit` | Copy the transcript, exit |
 
@@ -130,12 +132,13 @@ which follows Pi's, so clients written for those should work here.
 | --- | --- |
 | `prompt` (`message`, `streamingBehavior?`), `steer`, `follow_up` | — |
 | `abort` | — |
-| `get_state` | model, thinking level, `isStreaming`, `isCompacting`, session file and id, queue size, `projectTrust`, `sandbox`, `codeMode` (whether the script tool is offered; scripts, calls and failures this session) |
+| `get_state` | model, thinking level, `isStreaming`, `isCompacting`, session file and id, queue size, `projectTrust`, `sandbox`, `codeMode` (whether the script tool is offered; scripts, calls and failures this session), `mcp` (each configured server: status, error, tools, roots, whether deferred, `stale` and `staleReason`) |
 | `get_messages`, `get_last_assistant_text` | the transcript; the last reply's text |
 | `get_available_models`, `set_model` (`provider?`, `modelId`) | model descriptions |
 | `get_available_thinking_levels`, `set_thinking_level` (`level`) | `levels` |
 | `add_writable_root` (`path`), `add_readable_root` (`path`) | canonical path and updated sandbox state |
 | `set_network` (`enabled`) | updated sandbox state |
+| `mcp_restart` (`name`) | the servers' state, once it has started or failed |
 | `compact` (`customInstructions?`), `set_auto_compaction` (`enabled`) | the summary, `firstKeptEntryId`, token estimates before and after |
 | `new_session`, `switch_session` (`sessionPath` or `sessionId`) | `cancelled` |
 | `get_session_stats` | message and token counts, cost, context usage |
@@ -151,7 +154,9 @@ A `prompt` while the agent is working must say what to do with it:
 `"followUp"` (send when the run would otherwise stop). During a compaction a
 prompt is held and sent when it finishes. Besides the agent's events, the
 session reports `compaction_start`/`_progress`/`_end`, `queue_update`,
-`thinking_level_changed` and `agent_settled` (all work for a prompt is done).
+`thinking_level_changed`, `mcp_changed` (a server started, failed, restarted,
+changed its tools or went stale; carries `mcp` as `get_state` does) and
+`agent_settled` (all work for a prompt is done).
 
 Differences from tau, checked by `rpc/golden_test.go`: `compact` and
 `get_available_models` are answered from a goroutine, so their responses can
@@ -274,6 +279,68 @@ list the hosts it may reach:
 It reads at most 10 MiB of a response; text past the display limit goes to a
 spill file. Scripts call it as `tools.fetch({url})`, several at once with
 `Promise.all`. Whatever it fetches is untrusted input to the model.
+
+### MCP servers
+
+malachi runs local [MCP](https://modelcontextprotocol.io) servers you
+configure in `~/.malachi/mcp.json`, in the common `mcpServers` shape. That
+is the only place servers come from: a repository cannot add one, and the
+sandbox hides `~/.malachi`, so no tool can read or change the file.
+
+```json
+{
+  "mcpServers": {
+    "memory": {
+      "command": "malachi-memory",
+      "description": "Notes about the user and their projects that persist between sessions",
+      "env": { "MEMORY_DB_PATH": "${HOME}/.local/share/malachi-memory/memory.grafeo" },
+      "writable": ["~/.local/share/malachi-memory"]
+    },
+    "time": { "command": "mcp-server-time", "deferred": false }
+  }
+}
+```
+
+- **Installed commands only.** `command` must be an installed program: a
+  path or a name on `PATH`. Launchers that fetch code each time they start
+  are refused (`npx`, `uvx`, `bunx`, `pipx run`, `pnpm dlx`, `npm exec`,
+  `uv tool run`, `docker run`, ...), as are wrappers such as `env` or
+  `sudo` and interpreters given inline code (`bash -c`, `node -e`). Install
+  the server instead (`npm i -g <package>`, `uv tool install <package>`, a
+  binary) and point `command` at it.
+- **Local servers only.** Each server is a process malachi starts and talks
+  to over stdio. Remote and HTTP servers are not supported.
+- **Sandboxed.** A server runs under your session's sandbox, network
+  setting included, plus its own `readable` and `writable` directories
+  (`~` allowed). Those belong to the server's process alone: bash and the
+  file tools never get them, and hidden paths stay hidden. A server whose
+  sandbox changes (the network toggled, a root added) shows "restart
+  pending" and restarts on its next call, since a process's sandbox is
+  fixed when it starts.
+- **A minimal environment.** Servers get the same small environment as
+  commands, plus the variables their `env` names. `${NAME}` takes a value
+  from your environment; malachi's own API keys are refused. Put tokens in
+  `env`, never `args`: any process can read another's command line.
+- **Deferred by default.** A server's tools are not sent to the model with
+  every request. The system prompt gets one line per server (its
+  `description`), and the model finds and calls the tools from a script:
+  `searchTools("mcp__memory")`, then `tools.mcp__memory__recall({...})`.
+  `"deferred": false` offers a server's tools directly, as
+  `mcp__<server>__<tool>`; with Code Mode off, every server's are.
+- **The rest.** `"tools": [...]` offers only the named tools, and
+  `"disabled": true` turns a server off. Servers start in the background
+  when a session opens and carry over across `/new` and resume. One that
+  fails to start is retried after a backoff (5 seconds, doubling to 5
+  minutes), and output is cut like a command's, with a spill file.
+
+`/mcp` lists every server with its status, protocol version, command, roots,
+how its tools are offered and the tools, or one server with `/mcp <name>`.
+`/mcp restart <name>` restarts one now, past any backoff. The sidebar shows
+each server's status, and a failed one's last line of stderr. Starts,
+failures and restarts go to the diagnostics log.
+
+malachi speaks MCP 2026-07-28 and falls back to the 2025 `initialize`
+handshake for older servers.
 
 ### Project trust
 
@@ -400,6 +467,8 @@ toolchain, cache and temp directories are counted rather than listed), and
 how many paths are hidden. Its trust section shows whether the project's
 instruction files are loaded and what decided it (`/trust` changes it). Its
 code mode section counts the session's scripts, their calls and failures.
+Its MCP section, shown when servers are configured, lists each server's
+status; click one for its details.
 malachi's version sits at the top of the sidebar, beside its `×`.
 The status bar says `unsandboxed`, `sandbox unavailable` or `network on` when
 those apply. When a command fails in a way that looks like the sandbox, its
