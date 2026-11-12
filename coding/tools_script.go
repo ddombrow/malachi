@@ -34,9 +34,27 @@ var scriptEngine = sync.OnceValues(func() (*codemode.Engine, error) {
 // spill file. diag, if set, logs each script and any sandbox refusal inside
 // one; onScript, if set, hears how each script ended.
 func NewScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScript func(codemode.Details)) *agent.Tool {
+	return newScriptTool(tools, opts, diag, onScript, nil)
+}
+
+// newScriptTool is NewScriptTool whose scripts also call the deferred MCP
+// servers' tools, when servers is set: each script starts with the tools of
+// the servers running then, waiting for any still starting.
+func newScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScript func(codemode.Details), servers *MCPManager) *agent.Tool {
+	var extra func(context.Context) []*agent.Tool
+	var notFound func(string) string
+	if servers != nil {
+		extra = func(ctx context.Context) []*agent.Tool {
+			servers.await(ctx, true)
+			return servers.AgentTools(true)
+		}
+		notFound = servers.missing
+	}
 	t := codemode.NewTool(tools, codemode.Options{
-		Engine:  scriptEngine,
-		Timeout: opts.bashTimeout(),
+		Extra:    extra,
+		NotFound: notFound,
+		Engine:   scriptEngine,
+		Timeout:  opts.bashTimeout(),
 		OnCall: func(call *agent.ToolCall, result agent.ToolResult, isError bool) {
 			if source, reason := sandboxDenialOf(result, isError); source != "" {
 				diag.LogSandboxDenied(codemode.ToolName+":"+call.Name, source, reason, toolTarget(call.Arguments))
@@ -94,24 +112,9 @@ func nonNil(v []map[string]any) []map[string]any {
 // limits. A script prints in order, so the start is what it meant first;
 // the whole text goes to a spill file the model can read.
 func fitScriptOutput(r agent.ToolResult, spillDir string) agent.ToolResult {
-	text := r.Text()
-	t := TruncateHead(text, MaxOutputLines, MaxOutputBytes)
-	if !t.Truncated {
+	shown, cut := fitText(r.Text(), spillDir, "malachi-script-*.log")
+	if !cut {
 		return r
-	}
-	where := "Full output could not be saved"
-	if path, err := writeScriptSpill(spillDir, text); err == nil {
-		where = "Full output: " + path
-	}
-	var shown string
-	if t.FirstLineTooBig {
-		cut := MaxOutputBytes
-		for cut > 0 && !utf8.RuneStart(text[cut]) {
-			cut--
-		}
-		shown = text[:cut] + fmt.Sprintf("\n\n[Showing the first %s of %s. %s]", FormatSize(cut), FormatSize(len(text)), where)
-	} else {
-		shown = t.Content + fmt.Sprintf("\n\n[Showing lines 1-%d of %d. %s]", t.OutputLines, t.TotalLines, where)
 	}
 	// A failure's message comes last, where the cut would hide it.
 	if d, ok := r.Details.(codemode.Details); ok && d.Error != "" {
@@ -121,8 +124,30 @@ func fitScriptOutput(r agent.ToolResult, spillDir string) agent.ToolResult {
 	return r
 }
 
-func writeScriptSpill(dir, text string) (string, error) {
-	f, err := createSpillNamed(dir, "malachi-script-*.log")
+// fitText keeps the start of text within the display limits, saving the
+// whole of it to a spill file named by pattern and saying where. It reports
+// whether it cut anything.
+func fitText(text, spillDir, pattern string) (string, bool) {
+	t := TruncateHead(text, MaxOutputLines, MaxOutputBytes)
+	if !t.Truncated {
+		return text, false
+	}
+	where := "Full output could not be saved"
+	if path, err := writeSpillText(spillDir, pattern, text); err == nil {
+		where = "Full output: " + path
+	}
+	if t.FirstLineTooBig {
+		cut := MaxOutputBytes
+		for cut > 0 && !utf8.RuneStart(text[cut]) {
+			cut--
+		}
+		return text[:cut] + fmt.Sprintf("\n\n[Showing the first %s of %s. %s]", FormatSize(cut), FormatSize(len(text)), where), true
+	}
+	return t.Content + fmt.Sprintf("\n\n[Showing lines 1-%d of %d. %s]", t.OutputLines, t.TotalLines, where), true
+}
+
+func writeSpillText(dir, pattern, text string) (string, error) {
+	f, err := createSpillNamed(dir, pattern)
 	if err != nil {
 		return "", err
 	}

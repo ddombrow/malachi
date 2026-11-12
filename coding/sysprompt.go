@@ -97,6 +97,8 @@ type PromptOptions struct {
 	Append       string // appended verbatim after the default prompt
 	Override     string // replaces the default prompt entirely
 	Date         time.Time
+	// MCPServers get a line each, without their tools' schemas.
+	MCPServers []PromptServer
 }
 
 // BuildSystemPrompt assembles a Pi-style coding agent system prompt.
@@ -114,6 +116,10 @@ func BuildSystemPrompt(o PromptOptions) string {
 		b.WriteString("\n\nAvailable tools:\n")
 		b.WriteString(formatTools(o.Tools))
 		b.WriteString("\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.")
+		if len(o.MCPServers) > 0 {
+			b.WriteString("\n\n")
+			b.WriteString(formatMCPServers(o.MCPServers))
+		}
 		b.WriteString("\n\nGuidelines:\n")
 		for _, g := range guidelines(o.Tools) {
 			b.WriteString("- ")
@@ -154,6 +160,31 @@ func formatTools(tools []*agent.Tool) string {
 		return "(none)"
 	}
 	return strings.Join(lines, "\n")
+}
+
+// formatMCPServers describes the user's MCP servers in a line each. A
+// deferred server's tools are not offered to the model; it finds and calls
+// them from scripts, so their schemas cost nothing until used.
+func formatMCPServers(servers []PromptServer) string {
+	var b strings.Builder
+	b.WriteString("MCP servers the user configured:")
+	deferred := false
+	for _, srv := range servers {
+		fmt.Fprintf(&b, "\n- %s", srv.Name)
+		if srv.Deferred {
+			deferred = true
+			b.WriteString(" (script)")
+		}
+		if d := strings.Join(strings.Fields(srv.Description), " "); d != "" {
+			b.WriteString(": " + d)
+		}
+	}
+	if deferred {
+		b.WriteString("\nThe tools of servers marked (script) are not offered as tools: call them from script as " +
+			"tools.mcp__<server>__<tool>(args). searchTools(\"mcp__<server>\") lists a server's tools and " +
+			"describeTool(name) gives one's parameters.")
+	}
+	return b.String()
 }
 
 func guidelines(tools []*agent.Tool) []string {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // fakeMCPEnv set makes the test binary a minimal MCP server (2026-07-28 only)
@@ -45,7 +46,7 @@ func fakeMCPServer() {
 				"_meta":        map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "fake-coding", "version": "1"}}}
 		case "tools/list":
 			var tools []any
-			for _, n := range []string{"env", "read", "write", "pid"} {
+			for _, n := range []string{"env", "read", "write", "pid", "big"} {
 				tools = append(tools, map[string]any{"name": n, "inputSchema": schema})
 			}
 			result = map[string]any{"tools": tools}
@@ -73,6 +74,8 @@ func fakeMCPServer() {
 				}
 			case "pid":
 				result = text(strconv.Itoa(os.Getpid()), false)
+			case "big":
+				result = text(strings.Repeat("a line of output\n", 5000), false)
 			default:
 				result = text(fmt.Sprintf("no tool %s", m.Params.Name), true)
 			}

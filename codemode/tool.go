@@ -51,6 +51,14 @@ type Options struct {
 	OnCall func(call *agent.ToolCall, result agent.ToolResult, isError bool)
 	// OnScript hears how every script ended.
 	OnScript func(Details)
+	// Extra, if set, adds tools when each script starts: tools whose set
+	// changes while a session runs, such as MCP servers'. It may wait, bounded
+	// by ctx, for tools that are on their way.
+	Extra func(ctx context.Context) []*agent.Tool
+	// NotFound, if set, explains a call to a tool no script may call, beyond
+	// listing the tools there are: why a tool the model was told of is
+	// missing. It returns "" when it has nothing to add.
+	NotFound func(name string) string
 }
 
 // Details is the script tool's result details, and its progress while it
@@ -83,15 +91,11 @@ const (
 // scripts may call; each call runs the tool as the agent loop would, so a
 // script can do nothing the model could not do one call at a time.
 func NewTool(tools []*agent.Tool, opts Options) *agent.Tool {
-	byName := make(map[string]*agent.Tool, len(tools))
-	catalog := make([]ToolInfo, 0, len(tools))
 	names := make([]string, 0, len(tools))
 	for _, t := range tools {
-		byName[t.Name] = t
-		catalog = append(catalog, ToolInfo{Name: t.Name, Description: t.Description, Parameters: t.Parameters})
 		names = append(names, t.Name)
 	}
-	r := &runner{tools: byName, names: names, catalog: catalog, opts: opts}
+	r := &runner{tools: tools, opts: opts}
 	return &agent.Tool{
 		Name:  ToolName,
 		Label: "Script",
@@ -121,10 +125,33 @@ func NewTool(tools []*agent.Tool, opts Options) *agent.Tool {
 }
 
 type runner struct {
-	tools   map[string]*agent.Tool
+	tools []*agent.Tool
+	opts  Options
+}
+
+// toolset is what one script may call: the tool's own tools plus any Extra
+// gave when it started.
+type toolset struct {
+	byName  map[string]*agent.Tool
 	names   []string
 	catalog []ToolInfo
-	opts    Options
+}
+
+func (r *runner) toolset(ctx context.Context) *toolset {
+	tools := r.tools
+	if r.opts.Extra != nil {
+		tools = append(slices.Clip(tools), r.opts.Extra(ctx)...)
+	}
+	ts := &toolset{byName: make(map[string]*agent.Tool, len(tools))}
+	for _, t := range tools {
+		if _, dup := ts.byName[t.Name]; dup {
+			continue
+		}
+		ts.byName[t.Name] = t
+		ts.names = append(ts.names, t.Name)
+		ts.catalog = append(ts.catalog, ToolInfo{Name: t.Name, Description: t.Description, Parameters: t.Parameters})
+	}
+	return ts
 }
 
 func (r *runner) execute(ctx context.Context, callID string, args map[string]any, onUpdate func(agent.ToolResult)) (agent.ToolResult, error) {
@@ -158,10 +185,11 @@ func (r *runner) execute(ctx context.Context, callID string, args map[string]any
 		defer cancel()
 	}
 	rec := &recorder{start: time.Now(), onUpdate: onUpdate}
+	ts := r.toolset(runCtx)
 	batch := func(bctx context.Context, calls []Call) []Result {
-		return r.runBatch(bctx, callID, calls, rec)
+		return r.runBatch(bctx, ts, callID, calls, rec)
 	}
-	out, err := eng.Run(runCtx, Script{Code: code, Tools: r.catalog, Limits: r.opts.Limits}, batch)
+	out, err := eng.Run(runCtx, Script{Code: code, Tools: ts.catalog, Limits: r.opts.Limits}, batch)
 
 	switch {
 	case err == nil:
@@ -205,7 +233,7 @@ func render(out Outcome) string {
 
 // runBatch runs a batch as the agent loop runs a turn's calls: consecutive
 // Parallel tools together, any other tool alone.
-func (r *runner) runBatch(ctx context.Context, parentID string, calls []Call, rec *recorder) []Result {
+func (r *runner) runBatch(ctx context.Context, ts *toolset, parentID string, calls []Call, rec *recorder) []Result {
 	results := make([]Result, len(calls))
 	rec.mu.Lock()
 	rec.batches++
@@ -218,7 +246,7 @@ func (r *runner) runBatch(ctx context.Context, parentID string, calls []Call, re
 		maxPar = DefaultMaxParallel
 	}
 	parallel := func(c Call) bool {
-		t := r.tools[c.Name]
+		t := ts.byName[c.Name]
 		return t == nil || t.Parallel
 	}
 	for i := 0; i < len(calls); {
@@ -234,7 +262,7 @@ func (r *runner) runBatch(ctx context.Context, parentID string, calls []Call, re
 			wg.Go(func() {
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				results[k] = r.runCall(ctx, parentID, calls[k], rec)
+				results[k] = r.runCall(ctx, ts, parentID, calls[k], rec)
 			})
 		}
 		wg.Wait()
@@ -243,10 +271,10 @@ func (r *runner) runBatch(ctx context.Context, parentID string, calls []Call, re
 	return results
 }
 
-func (r *runner) runCall(ctx context.Context, parentID string, c Call, rec *recorder) Result {
+func (r *runner) runCall(ctx context.Context, ts *toolset, parentID string, c Call, rec *recorder) Result {
 	start := time.Now()
 	call := &agent.ToolCall{ID: parentID + "/" + strconv.Itoa(c.ID), Name: c.Name}
-	result, isError := r.call(ctx, call, c.Args)
+	result, isError := r.call(ctx, ts, call, c.Args)
 	if r.opts.AfterToolCall != nil {
 		result, isError = r.opts.AfterToolCall(ctx, call, result, isError)
 	}
@@ -264,10 +292,16 @@ func (r *runner) runCall(ctx context.Context, parentID string, c Call, rec *reco
 	return Result{Text: text, Details: result.Details, IsError: isError}
 }
 
-func (r *runner) call(ctx context.Context, call *agent.ToolCall, raw json.RawMessage) (agent.ToolResult, bool) {
-	tool := r.tools[call.Name]
+func (r *runner) call(ctx context.Context, ts *toolset, call *agent.ToolCall, raw json.RawMessage) (agent.ToolResult, bool) {
+	tool := ts.byName[call.Name]
 	if tool == nil {
-		return agent.TextResult(fmt.Sprintf("Tool %s not found. Available: %s", call.Name, strings.Join(r.names, ", "))), true
+		msg := fmt.Sprintf("Tool %s not found.", call.Name)
+		if r.opts.NotFound != nil {
+			if why := r.opts.NotFound(call.Name); why != "" {
+				msg += " " + why
+			}
+		}
+		return agent.TextResult(msg + " Available: " + strings.Join(ts.names, ", ")), true
 	}
 	var args map[string]any
 	if err := json.Unmarshal(raw, &args); err != nil || args == nil {

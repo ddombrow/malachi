@@ -201,3 +201,40 @@ func TestInScript(t *testing.T) {
 		t.Errorf("seen %v", seen)
 	}
 }
+
+// Extra tools join each script's tool set when it starts, catalog and all,
+// so tools that arrive mid-session can be found and called.
+func TestScriptToolExtraTools(t *testing.T) {
+	read := fakeTool("read", true, func(map[string]any) (agent.ToolResult, error) { return agent.TextResult("r"), nil })
+	var extra []*agent.Tool
+	tool := scriptTool([]*agent.Tool{read}, Options{
+		Extra: func(context.Context) []*agent.Tool { return extra },
+		NotFound: func(name string) string {
+			if strings.HasPrefix(name, "mcp__") {
+				return "Its server is not running."
+			}
+			return ""
+		},
+	})
+	res, _ := runScript(t, tool, `return (await tools.mcp__x__ping({})).text`)
+	if !strings.Contains(res.Text(), "Its server is not running.") || !strings.Contains(res.Text(), "Available: read") {
+		t.Fatalf("before: %q", res.Text())
+	}
+	extra = []*agent.Tool{
+		fakeTool("mcp__x__ping", true, func(map[string]any) (agent.ToolResult, error) { return agent.TextResult("pong"), nil }),
+		fakeTool("read", true, func(map[string]any) (agent.ToolResult, error) { return agent.TextResult("shadow"), nil }),
+	}
+	res, isError := runScript(t, tool, `
+		const found = searchTools("mcp__x").map(t => t.name);
+		return [found, (await tools.mcp__x__ping({})).text, (await tools.read({})).text, ALL_TOOLS.length];`)
+	if isError || res.Text() != `[
+  [
+    "mcp__x__ping"
+  ],
+  "pong",
+  "r",
+  2
+]` {
+		t.Fatalf("after: %q", res.Text())
+	}
+}

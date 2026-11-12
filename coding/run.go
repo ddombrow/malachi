@@ -180,6 +180,14 @@ func (s *Session) run(ctx context.Context, text string) {
 	if ctx.Err() != nil {
 		return
 	}
+	// Servers whose tools are offered directly get to start first, so the
+	// run sees their tools.
+	if s.mcp.await(ctx, false) > 0 {
+		s.syncMCPTools()
+	}
+	if ctx.Err() != nil {
+		return
+	}
 	s.diag.NewRun()
 	_ = s.Harness.Prompt(ctx, agent.NewUserText(text))
 	// A steer or follow-up queued as the run was finishing would otherwise

@@ -94,7 +94,11 @@ type Session struct {
 	// system and tools are kept so a request can be sized locally, without
 	// sending one, before the provider has reported any usage.
 	system string
-	tools  []*agent.Tool
+	// tools are baseTools plus the tools of MCP servers offered directly,
+	// which change as servers start; toolsMu guards them.
+	toolsMu   sync.Mutex
+	tools     []*agent.Tool
+	baseTools []*agent.Tool
 	// persisted maps messages to the session entries they were written as, so
 	// a compaction can record where its retained tail begins.
 	persisted []persistedMessage
@@ -316,24 +320,26 @@ func Open(opts Options) (*Session, error) {
 	toolOpts.Sandbox = s.sandboxPolicy
 	tools := CodingTools(cwd, toolOpts)
 	// MCP servers carry over from the session this one replaces, so a /new
-	// or resume does not restart them; otherwise they start now, in the
-	// background.
-	if opts.mcp != nil {
-		s.mcp = opts.mcp
-		s.mcp.rebind(s.sandboxPolicy, nil)
-	} else {
+	// or resume does not restart them; otherwise they start once the
+	// session is ready, in the background.
+	codeMode := opts.Settings.CodeModeEnabled()
+	freshMCP := opts.mcp == nil
+	s.mcp = opts.mcp
+	if freshMCP {
 		cfg, err := LoadMCPConfig(s.home)
 		s.mcp = newMCPManager(cfg, err, cwd, toolOpts, s.sandboxPolicy, s.diag)
-		s.mcp.startAll()
 	}
-	if opts.Settings.CodeModeEnabled() {
+	s.mcp.bind(s.sandboxPolicy, nil, codeMode)
+	if codeMode {
 		s.codeMode.enable()
-		tools = append(tools, NewScriptTool(tools, toolOpts, s.diag, s.codeMode.record))
+		tools = append(tools, newScriptTool(tools, toolOpts, s.diag, s.codeMode.record, s.mcp))
 	}
 	s.trims = &trimLog{}
 	s.preparer = newCodingContextPreparer(s.trims)
 	s.runtime = provider
-	s.system, s.tools = s.buildPrompt(tools), tools
+	s.baseTools = tools
+	s.tools = append(slices.Clip(tools), s.mcp.AgentTools(false)...)
+	s.system = s.buildPrompt(tools)
 	s.Harness = agent.NewHarness(agent.HarnessConfig{
 		Provider:        provider,
 		Model:           model,
@@ -396,6 +402,10 @@ func Open(opts Options) (*Session, error) {
 		}
 	})
 	s.life, s.lifeCancel = context.WithCancel(context.Background())
+	s.mcp.bind(s.sandboxPolicy, s.syncMCPTools, codeMode)
+	if freshMCP {
+		s.mcp.startAll()
+	}
 	// A resumed session is already large, and the gauge that exists to say so
 	// used to stay blank until the first reply arrived. Size it locally now,
 	// once the sampler it feeds exists.
@@ -417,7 +427,30 @@ func (s *Session) buildPrompt(tools []*agent.Tool) string {
 		Tools:        tools,
 		ContextFiles: LoadContextFiles(s.home, s.cwd, s.trust.Trusted()),
 		Append:       s.settings.AppendSystemPrompt,
+		MCPServers:   s.mcp.promptServers(),
 	})
+}
+
+// syncMCPTools offers the model the tools of the MCP servers offered
+// directly, as their servers start, stop and change their tools. The change
+// takes effect on the next run.
+func (s *Session) syncMCPTools() {
+	m := s.mcp
+	if m == nil {
+		return // handed to the session that replaced this one
+	}
+	tools := append(slices.Clip(s.baseTools), m.AgentTools(false)...)
+	s.toolsMu.Lock()
+	s.tools = tools
+	s.toolsMu.Unlock()
+	s.Harness.Update(func(c *agent.HarnessConfig) { c.Tools = tools })
+	s.estimateContext()
+}
+
+func (s *Session) currentTools() []*agent.Tool {
+	s.toolsMu.Lock()
+	defer s.toolsMu.Unlock()
+	return s.tools
 }
 
 // TrustParent extends a trust decision to this directory's parent, so it
@@ -494,7 +527,7 @@ func (s *Session) trustNow(decision TrustDecision, remember bool, override strin
 		resolved.Source = "session"
 		s.trust.Source = "session"
 	}
-	system := s.buildPrompt(s.tools)
+	system := s.buildPrompt(s.baseTools)
 	s.mu.Unlock()
 
 	s.Harness.Update(func(c *agent.HarnessConfig) { c.System = system })
@@ -620,7 +653,7 @@ func (s *Session) observeContext(e agent.Event) {
 // estimateContext sizes the conversation without asking the provider. The
 // measurement replaces it as soon as there is one.
 func (s *Session) estimateContext() {
-	prompt, toolBytes := estimatePromptTokens(s.system, s.tools, s.Harness.Messages(), s.ctxSampler.get().Ratio)
+	prompt, toolBytes := estimatePromptTokens(s.system, s.currentTools(), s.Harness.Messages(), s.ctxSampler.get().Ratio)
 	s.ctxSampler.estimate(prompt, toolBytes)
 	s.diag.LogContextEstimate(prompt, toolBytes)
 }
@@ -804,6 +837,7 @@ func (s *Session) Reopen(resume string) (*Session, error) {
 	opts.mcp = s.mcp
 	next, err := Open(opts)
 	if err != nil {
+		s.mcp.bind(s.sandboxPolicy, s.syncMCPTools, s.CodeMode().Enabled)
 		return nil, err
 	}
 	s.mcp = nil // handed over

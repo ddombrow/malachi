@@ -24,6 +24,9 @@ const MCPConfigFile = "mcp.json"
 type MCPServerConfig struct {
 	Command string   `json:"command"`
 	Args    []string `json:"args,omitempty"`
+	// Description tells the model what the server is for, in the system
+	// prompt's line for it.
+	Description string `json:"description,omitempty"`
 	// Env adds variables to the minimal environment servers get. A value
 	// may name malachi's own variables as $NAME or ${NAME}.
 	Env map[string]string `json:"env,omitempty"`

@@ -21,6 +21,22 @@ import (
 // listing its tools.
 const mcpStartTimeout = 30 * time.Second
 
+// A server that failed to start is not retried until a backoff has passed,
+// doubling with each consecutive failure, so a broken server does not cost
+// every script and run a start attempt.
+const (
+	mcpRetryMin = 5 * time.Second
+	mcpRetryMax = 5 * time.Minute
+)
+
+func mcpBackoff(failures int) time.Duration {
+	d := mcpRetryMin
+	for i := 1; i < failures && d < mcpRetryMax; i++ {
+		d *= 2
+	}
+	return min(d, mcpRetryMax)
+}
+
 // MCP server statuses.
 const (
 	MCPDisabled = "disabled" // "disabled": true in mcp.json
@@ -67,6 +83,7 @@ type MCPManager struct {
 	mu       sync.Mutex
 	policy   func() sandbox.Policy
 	onChange func()
+	codeMode bool // whether deferred servers' tools can go through scripts
 	servers  []*mcpServer
 	loadErr  error
 }
@@ -86,6 +103,9 @@ type mcpServer struct {
 	started  sandbox.Policy // the policy proc runs under
 	tools    []mcp.Tool
 	restarts int
+	// failures counts consecutive failed starts, failedAt the last one.
+	failures int
+	failedAt time.Time
 }
 
 func newMCPManager(cfg MCPConfig, loadErr error, cwd string, toolOpts ToolOptions, policy func() sandbox.Policy, diag *Diagnostics) *MCPManager {
@@ -118,11 +138,12 @@ func (m *MCPManager) startAll() {
 
 func (srv *mcpServer) runnable() bool { return srv.err == nil && !srv.cfg.Disabled }
 
-// rebind points the manager at another session's policy and listeners, for
-// a session handing its servers to the one that replaces it.
-func (m *MCPManager) rebind(policy func() sandbox.Policy, onChange func()) {
+// bind points the manager at a session: its policy, its listener for
+// changes, and whether it has Code Mode. A session handing its servers to
+// the one that replaces it rebinds them.
+func (m *MCPManager) bind(policy func() sandbox.Policy, onChange func(), codeMode bool) {
 	m.mu.Lock()
-	m.policy, m.onChange = policy, onChange
+	m.policy, m.onChange, m.codeMode = policy, onChange, codeMode
 	m.mu.Unlock()
 }
 
@@ -199,6 +220,13 @@ func (m *MCPManager) ensure(ctx context.Context, srv *mcpServer) (*mcp.Process, 
 
 	srv.mu.Lock()
 	proc, started := srv.proc, srv.started
+	if proc == nil && srv.failures > 0 {
+		if wait := mcpBackoff(srv.failures) - time.Since(srv.failedAt); wait > 0 {
+			err := srv.lastErr
+			srv.mu.Unlock()
+			return nil, fmt.Errorf("%w (retrying in %s)", err, wait.Round(time.Second))
+		}
+	}
 	srv.mu.Unlock()
 	if proc != nil {
 		select {
@@ -221,6 +249,13 @@ func (m *MCPManager) ensure(ctx context.Context, srv *mcpServer) (*mcp.Process, 
 	m.changed()
 	proc, tools, err := m.start(ctx, srv, pol)
 	if err != nil {
+		srv.mu.Lock()
+		// A start cut short by its caller says nothing about the server.
+		if ctx.Err() == nil {
+			srv.failures++
+			srv.failedAt = time.Now()
+		}
+		srv.mu.Unlock()
 		srv.setStatus(MCPFailed, err)
 		m.diag.LogMCPServer(srv.name, "start failed", err)
 		m.changed()
@@ -228,7 +263,7 @@ func (m *MCPManager) ensure(ctx context.Context, srv *mcpServer) (*mcp.Process, 
 	}
 	srv.mu.Lock()
 	srv.proc, srv.started, srv.tools = proc, pol, tools
-	srv.status, srv.lastErr = MCPReady, nil
+	srv.status, srv.lastErr, srv.failures = MCPReady, nil, 0
 	srv.mu.Unlock()
 	m.changed()
 	return proc, nil
@@ -372,33 +407,39 @@ func (m *MCPManager) Call(ctx context.Context, name, tool string, args map[strin
 func (m *MCPManager) State() []MCPServerState {
 	out := make([]MCPServerState, 0, len(m.servers))
 	for _, srv := range m.servers {
-		var now sandbox.Policy
-		if srv.runnable() {
-			now = m.policyFor(srv)
-		}
-		srv.mu.Lock()
-		st := MCPServerState{
-			Name: srv.name, Status: srv.status, Command: srv.path, Args: srv.cfg.Args,
-			Readable: srv.cfg.Readable, Writable: srv.cfg.Writable, Restarts: srv.restarts,
-			Deferred: srv.cfg.Deferred == nil || *srv.cfg.Deferred,
-		}
-		switch {
-		case srv.err != nil:
-			st.Error = srv.err.Error()
-		case srv.lastErr != nil:
-			st.Error = srv.lastErr.Error()
-		}
-		if srv.proc != nil {
-			st.Server, st.Version = srv.proc.Server().Name, srv.proc.Version()
-			st.Stale = !reflect.DeepEqual(srv.started, now)
-		}
-		for _, t := range srv.tools {
-			st.Tools = append(st.Tools, t.Name)
-		}
-		srv.mu.Unlock()
-		out = append(out, st)
+		out = append(out, srv.state(m))
 	}
 	return out
+}
+
+func (srv *mcpServer) state(m *MCPManager) MCPServerState {
+	var now sandbox.Policy
+	deferred := false
+	if srv.runnable() {
+		now = m.policyFor(srv)
+		deferred = m.deferred(srv)
+	}
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	st := MCPServerState{
+		Name: srv.name, Status: srv.status, Command: srv.path, Args: srv.cfg.Args,
+		Readable: srv.cfg.Readable, Writable: srv.cfg.Writable, Restarts: srv.restarts,
+		Deferred: deferred,
+	}
+	switch {
+	case srv.err != nil:
+		st.Error = srv.err.Error()
+	case srv.lastErr != nil:
+		st.Error = srv.lastErr.Error()
+	}
+	if srv.proc != nil {
+		st.Server, st.Version = srv.proc.Server().Name, srv.proc.Version()
+		st.Stale = !reflect.DeepEqual(srv.started, now)
+	}
+	for _, t := range srv.tools {
+		st.Tools = append(st.Tools, t.Name)
+	}
+	return st
 }
 
 // Close stops every server, each by closing its input first, as the spec's

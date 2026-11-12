@@ -284,7 +284,7 @@ func TestMCPStates(t *testing.T) {
 			if !strings.Contains(got["failing"].Error, "missing API_TOKEN") || !strings.Contains(got["launcher"].Error, "npx") {
 				t.Errorf("errors: %q / %q", got["failing"].Error, got["launcher"].Error)
 			}
-			if len(got["ok"].Tools) != 4 || got["ok"].Server != "fake-coding" || got["ok"].Version != "2026-07-28" {
+			if len(got["ok"].Tools) != 5 || got["ok"].Server != "fake-coding" || got["ok"].Version != "2026-07-28" {
 				t.Errorf("ok: %+v", got["ok"])
 			}
 			return
