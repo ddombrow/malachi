@@ -217,6 +217,16 @@ func (d *Diagnostics) LogScript(det codemode.Details) {
 	d.record("script", fields)
 }
 
+// LogMCPServer records an MCP server's start failing, dying or restarting:
+// what a user debugging a server needs and can find nowhere else.
+func (d *Diagnostics) LogMCPServer(name, event string, err error) {
+	fields := map[string]any{"server": name, "event": event}
+	if err != nil {
+		fields["error"] = truncate(err.Error(), 4000)
+	}
+	d.record("mcp_server", fields)
+}
+
 // LogCompaction records a summary replacing part of the conversation. The
 // summary itself is recorded only as its length: it is long, and the point is
 // that it happened and what it cost.

@@ -12,6 +12,10 @@ import (
 // developer's real ~/.malachi.
 func TestMain(m *testing.M) {
 	sandbox.MaybeRunHelper() // this binary is the helper for sandboxed commands on Linux
+	if os.Getenv(fakeMCPEnv) != "" {
+		fakeMCPServer() // this binary is also a fake MCP server
+		os.Exit(0)
+	}
 	home, err := os.MkdirTemp("", "malachi-test-home-")
 	if err != nil {
 		panic(err)

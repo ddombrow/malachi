@@ -45,6 +45,10 @@ type Options struct {
 	// Network overrides the sandbox's network setting: "on" or "off".
 	// Empty uses settings (off by default).
 	Network string
+
+	// mcp is a running MCP manager handed over by the session this one
+	// replaces (Reopen).
+	mcp *MCPManager
 }
 
 // Session is the coding-agent environment around a Harness: tools rooted at
@@ -72,6 +76,7 @@ type Session struct {
 	sandbox    sandbox.Policy
 	spillDir   string // full output of truncated commands; removed on Close
 	codeMode   codeModeCounter
+	mcp        *MCPManager
 	header     []*session.Entry
 	persistErr error
 	diag       *Diagnostics
@@ -310,6 +315,17 @@ func Open(opts Options) (*Session, error) {
 	toolOpts.SpillDir = s.spillDir
 	toolOpts.Sandbox = s.sandboxPolicy
 	tools := CodingTools(cwd, toolOpts)
+	// MCP servers carry over from the session this one replaces, so a /new
+	// or resume does not restart them; otherwise they start now, in the
+	// background.
+	if opts.mcp != nil {
+		s.mcp = opts.mcp
+		s.mcp.rebind(s.sandboxPolicy, nil)
+	} else {
+		cfg, err := LoadMCPConfig(s.home)
+		s.mcp = newMCPManager(cfg, err, cwd, toolOpts, s.sandboxPolicy, s.diag)
+		s.mcp.startAll()
+	}
 	if opts.Settings.CodeModeEnabled() {
 		s.codeMode.enable()
 		tools = append(tools, NewScriptTool(tools, toolOpts, s.diag, s.codeMode.record))
@@ -758,6 +774,9 @@ func (s *Session) Close() {
 		s.unsub()
 	}
 	s.lifeCancel()
+	if s.mcp != nil {
+		s.mcp.Close()
+	}
 	s.bus.close()
 	_ = os.RemoveAll(s.spillDir)
 }
@@ -782,10 +801,12 @@ func (s *Session) Reopen(resume string) (*Session, error) {
 		opts.Model = s.Provider().Name + "/" + s.Model()
 		opts.ThinkingLevel = s.ThinkingLevel()
 	}
+	opts.mcp = s.mcp
 	next, err := Open(opts)
 	if err != nil {
 		return nil, err
 	}
+	s.mcp = nil // handed over
 	s.Close()
 	return next, nil
 }
@@ -795,6 +816,9 @@ func (s *Session) sandboxPolicy() sandbox.Policy {
 	defer s.sbMu.Unlock()
 	return s.sandbox
 }
+
+// MCP is the session's MCP servers.
+func (s *Session) MCP() *MCPManager { return s.mcp }
 
 // SandboxState is the sandbox in force and whether it can confine commands
 // here.
