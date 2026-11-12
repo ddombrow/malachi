@@ -19,6 +19,9 @@ sandbox/   what commands and file tools may touch, and the OS backends that
            confine commands. Imports nothing else in this module.
 codemode/  scripts that call tools: QuickJS-ng compiled to WASI (quickjs.wasm,
            rebuilt by `go tool task wasm`) run under wazero. Imports agent only.
+mcp/       MCP client over stdio: protocol negotiation (2026-07-28 with a
+           fallback to the 2025 initialize handshake), tools/list, tools/call.
+           Imports agent only.
 coding/    coding tools, system prompt, config, coding.Session. Imports agent, ai, sandbox and codemode.
 tui/       Bubble Tea frontend. Consumes coding.Session events and state.
 rpc/       headless JSONL protocol (tau/Pi RPC mode). Consumes coding.Session events and state.
