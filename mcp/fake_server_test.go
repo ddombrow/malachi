@@ -18,12 +18,19 @@ import (
 //	silent       never answers server/discover; needs initialize
 //	old-only     refuses our version with -32022, offering 2025-11-25
 //	crash        writes to stderr and exits 3 before answering
+//	deaf         closes its input at once (our writes fail), then exits 3
 func fakeServer(mode string) {
 	// "-linger" keeps any mode running after its input closes.
 	linger := strings.HasSuffix(mode, "-linger")
 	mode = strings.TrimSuffix(mode, "-linger")
 	if mode == "crash" {
 		fmt.Fprintln(os.Stderr, "boom: config file missing")
+		os.Exit(3)
+	}
+	if mode == "deaf" {
+		os.Stdin.Close()
+		fmt.Fprintln(os.Stderr, "boom: no token")
+		time.Sleep(300 * time.Millisecond)
 		os.Exit(3)
 	}
 	var wmu sync.Mutex

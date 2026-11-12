@@ -74,6 +74,16 @@ func Start(ctx context.Context, cmd *exec.Cmd, opts Options) (*Process, error) {
 	}
 	cl, err := Connect(ctx, outR, inW, opts)
 	if err != nil {
+		// A server that died early can fail the handshake on a write
+		// (broken pipe) before its output is seen to end; either way, why
+		// it exited is the useful part.
+		if !errors.As(err, new(closedError)) {
+			select {
+			case <-p.exited:
+				err = p.explain(fmt.Errorf("mcp: server exited: %v (%w)", exitText(p.waitErr), err))
+			case <-time.After(time.Second):
+			}
+		}
 		p.stop()
 		return nil, err
 	}

@@ -186,6 +186,16 @@ func TestToolsChanged(t *testing.T) {
 }
 
 // A server that dies says why: its exit status and the end of its stderr.
+// A server that dies before the handshake is explained by its exit and
+// stderr, even when a write to it fails (broken pipe) before its output is
+// seen to end.
+func TestEarlyExitExplains(t *testing.T) {
+	_, err := startFake(t, "deaf", Options{})
+	if err == nil || !strings.Contains(err.Error(), "no token") || !strings.Contains(err.Error(), "exit status 3") {
+		t.Fatalf("error: %v", err)
+	}
+}
+
 func TestCrashExplains(t *testing.T) {
 	_, err := startFake(t, "crash", Options{})
 	if err == nil || !strings.Contains(err.Error(), "exit status 3") || !strings.Contains(err.Error(), "boom: config file missing") {
