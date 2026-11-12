@@ -32,7 +32,7 @@ func write(t *testing.T, dir, name, content string) string {
 
 func TestReadSlicesAndHints(t *testing.T) {
 	for _, tool := range CodingTools(t.TempDir(), ToolOptions{}) {
-		want := tool.Name == "read" || tool.Name == "grep" || tool.Name == "glob"
+		want := tool.Name == "read" || tool.Name == "grep" || tool.Name == "glob" || tool.Name == "fetch"
 		if tool.Parallel != want {
 			t.Fatalf("tool %s Parallel = %v, want %v", tool.Name, tool.Parallel, want)
 		}

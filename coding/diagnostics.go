@@ -169,10 +169,10 @@ func sandboxDenialOf(r agent.ToolResult, isError bool) (source, reason string) {
 	return "", ""
 }
 
-// toolTarget is what a tool call acts on, for the log: its path, else its
-// command.
+// toolTarget is what a tool call acts on, for the log: its path, command
+// or URL.
 func toolTarget(args map[string]any) string {
-	for _, key := range []string{"path", "command"} {
+	for _, key := range []string{"path", "command", "url"} {
 		if s, ok := args[key].(string); ok && s != "" {
 			return s
 		}

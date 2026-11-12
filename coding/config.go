@@ -230,6 +230,9 @@ type SandboxSettings struct {
 	// directory, hidden paths aside, instead of only the project and the
 	// readable roots.
 	ReadAnywhere bool `json:"readAnywhere,omitempty"`
+	// FetchHosts limits the fetch tool to these hosts ("*.example.com" for
+	// subdomains); empty allows any public host while the network is on.
+	FetchHosts []string `json:"fetchHosts,omitempty"`
 }
 
 // SandboxConfig is the sandbox these settings describe for a project in cwd,
@@ -258,7 +261,7 @@ func (s *Settings) SandboxConfig(cwd, home string) sandbox.Config {
 
 // ToolOptions turns settings into options for the coding tools.
 func (s *Settings) ToolOptions() ToolOptions {
-	o := ToolOptions{HideEnv: DotEnvKeys(), AllowEnv: slices.Clone(s.CommandEnvAllowlist)}
+	o := ToolOptions{HideEnv: DotEnvKeys(), AllowEnv: slices.Clone(s.CommandEnvAllowlist), FetchHosts: slices.Clone(s.Sandbox.FetchHosts)}
 	for _, pc := range s.ProviderConfigs() {
 		if pc.APIKeyEnv != "" {
 			o.HideEnv = append(o.HideEnv, pc.APIKeyEnv)

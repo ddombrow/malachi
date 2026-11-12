@@ -5,8 +5,8 @@ package coding
 
 import "github.com/ddombrow/malachi/agent"
 
-// CodingTools returns the built-in read, grep, glob, bash, edit, and write
-// tools rooted at cwd. grep and glob come before bash so the system prompt
+// CodingTools returns the built-in read, grep, glob, bash, fetch, edit, and
+// write tools rooted at cwd. grep and glob come before bash so the system prompt
 // steers the model toward structured search over shelling out.
 func CodingTools(cwd string, opts ToolOptions) []*agent.Tool {
 	return []*agent.Tool{
@@ -14,6 +14,7 @@ func CodingTools(cwd string, opts ToolOptions) []*agent.Tool {
 		NewGrepTool(cwd, opts),
 		NewGlobTool(cwd, opts),
 		NewBashTool(cwd, opts),
+		NewFetchTool(opts),
 		NewEditTool(cwd, opts),
 		NewWriteTool(cwd, opts),
 	}

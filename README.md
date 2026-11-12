@@ -33,7 +33,7 @@ events, and sessions, and reads tau session files.
 cmd/malachi   CLI: interactive TUI or print mode (-p)
 tui/          full-screen Bubble Tea frontend
 rpc/          headless JSONL protocol (-mode rpc)
-coding/       tools (read, write, edit, bash, script), system prompt, config, sessions
+coding/       tools (read, write, edit, bash, fetch, script), system prompt, config, sessions
 codemode/     scripts that call tools: QuickJS-ng (WebAssembly) under wazero
 sandbox/      what commands and file tools may touch; Seatbelt and Landlock backends
 ai/           providers over raw net/http + SSE (openai-compatible today)
@@ -253,6 +253,25 @@ The interpreter is compiled on the first script and cached under your user
 cache directory (`~/Library/Caches/malachi/codemode` on macOS,
 `~/.cache/malachi/codemode` on Linux). Set `"codeMode": false` to leave the
 tool out.
+
+### Fetch
+
+The `fetch` tool GETs a URL and returns it as text: HTML reduced to readable
+text with its links, JSON and other text as is, binary refused. It follows
+your network setting: with the network off (the default), it is refused
+like a command's connection. It never connects to loopback, private,
+link-local (including the cloud metadata address `169.254.169.254`) or
+shared-address-space hosts, checking the address actually dialed, after DNS
+and on every redirect, and it ignores proxy variables. To limit it further,
+list the hosts it may reach:
+
+```json
+{ "sandbox": { "fetchHosts": ["pkg.go.dev", "*.github.com"] } }
+```
+
+It reads at most 10 MiB of a response; text past the display limit goes to a
+spill file. Scripts call it as `tools.fetch({url})`, several at once with
+`Promise.all`. Whatever it fetches is untrusted input to the model.
 
 ### Project trust
 

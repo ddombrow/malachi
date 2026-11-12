@@ -45,6 +45,9 @@ type ToolOptions struct {
 	HideEnv []string
 	// AllowEnv adds names to the small default environment passed to commands.
 	AllowEnv []string
+	// FetchHosts, when set, are the only hosts fetch may reach: names, or
+	// "*.example.com" for subdomains.
+	FetchHosts []string
 	// Sandbox returns the policy in force; it is a function so the user can
 	// change the policy mid-session. Nil means no sandbox.
 	Sandbox func() sandbox.Policy
