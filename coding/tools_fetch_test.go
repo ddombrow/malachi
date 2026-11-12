@@ -196,7 +196,7 @@ func TestFetchSpillsLongText(t *testing.T) {
 func TestFetchFromScript(t *testing.T) {
 	srv := testServer(t)
 	fetch := newFetchTool(ToolOptions{Sandbox: networkOn}, loopbackToo)
-	tool := NewScriptTool([]*agent.Tool{fetch}, ToolOptions{}, nil)
+	tool := NewScriptTool([]*agent.Tool{fetch}, ToolOptions{}, nil, nil)
 	res, isError := runScriptTool(t, tool, `
 		const [a, b] = await Promise.all([tools.fetch({url: "`+srv.URL+`/json"}), tools.fetch({url: "`+srv.URL+`/missing"})]);
 		return [a.text.split("\n\n")[1], b.isError, b.details.status];`)

@@ -32,8 +32,8 @@ var scriptEngine = sync.OnceValues(func() (*codemode.Engine, error) {
 // runs one of them as the model's own call would, under the same sandbox.
 // Its output is cut to the limits read and bash keep, with the rest in a
 // spill file. diag, if set, logs each script and any sandbox refusal inside
-// one.
-func NewScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics) *agent.Tool {
+// one; onScript, if set, hears how each script ended.
+func NewScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScript func(codemode.Details)) *agent.Tool {
 	t := codemode.NewTool(tools, codemode.Options{
 		Engine:  scriptEngine,
 		Timeout: opts.bashTimeout(),
@@ -42,7 +42,12 @@ func NewScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics) *ag
 				diag.LogSandboxDenied(codemode.ToolName+":"+call.Name, source, reason, toolTarget(call.Arguments))
 			}
 		},
-		OnScript: diag.LogScript,
+		OnScript: func(d codemode.Details) {
+			diag.LogScript(d)
+			if onScript != nil {
+				onScript(d)
+			}
+		},
 	})
 	t.Description += " " + scriptResults
 	inner := t.Execute

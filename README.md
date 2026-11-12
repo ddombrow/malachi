@@ -130,7 +130,7 @@ which follows Pi's, so clients written for those should work here.
 | --- | --- |
 | `prompt` (`message`, `streamingBehavior?`), `steer`, `follow_up` | — |
 | `abort` | — |
-| `get_state` | model, thinking level, `isStreaming`, `isCompacting`, session file and id, queue size, `projectTrust` |
+| `get_state` | model, thinking level, `isStreaming`, `isCompacting`, session file and id, queue size, `projectTrust`, `sandbox`, `codeMode` (whether the script tool is offered; scripts, calls and failures this session) |
 | `get_messages`, `get_last_assistant_text` | the transcript; the last reply's text |
 | `get_available_models`, `set_model` (`provider?`, `modelId`) | model descriptions |
 | `get_available_thinking_levels`, `set_thinking_level` (`level`) | `levels` |
@@ -247,7 +247,9 @@ together where the tool allows it (reads and searches; not edits or
 commands). A script stops at `bashTimeoutSeconds` or its own `timeout`, at
 200 calls, or at a 256 MiB heap. Its output is cut like a command's, with
 the rest in a spill file, and the calls it made are recorded in the tool
-result's details.
+result's details. In the TUI a running script lists its calls as they go,
+a finished one shows a tally and the start of its output, and `/last` shows
+its code, every call and the whole output.
 
 The interpreter is compiled on the first script and cached under your user
 cache directory (`~/Library/Caches/malachi/codemode` on macOS,
@@ -396,7 +398,8 @@ sandbox section shows whether the sandbox is on, the network (click it, or
 press `ctrl+o`, to switch), the readable and writable directories (built-in
 toolchain, cache and temp directories are counted rather than listed), and
 how many paths are hidden. Its trust section shows whether the project's
-instruction files are loaded and what decided it (`/trust` changes it).
+instruction files are loaded and what decided it (`/trust` changes it). Its
+code mode section counts the session's scripts, their calls and failures.
 malachi's version sits at the top of the sidebar, beside its `×`.
 The status bar says `unsandboxed`, `sandbox unavailable` or `network on` when
 those apply. When a command fails in a way that looks like the sandbox, its

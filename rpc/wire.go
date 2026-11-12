@@ -106,22 +106,39 @@ func trustOf(t coding.TrustState) trustWire {
 	}
 }
 
-// stateWire is get_state: tau's twelve keys plus projectTrust.
+// stateWire is get_state: tau's twelve keys plus projectTrust, sandbox and
+// codeMode.
 type stateWire struct {
-	Model                 modelWire   `json:"model"`
-	ThinkingLevel         string      `json:"thinkingLevel"`
-	IsStreaming           bool        `json:"isStreaming"`
-	IsCompacting          bool        `json:"isCompacting"`
-	SteeringMode          string      `json:"steeringMode"`
-	FollowUpMode          string      `json:"followUpMode"`
-	SessionFile           *string     `json:"sessionFile"`
-	SessionID             string      `json:"sessionId"`
-	SessionName           *string     `json:"sessionName"`
-	AutoCompactionEnabled bool        `json:"autoCompactionEnabled"`
-	MessageCount          int         `json:"messageCount"`
-	PendingMessageCount   int         `json:"pendingMessageCount"`
-	ProjectTrust          trustWire   `json:"projectTrust"`
-	Sandbox               sandboxWire `json:"sandbox"`
+	Model                 modelWire    `json:"model"`
+	ThinkingLevel         string       `json:"thinkingLevel"`
+	IsStreaming           bool         `json:"isStreaming"`
+	IsCompacting          bool         `json:"isCompacting"`
+	SteeringMode          string       `json:"steeringMode"`
+	FollowUpMode          string       `json:"followUpMode"`
+	SessionFile           *string      `json:"sessionFile"`
+	SessionID             string       `json:"sessionId"`
+	SessionName           *string      `json:"sessionName"`
+	AutoCompactionEnabled bool         `json:"autoCompactionEnabled"`
+	MessageCount          int          `json:"messageCount"`
+	PendingMessageCount   int          `json:"pendingMessageCount"`
+	ProjectTrust          trustWire    `json:"projectTrust"`
+	Sandbox               sandboxWire  `json:"sandbox"`
+	CodeMode              codeModeWire `json:"codeMode"`
+}
+
+// codeModeWire is a malachi extension to get_state: whether the script tool
+// is offered, and what scripts have done in this session. A running
+// script's calls arrive as tool_execution_update details.
+type codeModeWire struct {
+	Enabled    bool `json:"enabled"`
+	Scripts    int  `json:"scripts"`
+	Failed     int  `json:"failed"`
+	Calls      int  `json:"calls"`
+	CallErrors int  `json:"callErrors"`
+}
+
+func codeModeOf(c coding.CodeModeState) codeModeWire {
+	return codeModeWire{Enabled: c.Enabled, Scripts: c.Scripts, Failed: c.Failed, Calls: c.Calls, CallErrors: c.CallErrors}
 }
 
 // sandboxWire is a malachi extension to get_state: what sandboxed commands
@@ -186,6 +203,7 @@ func stateOf(s *coding.Session) stateWire {
 		PendingMessageCount:   pending,
 		ProjectTrust:          trustOf(s.TrustState()),
 		Sandbox:               sandboxOf(s.Sandbox()),
+		CodeMode:              codeModeOf(s.CodeMode()),
 	}
 }
 

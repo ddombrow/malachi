@@ -209,7 +209,11 @@ func (r *renderer) assistantMessage(m *agent.AssistantMessage) string {
 func (r *renderer) toolResult(name string, args map[string]any, res agent.ToolResult, isError bool) string {
 	summary := r.summary(name, args)
 	if isError {
-		body := r.st.toolErr.Render(summary) + "\n" + r.preview(r.st.errorText, firstLines(res.Text(), 4))
+		body := r.st.toolErr.Render(summary)
+		if d, ok := scriptDetails(res.Details); ok && name == "script" && len(d.Calls) > 0 {
+			body += "\n" + r.st.dim.Render(scriptTally(d))
+		}
+		body += "\n" + r.preview(r.st.errorText, firstLines(res.Text(), 4))
 		return item(r.gutter(iconError, r.st.toolErr, body))
 	}
 	details, _ := res.Details.(map[string]any)
@@ -231,6 +235,17 @@ func (r *renderer) toolResult(name string, args map[string]any, res agent.ToolRe
 			body = r.diff(patch, 30)
 		}
 	case "read", "write":
+	case "script":
+		// What the script made of its calls is the answer; the calls
+		// themselves are a tally, with /last for the rest.
+		var parts []string
+		if d, ok := scriptDetails(res.Details); ok && len(d.Calls) > 0 {
+			parts = append(parts, r.st.dim.Render(scriptTally(d)))
+		}
+		if out := strings.TrimSpace(res.Text()); out != "" && out != "(no output)" {
+			parts = append(parts, r.preview(r.st.dim, firstLines(out, 6)))
+		}
+		body = strings.Join(parts, "\n")
 	case "grep", "glob":
 		// Search results are the answer, so show more of them than the
 		// generic preview, which is tuned for incidental output.

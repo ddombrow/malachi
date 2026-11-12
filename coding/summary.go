@@ -57,6 +57,10 @@ func SummarizeToolCall(name string, args map[string]any) string {
 			n++
 		}
 		return fmt.Sprintf("edit %s (%d change%s)", str("path"), n, map[bool]string{true: "", false: "s"}[n == 1])
+	case "fetch":
+		return "fetch " + str("url")
+	case "script":
+		return "script " + scriptHead(str("code"))
 	case "write":
 		lines := strings.Count(str("content"), "\n")
 		if c := str("content"); c != "" && !strings.HasSuffix(c, "\n") {
@@ -69,4 +73,21 @@ func SummarizeToolCall(name string, args map[string]any) string {
 		parts = append(parts, fmt.Sprintf("%s=%v", k, v))
 	}
 	return name + " " + strings.Join(parts, " ")
+}
+
+// scriptHead is a script's first line of code, past blank lines and
+// comments, with a mark when more follows.
+func scriptHead(code string) string {
+	lines := strings.Split(strings.TrimSpace(code), "\n")
+	for i, l := range lines {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "//") {
+			continue
+		}
+		if i < len(lines)-1 {
+			l += " …"
+		}
+		return l
+	}
+	return "(empty)"
 }

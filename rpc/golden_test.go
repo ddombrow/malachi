@@ -28,7 +28,7 @@ import (
 
 // extraKeys are keys malachi adds to a response's data, by command.
 var extraKeys = map[string][]string{
-	"get_state": {"projectTrust", "sandbox"},
+	"get_state": {"projectTrust", "sandbox", "codeMode"},
 	"compact":   {"replaced", "kept", "usage", "warnings"},
 }
 

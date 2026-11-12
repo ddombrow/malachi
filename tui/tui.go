@@ -85,6 +85,7 @@ type runningTool struct {
 	id, name string
 	summary  string
 	output   string
+	details  any // the latest partial result's, for a script's call list
 	started  time.Time
 }
 
@@ -622,6 +623,7 @@ func (m *model) handleEvent(e any) tea.Cmd {
 		for _, t := range m.tools {
 			if t.id == ev.ToolCallID {
 				t.output = ev.PartialResult.Text()
+				t.details = ev.PartialResult.Details
 			}
 		}
 	case *agent.ToolExecutionEndEvent:
@@ -735,7 +737,11 @@ func (m *model) live() string {
 	for _, t := range m.tools {
 		elapsed := time.Since(t.started).Truncate(time.Second)
 		head := t.summary + " " + m.r.st.toolRun.Render(m.spin.View()) + m.r.st.dim.Render(" "+elapsed.String())
-		if out := strings.TrimSpace(t.output); out != "" {
+		if d, ok := scriptDetails(t.details); ok && t.name == "script" {
+			if calls := m.r.scriptCalls(d, m.spin.View(), 8); calls != "" {
+				head += "\n" + calls
+			}
+		} else if out := strings.TrimSpace(t.output); out != "" {
 			head += "\n" + m.r.preview(m.r.st.dim, strings.Join(lastN(strings.Split(out, "\n"), 8), "\n"))
 		}
 		b.WriteString(item(m.r.gutter(toolIcon(t.name), m.r.st.toolRun, head)))

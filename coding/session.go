@@ -71,6 +71,7 @@ type Session struct {
 	sbMu       sync.Mutex
 	sandbox    sandbox.Policy
 	spillDir   string // full output of truncated commands; removed on Close
+	codeMode   codeModeCounter
 	header     []*session.Entry
 	persistErr error
 	diag       *Diagnostics
@@ -310,7 +311,8 @@ func Open(opts Options) (*Session, error) {
 	toolOpts.Sandbox = s.sandboxPolicy
 	tools := CodingTools(cwd, toolOpts)
 	if opts.Settings.CodeModeEnabled() {
-		tools = append(tools, NewScriptTool(tools, toolOpts, s.diag))
+		s.codeMode.enable()
+		tools = append(tools, NewScriptTool(tools, toolOpts, s.diag, s.codeMode.record))
 	}
 	s.trims = &trimLog{}
 	s.preparer = newCodingContextPreparer(s.trims)

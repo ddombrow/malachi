@@ -84,7 +84,7 @@ func (m *model) toggleNetwork() tea.Cmd {
 
 // sidebarSections are the sidebar's sections, top to bottom.
 func (m *model) sidebarSections() [][]sideRow {
-	return [][]sideRow{m.sandboxSection(), m.trustSection()}
+	return [][]sideRow{m.sandboxSection(), m.trustSection(), m.codeModeSection()}
 }
 
 // sidePair puts label on the left of a row and value on the right.
@@ -173,6 +173,43 @@ func (m *model) trustSection() []sideRow {
 	}
 	add(s.dim.Render("  " + trustSourceText(t)))
 	return rows
+}
+
+// codeModeSection shows whether the script tool is offered and what scripts
+// have done in this session.
+func (m *model) codeModeSection() []sideRow {
+	cm, s := m.s.CodeMode(), m.r.st
+	var rows []sideRow
+	add := func(text string) { rows = append(rows, sideRow{text: text}) }
+	if !cm.Enabled {
+		add(sidePair(s.accent.Render("code mode"), s.dim.Render("off")))
+		add(s.dim.Render("  codeMode: false"))
+		return rows
+	}
+	add(sidePair(s.accent.Render("code mode"), s.toolOK.Render("on")))
+	if cm.Scripts == 0 {
+		add(s.dim.Render("  no scripts yet"))
+		return rows
+	}
+	add(s.dim.Render("  " + plural(cm.Scripts, "script") + " · " + plural(cm.Calls, "call")))
+	var failed []string
+	if cm.Failed > 0 {
+		failed = append(failed, plural(cm.Failed, "script"))
+	}
+	if cm.CallErrors > 0 {
+		failed = append(failed, plural(cm.CallErrors, "call"))
+	}
+	if len(failed) > 0 {
+		add(s.toolErr.Render("  failed: " + strings.Join(failed, ", ")))
+	}
+	return rows
+}
+
+func plural(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit
+	}
+	return fmt.Sprintf("%d %ss", n, unit)
 }
 
 // trustSourceText says where a trust decision came from.

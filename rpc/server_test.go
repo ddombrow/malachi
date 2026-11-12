@@ -509,6 +509,16 @@ func TestReadErrorStillCleansUp(t *testing.T) {
 	}
 }
 
+// get_state reports Code Mode, a malachi extension.
+func TestGetStateReportsCodeMode(t *testing.T) {
+	c := serve(t, openSession(t, fake.New()))
+	c.send(`{"id":"s","type":"get_state"}`)
+	cm, ok := c.response("s")["data"].(map[string]any)["codeMode"].(map[string]any)
+	if !ok || cm["enabled"] != true || cm["scripts"] != 0.0 || cm["calls"] != 0.0 {
+		t.Fatalf("codeMode: %v", cm)
+	}
+}
+
 // get_state reports the sandbox, a malachi extension.
 func TestGetStateReportsTheSandbox(t *testing.T) {
 	c := serve(t, openSession(t, fake.New()))

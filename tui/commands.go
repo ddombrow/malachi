@@ -87,6 +87,16 @@ func (m *model) command(line string) tea.Cmd {
 					out = r.diff(patch, 1<<30)
 				}
 			}
+			// A script shows what it ran and every call it made, then its
+			// output.
+			if d, ok := scriptDetails(last.result.Details); ok && last.name == "script" {
+				code, _ := last.args["code"].(string)
+				parts := []string{r.st.dim.Render(strings.TrimRight(code, "\n"))}
+				if len(d.Calls) > 0 {
+					parts = append(parts, r.st.dim.Render(scriptTally(d)), r.scriptCalls(d, "…", len(d.Calls)))
+				}
+				out = strings.Join(append(parts, out), "\n\n")
+			}
 			return item(r.st.accent.Render("── "+r.summary(last.name, last.args)+" ──") + "\n" + out)
 		})
 	case "model":

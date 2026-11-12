@@ -36,7 +36,7 @@ func TestScriptToolUsesRealToolsUnderTheSandbox(t *testing.T) {
 	pol := sandbox.Build(sandbox.Config{Cwd: cwd, Home: home})
 	opts := ToolOptions{Sandbox: func() sandbox.Policy { return pol }, SpillDir: t.TempDir()}
 	d := NewDiagnostics(t.TempDir())
-	tool := NewScriptTool(CodingTools(cwd, opts), opts, d)
+	tool := NewScriptTool(CodingTools(cwd, opts), opts, d, nil)
 
 	res, isError := runScriptTool(t, tool, `
 		const files = (await tools.glob({pattern: "*.txt"})).text.split("\n").filter(l => l.endsWith(".txt"));
@@ -76,7 +76,7 @@ func TestScriptToolUsesRealToolsUnderTheSandbox(t *testing.T) {
 // Output past the display limits is cut, and the whole of it spilled.
 func TestScriptToolSpillsLongOutput(t *testing.T) {
 	spill := t.TempDir()
-	tool := NewScriptTool(nil, ToolOptions{SpillDir: spill}, nil)
+	tool := NewScriptTool(nil, ToolOptions{SpillDir: spill}, nil, nil)
 	res, isError := runScriptTool(t, tool, `for (let i = 1; i <= 5000; i++) print("line " + i)`)
 	if isError {
 		t.Fatal(res.Text())
@@ -131,7 +131,7 @@ func TestScriptSearchResultsAreData(t *testing.T) {
 		}
 	}
 	tools := CodingTools(cwd, ToolOptions{})
-	tool := NewScriptTool(tools, ToolOptions{}, nil)
+	tool := NewScriptTool(tools, ToolOptions{}, nil, nil)
 	res, isError := runScriptTool(t, tool, `
 		const [lines, files, counts, glob] = await Promise.all([
 			tools.grep({path: "pkg", pattern: "^func Test"}),

@@ -17,6 +17,8 @@ const (
 	iconEdit      = "edit"
 	iconWrite     = "write"
 	iconBash      = "bash"
+	iconFetch     = "fetch"
+	iconScript    = "script"
 	iconTool      = "tool" // any other tool
 	iconError     = "error"
 	iconCancelled = "cancelled"
@@ -44,6 +46,8 @@ var iconSets = map[string]map[string]string{
 		iconEdit:        "✏️",
 		iconWrite:       "📝",
 		iconBash:        ">_",
+		iconFetch:       "🌐",
+		iconScript:      "📜",
 		iconTool:        "🔧",
 		iconError:       "❌",
 		iconCancelled:   "🛑",
@@ -63,6 +67,8 @@ var iconSets = map[string]map[string]string{
 		iconEdit:        "⏺",
 		iconWrite:       "⏺",
 		iconBash:        "⏺",
+		iconFetch:       "⏺",
+		iconScript:      "⏺",
 		iconTool:        "⏺",
 		iconError:       "⏺",
 		iconCancelled:   "⏺",
@@ -83,7 +89,7 @@ func iconSet(name string) map[string]string {
 // toolIcon picks the icon kind for a tool name.
 func toolIcon(name string) string {
 	switch name {
-	case "read", "edit", "write", "bash", "grep", "glob":
+	case "read", "edit", "write", "bash", "grep", "glob", "fetch", "script":
 		return name
 	}
 	return iconTool
