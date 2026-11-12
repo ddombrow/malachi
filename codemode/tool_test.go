@@ -188,3 +188,16 @@ func TestScriptToolNoOutput(t *testing.T) {
 		t.Error("calls should be an empty list, not null")
 	}
 }
+
+// Tools can tell a script's calls from the model's.
+func TestInScript(t *testing.T) {
+	var seen []bool
+	probe := &agent.Tool{Name: "probe", Execute: func(ctx context.Context, _ string, _ map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
+		seen = append(seen, InScript(ctx))
+		return agent.TextResult("ok"), nil
+	}}
+	runScript(t, scriptTool([]*agent.Tool{probe}, Options{}), `await tools.probe({})`)
+	if len(seen) != 1 || !seen[0] || InScript(context.Background()) {
+		t.Errorf("seen %v", seen)
+	}
+}

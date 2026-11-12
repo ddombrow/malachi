@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ddombrow/malachi/agent"
+	"github.com/ddombrow/malachi/codemode"
 	"github.com/ddombrow/malachi/sandbox"
 )
 
@@ -79,13 +80,15 @@ func NewGrepTool(cwd string, opts ToolOptions) *agent.Tool {
 			},
 			"required": []string{"pattern"},
 		},
-		Execute: func(_ context.Context, _ string, args map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
-			return executeGrep(cwd, opts, args)
+		Execute: func(ctx context.Context, _ string, args map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
+			return executeGrep(cwd, opts, args, codemode.InScript(ctx))
 		},
 	}
 }
 
-func executeGrep(cwd string, opts ToolOptions, args map[string]any) (agent.ToolResult, error) {
+// executeGrep runs a search. structured adds the results to the details as
+// data, for scripts: see scriptResults.
+func executeGrep(cwd string, opts ToolOptions, args map[string]any, structured bool) (agent.ToolResult, error) {
 	pattern, err := strArg(args, "pattern")
 	if err != nil {
 		return agent.ToolResult{}, err
@@ -160,6 +163,9 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 		hitLimit   bool
 		skippedBig int
 		skippedBin int
+		// results is what structured adds: one entry per match, file or
+		// count, as the output mode lists them.
+		results []map[string]any
 	)
 	scan := func(rel string, d fs.DirEntry) error {
 		if info, err := d.Info(); err == nil && info.Size() > MaxGrepFileBytes {
@@ -235,6 +241,11 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 				before, after = before[:0], contextLines
 			}
 			emit(n, ':', text)
+			if structured {
+				results = append(results, map[string]any{
+					"path": scriptPath(cwd, root, rel), "line": n, "text": clipLine(text, MaxGrepLineWidth),
+				})
+			}
 			if matches >= limit {
 				hitLimit = true
 				if after == 0 {
@@ -249,8 +260,14 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 		switch mode {
 		case grepFiles:
 			lines = append(lines, rel)
+			if structured {
+				results = append(results, map[string]any{"path": scriptPath(cwd, root, rel)})
+			}
 		case grepCount:
 			lines = append(lines, fmt.Sprintf("%s: %d", rel, found))
+			if structured {
+				results = append(results, map[string]any{"path": scriptPath(cwd, root, rel), "count": found})
+			}
 		}
 		if mode != grepLines && files >= limit {
 			hitLimit = true
@@ -279,13 +296,17 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 		}
 		out += "\n\n" + scope
 	}
+	details := map[string]any{
+		"pattern": pattern, "path": root, "matches": matches, "output": mode,
+		"files": files, "searched": searched, "hit_limit": hitLimit,
+		"skipped_big": skippedBig, "skipped_binary": skippedBin,
+	}
+	if structured {
+		details["results"] = nonNil(results)
+	}
 	return agent.ToolResult{
 		Content: []agent.Content{&agent.TextContent{Text: out}},
-		Details: map[string]any{
-			"pattern": pattern, "path": root, "matches": matches, "output": mode,
-			"files": files, "searched": searched, "hit_limit": hitLimit,
-			"skipped_big": skippedBig, "skipped_binary": skippedBin,
-		},
+		Details: details,
 	}, nil
 }
 

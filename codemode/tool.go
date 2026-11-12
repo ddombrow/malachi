@@ -285,7 +285,18 @@ func (r *runner) call(ctx context.Context, call *agent.ToolCall, raw json.RawMes
 	if ctx.Err() != nil {
 		return agent.TextResult("Operation aborted"), true
 	}
-	return agent.ExecuteTool(ctx, tool, call, func(agent.ToolResult) {})
+	return agent.ExecuteTool(context.WithValue(ctx, inScriptKey{}, true), tool, call, func(agent.ToolResult) {})
+}
+
+type inScriptKey struct{}
+
+// InScript reports whether ctx is a call a script made. A tool can use it
+// to add structured data to its details, which a script can use and the
+// model never sees: the script tool records only its calls, not their
+// results.
+func InScript(ctx context.Context) bool {
+	in, _ := ctx.Value(inScriptKey{}).(bool)
+	return in
 }
 
 // recorder keeps the call records and reports progress.

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ddombrow/malachi/agent"
+	"github.com/ddombrow/malachi/codemode"
 )
 
 const (
@@ -41,13 +42,15 @@ func NewGlobTool(cwd string, opts ToolOptions) *agent.Tool {
 			},
 			"required": []string{"pattern"},
 		},
-		Execute: func(_ context.Context, _ string, args map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
-			return executeGlob(cwd, opts, args)
+		Execute: func(ctx context.Context, _ string, args map[string]any, _ func(agent.ToolResult)) (agent.ToolResult, error) {
+			return executeGlob(cwd, opts, args, codemode.InScript(ctx))
 		},
 	}
 }
 
-func executeGlob(cwd string, opts ToolOptions, args map[string]any) (agent.ToolResult, error) {
+// executeGlob finds files. structured adds the paths to the details as
+// data, for scripts: see scriptResults.
+func executeGlob(cwd string, opts ToolOptions, args map[string]any, structured bool) (agent.ToolResult, error) {
 	pattern, err := strArg(args, "pattern")
 	if err != nil {
 		return agent.ToolResult{}, err
@@ -121,10 +124,18 @@ func executeGlob(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 		}
 		out += "\n\n" + footer + stats.note()
 	}
+	details := map[string]any{
+		"pattern": pattern, "path": root, "count": len(paths), "hit_limit": hitLimit,
+	}
+	if structured {
+		usable := make([]string, len(paths))
+		for i, p := range paths {
+			usable[i] = scriptPath(cwd, root, p)
+		}
+		details["paths"] = usable
+	}
 	return agent.ToolResult{
 		Content: []agent.Content{&agent.TextContent{Text: out}},
-		Details: map[string]any{
-			"pattern": pattern, "path": root, "count": len(paths), "hit_limit": hitLimit,
-		},
+		Details: details,
 	}, nil
 }

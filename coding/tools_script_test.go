@@ -113,3 +113,78 @@ func TestCodeModeSetting(t *testing.T) {
 		t.Error("codeMode: false should turn it off")
 	}
 }
+
+// Searches made by a script return data as well as text, with paths a
+// script can pass straight to read; the model's own calls do not carry it.
+func TestScriptSearchResultsAreData(t *testing.T) {
+	cwd := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cwd, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string]string{
+		"pkg/a_test.go": "package pkg\nfunc TestA(t *testing.T) {}\nfunc TestB(t *testing.T) {}\n",
+		"pkg/b_test.go": "package pkg\nfunc TestC(t *testing.T) {}\n",
+		"main.go":       "package main\n",
+	} {
+		if err := os.WriteFile(filepath.Join(cwd, path), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tools := CodingTools(cwd, ToolOptions{})
+	tool := NewScriptTool(tools, ToolOptions{}, nil)
+	res, isError := runScriptTool(t, tool, `
+		const [lines, files, counts, glob] = await Promise.all([
+			tools.grep({path: "pkg", pattern: "^func Test"}),
+			tools.grep({path: "pkg", pattern: "^func Test", output: "files"}),
+			tools.grep({path: "pkg", pattern: "^func Test", output: "count"}),
+			tools.glob({path: "pkg", pattern: "*.go"}),
+		]);
+		const first = await tools.read({path: lines.details.results[0].path});
+		return {
+			lines: lines.details.results.map(r => r.path + ":" + r.line + ":" + r.text),
+			files: files.details.results.map(r => r.path),
+			counts: counts.details.results.map(r => r.path + "=" + r.count),
+			glob: glob.details.paths,
+			readable: !first.isError,
+		};`)
+	if isError {
+		t.Fatal(res.Text())
+	}
+	want := `{
+  "lines": [
+    "pkg/a_test.go:2:func TestA(t *testing.T) {}",
+    "pkg/a_test.go:3:func TestB(t *testing.T) {}",
+    "pkg/b_test.go:2:func TestC(t *testing.T) {}"
+  ],
+  "files": [
+    "pkg/a_test.go",
+    "pkg/b_test.go"
+  ],
+  "counts": [
+    "pkg/a_test.go=2",
+    "pkg/b_test.go=1"
+  ],
+  "glob": [
+    "pkg/a_test.go",
+    "pkg/b_test.go"
+  ],
+  "readable": true
+}`
+	if res.Text() != want {
+		t.Errorf("got\n%s\nwant\n%s", res.Text(), want)
+	}
+
+	// Called directly, as the model calls it, grep keeps its details small.
+	for _, tl := range tools {
+		if tl.Name != "grep" {
+			continue
+		}
+		r, err := tl.Execute(context.Background(), "g", map[string]any{"pattern": "Test"}, func(agent.ToolResult) {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := r.Details.(map[string]any)["results"]; ok {
+			t.Error("a direct grep carried script results")
+		}
+	}
+}

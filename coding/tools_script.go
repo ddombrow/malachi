@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"unicode/utf8"
 
@@ -43,6 +44,7 @@ func NewScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics) *ag
 		},
 		OnScript: diag.LogScript,
 	})
+	t.Description += " " + scriptResults
 	inner := t.Execute
 	t.Execute = func(ctx context.Context, callID string, args map[string]any, onUpdate func(agent.ToolResult)) (agent.ToolResult, error) {
 		res, err := inner(ctx, callID, args, onUpdate)
@@ -56,6 +58,31 @@ func NewScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics) *ag
 		return res, err
 	}
 	return t
+}
+
+// scriptResults tells the model what data search tools give scripts, so a
+// script filters values instead of parsing the text the model would see.
+const scriptResults = "In scripts, search tools also return data in details, with paths relative to the working " +
+	"directory so they can be passed straight to read or edit: grep's details.results is a list of " +
+	"{path, line, text} per match (output \"lines\"), {path} per file (\"files\") or {path, count} (\"count\"); " +
+	"glob's details.paths is a list of paths. Prefer these to parsing text."
+
+// scriptPath is a search result's path as a script should get it: relative
+// to the working directory when it is inside it, so the script can hand it
+// to read or edit as is, else absolute.
+func scriptPath(cwd, root, rel string) string {
+	abs := filepath.Join(root, rel)
+	if r, err := filepath.Rel(cwd, abs); err == nil && r != ".." && !strings.HasPrefix(r, "../") {
+		return r
+	}
+	return abs
+}
+
+func nonNil(v []map[string]any) []map[string]any {
+	if v == nil {
+		return []map[string]any{}
+	}
+	return v
 }
 
 // fitScriptOutput keeps the start of a script's output within the display
