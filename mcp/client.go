@@ -174,6 +174,8 @@ func (cl *Client) discover(ctx context.Context, version string, retry bool) erro
 			return cl.initialize(ctx, v)
 		}
 		return fmt.Errorf("mcp: server supports protocol versions %v; malachi speaks %v", data.Supported, append(ModernVersions, LegacyVersions...))
+	case errors.As(err, new(closedError)):
+		return err // already says why: how the server exited, and its stderr
 	case errors.Is(err, ErrClosed) || cl.c.isClosed():
 		return fmt.Errorf("mcp: server closed the connection before answering: %w", err)
 	}

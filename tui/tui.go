@@ -201,6 +201,7 @@ func newModel(s *coding.Session, initialPrompt string) *model {
 		m.context, m.contextEstimated = st.EffectivePrompt(), true
 	}
 	m.syncSandbox(s.Sandbox())
+	m.syncMCP(s.MCPState())
 	m.r = newRenderer(m.contentWidth(), m.isDark, m.s.Settings().Icons, m.s.Cwd())
 	m.applyInputStyles()
 	m.vp.MouseWheelEnabled = true
@@ -555,6 +556,8 @@ func (m *model) handleEvent(e any) tea.Cmd {
 	switch ev := e.(type) {
 	case coding.SandboxChangedEvent:
 		m.syncSandbox(ev.State)
+	case coding.MCPChangedEvent:
+		m.syncMCP(ev.State)
 	case coding.CompactionStartEvent:
 		m.phaseReason, m.phaseStart = ev.Reason, time.Now()
 		m.phase = compactionHead(ev.Reason)

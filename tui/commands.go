@@ -26,6 +26,8 @@ const helpText = `Commands:
   /allow-read <dir>   allow reading a directory in your home for this session
   /allow-write <dir>  allow writes to a directory for this session
   /network [on|off]   show, or turn commands' network access on or off (ctrl+o)
+  /mcp [server]       show MCP servers: status, roots, tools
+  /mcp restart <name> restart an MCP server now
   /sidebar            show or hide the sidebar (ctrl+s)
   /ctx               measured context: tokens, tool output share, trim passes
   /new                start a fresh session
@@ -101,6 +103,8 @@ func (m *model) command(line string) tea.Cmd {
 		})
 	case "model":
 		return m.modelCommand(arg)
+	case "mcp":
+		return m.mcpCommand(arg)
 	case "thinking":
 		if arg == "" {
 			levels := strings.Join(m.s.Provider().ThinkingLevels, ", ")
@@ -435,6 +439,7 @@ func (m *model) reopen(resume string) tea.Cmd {
 	}
 	m.toolArgs = map[string]map[string]any{}
 	m.syncSandbox(next.Sandbox())
+	m.syncMCP(next.MCPState())
 
 	m.showSession(next)
 	m.vp.GotoBottom()

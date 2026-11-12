@@ -206,3 +206,58 @@ func TestMCPToolOutputIsCut(t *testing.T) {
 		t.Errorf("details: %v", res.Details)
 	}
 }
+
+// Frontends hear each server change; a restart the user asks for happens
+// now, whatever the backoff.
+func TestSessionMCPEventsAndRestart(t *testing.T) {
+	s := mcpSession(t, true, fake.New())
+	events := make(chan MCPState, 64)
+	s.Subscribe(func(e any) {
+		if ev, ok := e.(MCPChangedEvent); ok {
+			events <- ev.State
+		}
+	})
+	ready := func(st MCPState, name string) (MCPServerState, bool) {
+		for _, srv := range st.Servers {
+			if srv.Name == name && srv.Status == MCPReady {
+				return srv, true
+			}
+		}
+		return MCPServerState{}, false
+	}
+	waitFor := func(what string, ok func(MCPState) bool) MCPState {
+		t.Helper()
+		if st := s.MCPState(); ok(st) {
+			return st
+		}
+		timeout := time.After(time.Minute)
+		for {
+			select {
+			case st := <-events:
+				if ok(st) {
+					return st
+				}
+			case <-timeout:
+				t.Fatalf("no event: %s (now %+v)", what, s.MCPState())
+			}
+		}
+	}
+	waitFor("lazy ready", func(st MCPState) bool { _, ok := ready(st, "lazy"); return ok })
+	if st := s.MCPState(); !strings.HasSuffix(st.Config, MCPConfigFile) || len(st.Servers) != 3 {
+		t.Fatalf("state: %+v", st)
+	}
+	before, _ := callText(t, s.MCP(), "lazy", "pid", nil)
+	if err := s.RestartMCP(context.Background(), "lazy"); err != nil {
+		t.Fatal(err)
+	}
+	st := waitFor("restarted", func(st MCPState) bool { srv, ok := ready(st, "lazy"); return ok && srv.Restarts == 1 })
+	if after, _ := callText(t, s.MCP(), "lazy", "pid", nil); after == before {
+		t.Errorf("same process after a restart: %s (%+v)", after, st)
+	}
+	if err := s.RestartMCP(context.Background(), "off"); err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Errorf("restarting a disabled server: %v", err)
+	}
+	if err := s.RestartMCP(context.Background(), "nope"); err == nil {
+		t.Error("restarted a server that does not exist")
+	}
+}

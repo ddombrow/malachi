@@ -594,3 +594,33 @@ func TestAddReadableRoot(t *testing.T) {
 	}
 	c.close()
 }
+
+// get_state reports the MCP servers, a malachi extension; changes arrive as
+// mcp_changed events in the same shape.
+func TestGetStateReportsMCP(t *testing.T) {
+	c := serve(t, openSession(t, fake.New()))
+	c.send(`{"id":"s","type":"get_state"}`)
+	mc, ok := c.response("s")["data"].(map[string]any)["mcp"].(map[string]any)
+	if !ok || !strings.HasSuffix(fmt.Sprint(mc["config"]), "mcp.json") {
+		t.Fatalf("mcp: %v", mc)
+	}
+	if servers, ok := mc["servers"].([]any); !ok || len(servers) != 0 {
+		t.Fatalf("servers: %v", mc["servers"])
+	}
+	c.send(`{"id":"r","type":"mcp_restart","name":"nope"}`)
+	if r := c.response("r"); r["success"] != false || !strings.Contains(fmt.Sprint(r["error"]), "no MCP server named nope") {
+		t.Fatalf("mcp_restart: %v", r)
+	}
+	c.close()
+
+	raw, err := eventJSON(coding.MCPChangedEvent{State: coding.MCPState{Config: "/h/mcp.json", Servers: []coding.MCPServerState{
+		{Name: "time", Status: coding.MCPReady, Tools: []string{"now"}, Deferred: true},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"mcp":{"config":"/h/mcp.json","servers":[{"name":"time","status":"ready","args":[],"tools":["now"],"readableRoots":[],"writableRoots":[],"deferred":true,"restarts":0,"stale":false}]},"type":"mcp_changed"}`
+	if string(raw) != want {
+		t.Errorf("event:\n got %s\nwant %s", raw, want)
+	}
+}

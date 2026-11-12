@@ -39,6 +39,13 @@ func (e *Error) Error() string { return fmt.Sprintf("%s (code %d)", e.Message, e
 // ErrClosed is returned for requests on a connection that has ended.
 var ErrClosed = errors.New("mcp: connection closed")
 
+// closedError is ErrClosed with why the connection ended (the server
+// exited, and the end of its stderr), which it reads as alone.
+type closedError struct{ why error }
+
+func (e closedError) Error() string   { return e.why.Error() }
+func (e closedError) Unwrap() []error { return []error{ErrClosed, e.why} }
+
 // message is any JSON-RPC message, decoded loosely: which kind it is follows
 // from which fields are present.
 type message struct {
@@ -89,7 +96,7 @@ func (c *conn) read(r io.Reader) {
 			if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
 				err = ErrClosed
 				if c.eof != nil {
-					err = fmt.Errorf("%w: %w", ErrClosed, c.eof())
+					err = closedError{c.eof()}
 				}
 			}
 			c.shut(err)

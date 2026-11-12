@@ -106,8 +106,8 @@ func trustOf(t coding.TrustState) trustWire {
 	}
 }
 
-// stateWire is get_state: tau's twelve keys plus projectTrust, sandbox and
-// codeMode.
+// stateWire is get_state: tau's twelve keys plus projectTrust, sandbox,
+// codeMode and mcp.
 type stateWire struct {
 	Model                 modelWire    `json:"model"`
 	ThinkingLevel         string       `json:"thinkingLevel"`
@@ -124,6 +124,55 @@ type stateWire struct {
 	ProjectTrust          trustWire    `json:"projectTrust"`
 	Sandbox               sandboxWire  `json:"sandbox"`
 	CodeMode              codeModeWire `json:"codeMode"`
+	MCP                   mcpWire      `json:"mcp"`
+}
+
+// mcpWire is a malachi extension to get_state and the mcp_changed event:
+// the MCP servers configured in mcp.json and what each is doing.
+type mcpWire struct {
+	Config    string          `json:"config"`
+	LoadError string          `json:"loadError,omitempty"`
+	Servers   []mcpServerWire `json:"servers"`
+}
+
+type mcpServerWire struct {
+	Name string `json:"name"`
+	// Status is disabled, invalid, starting, ready, failed or stopped.
+	Status   string   `json:"status"`
+	Error    string   `json:"error,omitempty"`
+	Command  string   `json:"command,omitempty"`
+	Args     []string `json:"args"`
+	Server   string   `json:"server,omitempty"`
+	Version  string   `json:"protocolVersion,omitempty"`
+	Tools    []string `json:"tools"`
+	Readable []string `json:"readableRoots"`
+	Writable []string `json:"writableRoots"`
+	// Deferred servers' tools are reached from scripts, not offered
+	// directly.
+	Deferred bool `json:"deferred"`
+	Restarts int  `json:"restarts"`
+	// Stale servers restart on their next use: the sandbox changed since
+	// they started.
+	Stale bool `json:"stale"`
+}
+
+func mcpOf(st coding.MCPState) mcpWire {
+	w := mcpWire{Config: st.Config, LoadError: st.LoadError, Servers: []mcpServerWire{}}
+	orEmpty := func(v []string) []string {
+		if v == nil {
+			return []string{}
+		}
+		return v
+	}
+	for _, srv := range st.Servers {
+		w.Servers = append(w.Servers, mcpServerWire{
+			Name: srv.Name, Status: srv.Status, Error: srv.Error, Command: srv.Command, Args: orEmpty(srv.Args),
+			Server: srv.Server, Version: srv.Version, Tools: orEmpty(srv.Tools),
+			Readable: orEmpty(srv.Readable), Writable: orEmpty(srv.Writable),
+			Deferred: srv.Deferred, Restarts: srv.Restarts, Stale: srv.Stale,
+		})
+	}
+	return w
 }
 
 // codeModeWire is a malachi extension to get_state: whether the script tool
@@ -204,6 +253,7 @@ func stateOf(s *coding.Session) stateWire {
 		ProjectTrust:          trustOf(s.TrustState()),
 		Sandbox:               sandboxOf(s.Sandbox()),
 		CodeMode:              codeModeOf(s.CodeMode()),
+		MCP:                   mcpOf(s.MCPState()),
 	}
 }
 
@@ -279,6 +329,9 @@ func eventJSON(e any) ([]byte, error) {
 	if sc, ok := e.(coding.SandboxChangedEvent); ok {
 		// A malachi extension carrying the sandbox as get_state reports it.
 		return json.Marshal(map[string]any{"type": "sandbox_changed", "sandbox": sandboxOf(sc.State)})
+	}
+	if mc, ok := e.(coding.MCPChangedEvent); ok {
+		return json.Marshal(map[string]any{"type": "mcp_changed", "mcp": mcpOf(mc.State)})
 	}
 	if _, ok := e.(*agent.AgentEndEvent); ok {
 		var fields map[string]json.RawMessage

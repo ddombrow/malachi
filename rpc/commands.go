@@ -137,6 +137,22 @@ func (sv *Server) dispatch(id any, typ string, cmd map[string]any) {
 			return
 		}
 		sv.ok(id, typ, map[string]any{"path": root, "sandbox": sandboxOf(s.Sandbox())})
+	case "mcp_restart":
+		// A malachi extension: the user restarting an MCP server now,
+		// whatever its backoff. Answers with the servers' state once it has
+		// started or failed.
+		name, err := requiredString(cmd, "name")
+		if err != nil {
+			sv.fail(id, typ, err.Error())
+			return
+		}
+		sv.background(func() {
+			if err := s.RestartMCP(context.Background(), name); err != nil {
+				sv.fail(id, typ, err.Error())
+				return
+			}
+			sv.ok(id, typ, mcpOf(s.MCPState()))
+		})
 	default:
 		sv.fail(id, typ, "Unknown command: "+typ)
 	}

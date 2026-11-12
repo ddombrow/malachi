@@ -442,6 +442,34 @@ func (srv *mcpServer) state(m *MCPManager) MCPServerState {
 	return st
 }
 
+// Restart stops a server and starts it again under the current policy,
+// whatever its backoff: the user asking is reason enough to try.
+func (m *MCPManager) Restart(ctx context.Context, name string) error {
+	srv := m.server(name)
+	if srv == nil {
+		return fmt.Errorf("no MCP server named %s", name)
+	}
+	if !srv.runnable() {
+		_, err := m.ensure(ctx, srv) // says why it cannot run
+		return err
+	}
+	srv.startMu.Lock()
+	srv.mu.Lock()
+	proc := srv.proc
+	srv.proc, srv.failures = nil, 0
+	if proc != nil {
+		srv.restarts++
+	}
+	srv.mu.Unlock()
+	srv.startMu.Unlock()
+	if proc != nil {
+		m.diag.LogMCPServer(srv.name, "restart: asked by the user", nil)
+		proc.Close()
+	}
+	_, err := m.ensure(ctx, srv)
+	return err
+}
+
 // Close stops every server, each by closing its input first, as the spec's
 // graceful shutdown asks; then the manager's context ends, killing any
 // that remain.

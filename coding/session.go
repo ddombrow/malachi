@@ -402,7 +402,7 @@ func Open(opts Options) (*Session, error) {
 		}
 	})
 	s.life, s.lifeCancel = context.WithCancel(context.Background())
-	s.mcp.bind(s.sandboxPolicy, s.syncMCPTools, codeMode)
+	s.mcp.bind(s.sandboxPolicy, s.mcpChanged, codeMode)
 	if freshMCP {
 		s.mcp.startAll()
 	}
@@ -429,6 +429,53 @@ func (s *Session) buildPrompt(tools []*agent.Tool) string {
 		Append:       s.settings.AppendSystemPrompt,
 		MCPServers:   s.mcp.promptServers(),
 	})
+}
+
+// mcpChanged hears every change in the MCP servers: the tools offered
+// follow, and frontends are told.
+func (s *Session) mcpChanged() {
+	s.syncMCPTools()
+	s.emitMCP()
+}
+
+// emitMCP tells frontends the servers' state, when there are servers.
+func (s *Session) emitMCP() {
+	m := s.mcp
+	if m == nil || (len(m.servers) == 0 && m.loadErr == nil) {
+		return
+	}
+	s.emit(MCPChangedEvent{State: s.MCPState()})
+}
+
+// MCPState is the session's MCP servers as frontends show them.
+type MCPState struct {
+	// Config is mcp.json's path; LoadError why it could not be read.
+	Config    string
+	LoadError string
+	Servers   []MCPServerState
+}
+
+// MCPState reports the configured MCP servers.
+func (s *Session) MCPState() MCPState {
+	st := MCPState{Config: filepath.Join(s.home, MCPConfigFile)}
+	m := s.mcp
+	if m == nil {
+		return st
+	}
+	if m.loadErr != nil {
+		st.LoadError = m.loadErr.Error()
+	}
+	st.Servers = m.State()
+	return st
+}
+
+// RestartMCP restarts a server at the user's asking: now, whatever its
+// backoff, and under the current policy.
+func (s *Session) RestartMCP(ctx context.Context, name string) error {
+	if s.mcp == nil {
+		return errors.New("no MCP servers")
+	}
+	return s.mcp.Restart(ctx, name)
 }
 
 // syncMCPTools offers the model the tools of the MCP servers offered
@@ -837,7 +884,7 @@ func (s *Session) Reopen(resume string) (*Session, error) {
 	opts.mcp = s.mcp
 	next, err := Open(opts)
 	if err != nil {
-		s.mcp.bind(s.sandboxPolicy, s.syncMCPTools, s.CodeMode().Enabled)
+		s.mcp.bind(s.sandboxPolicy, s.mcpChanged, s.CodeMode().Enabled)
 		return nil, err
 	}
 	s.mcp = nil // handed over
@@ -882,6 +929,8 @@ func stateOf(p sandbox.Policy) SandboxState {
 // the next command; one already running keeps what it started with. It is
 // for the user: no tool calls it.
 func (s *Session) SetNetwork(on bool) error {
+	// Servers' staleness follows the policy; reported after sbMu is free.
+	defer s.emitMCP()
 	s.sbMu.Lock()
 	defer s.sbMu.Unlock()
 	if !s.sandbox.Enabled {
@@ -900,6 +949,7 @@ func (s *Session) SetNetwork(on bool) error {
 // existing directory for this session only. The grant is in-memory and takes
 // effect on the next tool call. Hidden paths still win over writable roots.
 func (s *Session) AddWritableRoot(path string) (string, error) {
+	defer s.emitMCP()
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", errors.New("usage: /allow-write <existing directory>")
@@ -944,6 +994,7 @@ func (s *Session) AddWritableRoot(path string) (string, error) {
 // directory inside the user's home for this session only, like
 // AddWritableRoot. Hidden paths stay unreadable.
 func (s *Session) AddReadableRoot(path string) (string, error) {
+	defer s.emitMCP()
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", errors.New("usage: /allow-read <existing directory>")

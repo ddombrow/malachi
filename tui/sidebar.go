@@ -12,8 +12,8 @@ import (
 )
 
 // The sidebar is a panel beside the transcript showing the session's
-// surroundings, one section after another: today the sandbox and project
-// trust, later MCP servers and Code Mode. Each section draws from session state cached in
+// surroundings, one section after another: the sandbox, project trust,
+// Code Mode and MCP servers. Each section draws from session state cached in
 // sidebarState and refreshed from the session's events; the UI keeps no
 // rules of its own.
 const (
@@ -39,6 +39,7 @@ const (
 type sidebarState struct {
 	sandbox coding.SandboxState
 	grants  coding.SandboxGrants
+	mcp     coding.MCPState
 }
 
 // sideRow is one row of the sidebar. A row with click set does something
@@ -84,7 +85,7 @@ func (m *model) toggleNetwork() tea.Cmd {
 
 // sidebarSections are the sidebar's sections, top to bottom.
 func (m *model) sidebarSections() [][]sideRow {
-	return [][]sideRow{m.sandboxSection(), m.trustSection(), m.codeModeSection()}
+	return [][]sideRow{m.sandboxSection(), m.trustSection(), m.codeModeSection(), m.mcpSection()}
 }
 
 // sidePair puts label on the left of a row and value on the right.

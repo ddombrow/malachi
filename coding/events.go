@@ -70,6 +70,14 @@ type SandboxChangedEvent struct {
 	State SandboxState `json:"-"`
 }
 
+// MCPChangedEvent reports that an MCP server changed: it started, stopped,
+// failed, restarted, changed its tools, or went stale with the policy. It
+// is a malachi addition; State is every server now, which RPC encodes as
+// get_state does.
+type MCPChangedEvent struct {
+	State MCPState `json:"-"`
+}
+
 func (e CompactionStartEvent) MarshalJSON() ([]byte, error) {
 	type a CompactionStartEvent
 	return withType("compaction_start", a(e))
