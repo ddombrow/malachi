@@ -23,7 +23,7 @@ func mcpStatus(st styles, srv coding.MCPServerState) string {
 	switch srv.Status {
 	case coding.MCPReady:
 		if srv.Stale {
-			return st.toolRun.Render("restarts on use")
+			return st.toolRun.Render("restart pending")
 		}
 		return st.toolOK.Render(plural(len(srv.Tools), "tool"))
 	case coding.MCPStarting:
@@ -133,6 +133,9 @@ func mcpDetails(r *renderer, srv coding.MCPServerState) string {
 	}
 	if srv.Error != "" {
 		lines = append(lines, "  "+st.toolErr.Render(srv.Error))
+	}
+	if srv.Stale {
+		lines = append(lines, "  "+st.toolRun.Render(srv.StaleReason+"; it restarts on its next call to pick that up"))
 	}
 	if srv.Server != "" {
 		line("server", srv.Server+" · protocol "+srv.Version)

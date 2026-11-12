@@ -152,8 +152,9 @@ type mcpServerWire struct {
 	Deferred bool `json:"deferred"`
 	Restarts int  `json:"restarts"`
 	// Stale servers restart on their next use: the sandbox changed since
-	// they started.
-	Stale bool `json:"stale"`
+	// they started, as staleReason says.
+	Stale       bool   `json:"stale"`
+	StaleReason string `json:"staleReason,omitempty"`
 }
 
 func mcpOf(st coding.MCPState) mcpWire {
@@ -169,7 +170,7 @@ func mcpOf(st coding.MCPState) mcpWire {
 			Name: srv.Name, Status: srv.Status, Error: srv.Error, Command: srv.Command, Args: orEmpty(srv.Args),
 			Server: srv.Server, Version: srv.Version, Tools: orEmpty(srv.Tools),
 			Readable: orEmpty(srv.Readable), Writable: orEmpty(srv.Writable),
-			Deferred: srv.Deferred, Restarts: srv.Restarts, Stale: srv.Stale,
+			Deferred: srv.Deferred, Restarts: srv.Restarts, Stale: srv.Stale, StaleReason: srv.StaleReason,
 		})
 	}
 	return w

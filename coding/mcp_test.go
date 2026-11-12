@@ -241,14 +241,14 @@ func TestMCPRestartsWhenThePolicyChanges(t *testing.T) {
 		t.Fatalf("restarted without a change: %s then %s", first, again)
 	}
 	pol.Network = true
-	if st := m.State()[0]; !st.Stale || st.Status != MCPReady {
+	if st := m.State()[0]; !st.Stale || st.Status != MCPReady || st.StaleReason != "the network was turned on after it started" {
 		t.Errorf("after the change: %+v", st)
 	}
 	second, _ := callText(t, m, "fake", "pid", nil)
 	if second == first {
 		t.Fatal("not restarted after the policy changed")
 	}
-	if st := m.State()[0]; st.Stale || st.Restarts != 1 {
+	if st := m.State()[0]; st.Stale || st.StaleReason != "" || st.Restarts != 1 {
 		t.Errorf("after the restart: %+v", st)
 	}
 }

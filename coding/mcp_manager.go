@@ -65,8 +65,32 @@ type MCPServerState struct {
 	// Restarts counts restarts for policy changes and crashes.
 	Restarts int
 	// Stale is set when the sandbox policy changed since it started: it
-	// restarts on its next use.
-	Stale bool
+	// restarts on its next use. StaleReason says what changed.
+	Stale       bool
+	StaleReason string
+}
+
+// staleReason says how the policy a server runs under differs from the
+// one it would get now.
+func staleReason(started, now sandbox.Policy) string {
+	switch {
+	case started.Enabled != now.Enabled:
+		return "the sandbox was turned " + onOff(now.Enabled) + " after it started"
+	case started.Network != now.Network:
+		return "the network was turned " + onOff(now.Network) + " after it started"
+	case !slices.Equal(started.Writable, now.Writable):
+		return "a writable directory was added after it started"
+	case !slices.Equal(started.Readable, now.Readable):
+		return "a readable directory was added after it started"
+	}
+	return "the sandbox changed after it started"
+}
+
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
 }
 
 // MCPManager runs the configured servers, each a long-running command under
@@ -434,7 +458,9 @@ func (srv *mcpServer) state(m *MCPManager) MCPServerState {
 	}
 	if srv.proc != nil {
 		st.Server, st.Version = srv.proc.Server().Name, srv.proc.Version()
-		st.Stale = !reflect.DeepEqual(srv.started, now)
+		if !reflect.DeepEqual(srv.started, now) {
+			st.Stale, st.StaleReason = true, staleReason(srv.started, now)
+		}
 	}
 	for _, t := range srv.tools {
 		st.Tools = append(st.Tools, t.Name)

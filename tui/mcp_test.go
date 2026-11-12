@@ -16,7 +16,7 @@ func mcpState() coding.MCPState {
 			Server: "mcp-time", Version: "2025-06-18", Command: "/opt/bin/mcp-server-time"},
 		{Name: "memory", Status: coding.MCPStarting, Writable: []string{"/data/mem"}},
 		{Name: "github", Status: coding.MCPFailed, Error: "missing GITHUB_TOKEN\nmore"},
-		{Name: "stale", Status: coding.MCPReady, Stale: true, Tools: []string{"x"}},
+		{Name: "stale", Status: coding.MCPReady, Stale: true, StaleReason: "the network was turned on after it started", Tools: []string{"x"}},
 		{Name: "fs", Status: coding.MCPFailed, Error: "mcp: server exited: exit status 1\nserver stderr:\nWarning: skipping\nError: no directories\n"},
 	}}
 }
@@ -29,7 +29,7 @@ func TestSidebarShowsMCPServers(t *testing.T) {
 	m.handleEvent(coding.MCPChangedEvent{State: mcpState()})
 	text := ansi.Strip(strings.Join(m.sidebarLines(60), "\n"))
 	for _, want := range []string{"2/5 ready", "Error: no directories", "time", "2 tools", "memory", "starting", "github", "failed",
-		"missing GITHUB_TOKEN", "restarts on use", "/mcp for details"} {
+		"missing GITHUB_TOKEN", "restart pending", "/mcp for details"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("sidebar lacks %q:\n%s", want, text)
 		}
@@ -47,6 +47,10 @@ func TestMCPDetails(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("details lack %q:\n%s", want, got)
 		}
+	}
+	got = ansi.Strip(mcpDetails(m.r, mcpState().Servers[3]))
+	if !strings.Contains(got, "restart pending") || !strings.Contains(got, "the network was turned on after it started; it restarts on its next call") {
+		t.Errorf("stale details:\n%s", got)
 	}
 	got = ansi.Strip(mcpDetails(m.r, mcpState().Servers[1]))
 	if !strings.Contains(got, "/data/mem") || !strings.Contains(got, "directly, as mcp__memory__<tool>") {
