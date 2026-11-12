@@ -152,12 +152,18 @@ func (o *outputSink) Write(p []byte) (int, error) {
 }
 
 func createSpill(dir string) (*os.File, error) {
+	return createSpillNamed(dir, "malachi-bash-*.log")
+}
+
+// createSpillNamed creates a spill file in dir (the temp directory if
+// empty) from pattern, as os.CreateTemp does.
+func createSpillNamed(dir, pattern string) (*os.File, error) {
 	if dir != "" {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, err
 		}
 	}
-	return os.CreateTemp(dir, "malachi-bash-*.log")
+	return os.CreateTemp(dir, pattern)
 }
 
 func (o *outputSink) writeSpill(p []byte) {

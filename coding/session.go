@@ -309,6 +309,9 @@ func Open(opts Options) (*Session, error) {
 	toolOpts.SpillDir = s.spillDir
 	toolOpts.Sandbox = s.sandboxPolicy
 	tools := CodingTools(cwd, toolOpts)
+	if opts.Settings.CodeModeEnabled() {
+		tools = append(tools, NewScriptTool(tools, toolOpts, s.diag))
+	}
 	s.trims = &trimLog{}
 	s.preparer = newCodingContextPreparer(s.trims)
 	s.runtime = provider

@@ -42,7 +42,7 @@ func run(t *testing.T, code string, batch Batch) Outcome {
 	if batch == nil {
 		batch = echo
 	}
-	out, err := engine(t).Run(context.Background(), code, Limits{}, batch)
+	out, err := engine(t).Run(context.Background(), Script{Code: code}, batch)
 	if err != nil {
 		t.Fatalf("run: %v (outcome %+v)", err, out)
 	}
@@ -213,7 +213,7 @@ func TestRunawayLoopIsStopped(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	_, err := engine(t).Run(ctx, `for (;;) {}`, Limits{}, echo)
+	_, err := engine(t).Run(ctx, Script{Code: `for (;;) {}`}, echo)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err %v", err)
 	}
@@ -234,14 +234,14 @@ func TestCancelDuringBatch(t *testing.T) {
 		<-ctx.Done()
 		return make([]Result, len(calls))
 	}
-	_, err := engine(t).Run(ctx, `await tools.slow(); for (;;) {}`, Limits{}, batch)
+	_, err := engine(t).Run(ctx, Script{Code: `await tools.slow(); for (;;) {}`}, batch)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err %v", err)
 	}
 }
 
 func TestMemoryLimit(t *testing.T) {
-	out, err := engine(t).Run(context.Background(), `const a = []; for (;;) a.push("x".repeat(1 << 16) + a.length);`, Limits{Memory: 32 << 20}, echo)
+	out, err := engine(t).Run(context.Background(), Script{Code: `const a = []; for (;;) a.push("x".repeat(1 << 16) + a.length);`, Limits: Limits{Memory: 32 << 20}}, echo)
 	if err != nil {
 		t.Fatalf("err %v", err)
 	}
@@ -251,7 +251,7 @@ func TestMemoryLimit(t *testing.T) {
 }
 
 func TestCallLimit(t *testing.T) {
-	out, err := engine(t).Run(context.Background(), `for (let i = 0; ; i++) await tools.read({i});`, Limits{Calls: 5}, echo)
+	out, err := engine(t).Run(context.Background(), Script{Code: `for (let i = 0; ; i++) await tools.read({i});`, Limits: Limits{Calls: 5}}, echo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestCallLimit(t *testing.T) {
 }
 
 func TestOutputLimit(t *testing.T) {
-	out, err := engine(t).Run(context.Background(), `for (let i = 0; i < 100; i++) print("0123456789");`, Limits{Output: 25}, echo)
+	out, err := engine(t).Run(context.Background(), Script{Code: `for (let i = 0; i < 100; i++) print("0123456789");`, Limits: Limits{Output: 25}}, echo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,11 +282,35 @@ func TestConcurrentScripts(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range 8 {
 		wg.Go(func() {
-			out, err := engine(t).Run(context.Background(), `const r = await tools.id({}); return r.text`, Limits{}, echo)
+			out, err := engine(t).Run(context.Background(), Script{Code: `const r = await tools.id({}); return r.text`}, echo)
 			if err != nil || out.Result != "id {}" {
 				t.Errorf("script %d: %v %+v", i, err, out)
 			}
 		})
 	}
 	wg.Wait()
+}
+
+func TestToolCatalog(t *testing.T) {
+	sc := Script{
+		Code: `return [ALL_TOOLS.length, describeTool("grep").parameters.type, searchTools("search contents").map(t => t.name),
+			describeTool("nope") === undefined, Object.isFrozen(ALL_TOOLS[0])]`,
+		Tools: []ToolInfo{
+			{Name: "read", Description: "Read file contents"},
+			{Name: "grep", Description: "Search file contents by regular expression", Parameters: map[string]any{"type": "object"}},
+			{Name: "glob", Description: "Find files by name pattern"},
+		},
+	}
+	out, err := engine(t).Run(context.Background(), sc, echo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []any
+	if err := json.Unmarshal([]byte(out.Result), &got); err != nil {
+		t.Fatalf("result %q error %q", out.Result, out.Error)
+	}
+	want := `[3,"object",["grep","read"],true,true]`
+	if b, _ := json.Marshal(got); string(b) != want {
+		t.Errorf("got %s, want %s", b, want)
+	}
 }

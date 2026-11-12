@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ddombrow/malachi/agent"
+	"github.com/ddombrow/malachi/codemode"
 	"github.com/ddombrow/malachi/sandbox"
 )
 
@@ -189,6 +190,31 @@ func (d *Diagnostics) LogSandboxDenied(tool, source, reason, target string) {
 		"reason": truncate(reason, 1000),
 		"target": truncate(target, 1000),
 	})
+}
+
+// LogScript records how a script ended: how many calls it made of which
+// tools, and whether it failed. It is the measure of whether Code Mode
+// pays its way.
+func (d *Diagnostics) LogScript(det codemode.Details) {
+	tools := map[string]int{}
+	errs := 0
+	for _, c := range det.Calls {
+		tools[c.Name]++
+		if c.Status == codemode.StatusError {
+			errs++
+		}
+	}
+	fields := map[string]any{
+		"calls":      len(det.Calls),
+		"callErrors": errs,
+		"batches":    det.Batches,
+		"tools":      tools,
+		"durationMs": det.DurationMs,
+	}
+	if det.Error != "" {
+		fields["error"] = truncate(det.Error, 1000)
+	}
+	d.record("script", fields)
 }
 
 // LogCompaction records a summary replacing part of the conversation. The

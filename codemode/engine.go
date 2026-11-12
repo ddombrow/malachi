@@ -46,6 +46,25 @@ type Result struct {
 	IsError bool   `json:"isError"`
 }
 
+// ToolInfo describes a tool a script may call, for ALL_TOOLS, searchTools
+// and describeTool.
+type ToolInfo struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+}
+
+// Script is one program to run.
+type Script struct {
+	// Code is the body of an async function: it can await tool calls and
+	// return a value.
+	Code string
+	// Tools is the catalog the script sees. Calls are not limited to it:
+	// Batch decides what a name means.
+	Tools  []ToolInfo
+	Limits Limits
+}
+
 // Batch runs calls a script made while it had nothing else to do, and
 // returns their results in the same order. Calls in one batch were made
 // together (say, under Promise.all) and may run concurrently.
@@ -145,12 +164,19 @@ func NewEngine(ctx context.Context, cacheDir string) (*Engine, error) {
 // Close releases the engine.
 func (e *Engine) Close(ctx context.Context) error { return e.rt.Close(ctx) }
 
-// Run runs code as the body of an async function: it can await tool calls
-// and return a value. Run returns an error only when the script could not be
+// Run runs a script. It returns an error only when the script could not be
 // run at all or was stopped by ctx; a script that throws ends with
 // Outcome.Error.
-func (e *Engine) Run(ctx context.Context, code string, lim Limits, batch Batch) (Outcome, error) {
-	lim = lim.withDefaults()
+func (e *Engine) Run(ctx context.Context, sc Script, batch Batch) (Outcome, error) {
+	lim := sc.Limits.withDefaults()
+	tools := sc.Tools
+	if tools == nil {
+		tools = []ToolInfo{}
+	}
+	catalog, err := json.Marshal(tools)
+	if err != nil {
+		return Outcome{}, fmt.Errorf("codemode: tool catalog: %w", err)
+	}
 	st := &runState{ctx: ctx, lim: lim, batch: batch}
 	cfg := wazero.NewModuleConfig().
 		WithName(""). // anonymous, so scripts can run side by side
@@ -169,11 +195,11 @@ func (e *Engine) Run(ctx context.Context, code string, lim Limits, batch Batch) 
 	defer mod.Close(context.WithoutCancel(ctx))
 
 	rctx := withRun(ctx, st)
-	pre, err := putString(rctx, mod, prelude)
+	pre, err := putString(rctx, mod, prelude+"("+string(catalog)+");")
 	if err != nil {
 		return Outcome{}, err
 	}
-	src, err := putString(rctx, mod, code)
+	src, err := putString(rctx, mod, sc.Code)
 	if err != nil {
 		return Outcome{}, err
 	}

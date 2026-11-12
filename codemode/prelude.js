@@ -3,7 +3,10 @@
 // and finish turns the script's return value into text. It sees two native
 // functions, __cm_print and __cm_batch, and removes them from the global
 // object so scripts reach the host only through what is defined here.
-(() => {
+//
+// The host appends the call: this function is applied to the catalog of
+// tools the script may call, [{name, description, parameters}].
+((catalog) => {
   const nativePrint = globalThis.__cm_print;
   const nativeBatch = globalThis.__cm_batch;
   delete globalThis.__cm_print;
@@ -28,6 +31,31 @@
       ownKeys: () => [],
     },
   );
+
+  // The catalog, for scripts that look tools up rather than know them.
+  const freeze = (v) => {
+    if (v && typeof v === "object") {
+      Object.values(v).forEach(freeze);
+      Object.freeze(v);
+    }
+    return v;
+  };
+  const allTools = freeze(catalog);
+  globalThis.ALL_TOOLS = allTools;
+  globalThis.describeTool = (name) => allTools.find((t) => t.name === name);
+  // searchTools(query) ranks tools by how many of the query's words appear
+  // in their name or description.
+  globalThis.searchTools = (query) => {
+    const words = String(query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+    return allTools
+      .map((t) => {
+        const hay = (t.name + " " + t.description).toLowerCase();
+        return { t, score: words.filter((w) => hay.includes(w)).length };
+      })
+      .filter(({ score }) => score > 0 || words.length === 0)
+      .sort((a, b) => b.score - a.score)
+      .map(({ t }) => ({ name: t.name, description: t.description }));
+  };
 
   const show = (v) => {
     if (typeof v === "string") return v;
@@ -62,4 +90,4 @@
       return value === undefined ? "" : show(value);
     },
   };
-})();
+})

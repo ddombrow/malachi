@@ -33,7 +33,8 @@ events, and sessions, and reads tau session files.
 cmd/malachi   CLI: interactive TUI or print mode (-p)
 tui/          full-screen Bubble Tea frontend
 rpc/          headless JSONL protocol (-mode rpc)
-coding/       tools (read, write, edit, bash), system prompt, config, sessions
+coding/       tools (read, write, edit, bash, script), system prompt, config, sessions
+codemode/     scripts that call tools: QuickJS-ng (WebAssembly) under wazero
 sandbox/      what commands and file tools may touch; Seatbelt and Landlock backends
 ai/           providers over raw net/http + SSE (openai-compatible today)
 agent/        portable brain: messages, events, loop, harness, session tree
@@ -223,6 +224,35 @@ Project instructions come from `AGENTS.md` (or `CLAUDE.md`) in `~/.malachi`
 and in every directory from `/` down to the working directory — but only
 where you have agreed to them. See [Project trust](#project-trust). Sessions
 are append-only JSONL under `~/.malachi/sessions/<project>/`.
+
+### Code Mode
+
+The `script` tool runs a short JavaScript program in which every other tool
+is a function, so the model can chain or fan out calls and get back only
+what the script prints or returns:
+
+```js
+const [mod, hits] = await Promise.all([
+  tools.read({ path: "go.mod" }),
+  tools.grep({ pattern: "TODO", output: "files" }),
+]);
+return hits.text.split("\n").filter(f => f.endsWith(".go")).join("\n");
+```
+
+A script can do nothing the model could not do one call at a time. It runs
+in QuickJS-ng compiled to WebAssembly, with no filesystem, network,
+environment or timers of its own, and each call it makes runs the real tool
+under the same sandbox, refusals included. Calls made together run
+together where the tool allows it (reads and searches; not edits or
+commands). A script stops at `bashTimeoutSeconds` or its own `timeout`, at
+200 calls, or at a 256 MiB heap. Its output is cut like a command's, with
+the rest in a spill file, and the calls it made are recorded in the tool
+result's details.
+
+The interpreter is compiled on the first script and cached under your user
+cache directory (`~/Library/Caches/malachi/codemode` on macOS,
+`~/.cache/malachi/codemode` on Linux). Set `"codeMode": false` to leave the
+tool out.
 
 ### Project trust
 

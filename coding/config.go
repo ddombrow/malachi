@@ -62,11 +62,16 @@ type Settings struct {
 	Icons               string   `json:"icons,omitempty"` // TUI icon set: "emoji" (default) or "dots"
 	// BashTimeoutSeconds bounds a command the model gives no timeout for:
 	// 0 means the default (600), -1 means no limit.
-	BashTimeoutSeconds int                       `json:"bashTimeoutSeconds,omitempty"`
-	ProjectTrust       string                    `json:"projectTrust,omitempty"` // "ask" (default), "always", or "never"
-	Sandbox            SandboxSettings           `json:"sandbox,omitzero"`
-	Providers          map[string]ProviderConfig `json:"providers,omitempty"`
+	BashTimeoutSeconds int    `json:"bashTimeoutSeconds,omitempty"`
+	ProjectTrust       string `json:"projectTrust,omitempty"` // "ask" (default), "always", or "never"
+	// CodeMode offers the script tool; nil means on.
+	CodeMode  *bool                     `json:"codeMode,omitempty"`
+	Sandbox   SandboxSettings           `json:"sandbox,omitzero"`
+	Providers map[string]ProviderConfig `json:"providers,omitempty"`
 }
+
+// CodeModeEnabled reports whether the script tool is offered.
+func (s *Settings) CodeModeEnabled() bool { return s.CodeMode == nil || *s.CodeMode }
 
 // TrustPolicyOrDefault is the configured policy, defaulting to asking.
 func (s *Settings) TrustPolicyOrDefault() TrustPolicy {
