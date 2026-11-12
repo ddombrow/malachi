@@ -183,8 +183,8 @@ func TestIconsPerItemKind(t *testing.T) {
 		tool string
 		icon string
 	}{
-		{tool: "glob", icon: "🗂️"},
-		{tool: "edit", icon: "✏️"},
+		{tool: "glob", icon: "📂"},
+		{tool: "edit", icon: "🔨"},
 	} {
 		out := ansi.Strip(m.r.toolResult(tc.tool, map[string]any{}, agent.TextResult(""), false))
 		if want := tc.icon + iconGapFor(toolIcon(tc.tool)) + tc.tool; !strings.Contains(out, want) {

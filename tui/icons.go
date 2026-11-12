@@ -30,11 +30,12 @@ const (
 	iconInterrupted = "interrupted"
 )
 
-// Icon sets, chosen with "icons" in settings.json. Icons measure two cells
-// (or two ASCII cells for ">_"), so gutters line up. The pencil carries a
-// U+FE0F variation selector, which lipgloss measures as two cells to match; a
-// terminal that ignores the selector renders it one cell wide, leaving that
-// row one column proud of the rest.
+// Icon sets, chosen with "icons" in settings.json. Emoji icons are single
+// code points that are wide on their own (East Asian Width W), so every
+// terminal draws them two cells, as lipgloss measures them. An emoji that
+// needs a U+FE0F variation selector to be wide (🗂️, ✏️, ✂️) is not: lipgloss
+// counts two cells, a terminal ignoring the selector draws one, and the row
+// comes out a column short, pulling the sidebar's border out of line.
 var iconSets = map[string]map[string]string{
 	"emoji": {
 		iconUser:        "❯",
@@ -42,8 +43,8 @@ var iconSets = map[string]map[string]string{
 		iconThinking:    "💭",
 		iconRead:        "👀",
 		iconGrep:        "🔍",
-		iconGlob:        "🗂️",
-		iconEdit:        "✏️",
+		iconGlob:        "📂",
+		iconEdit:        "🔨",
 		iconWrite:       "📝",
 		iconBash:        ">_",
 		iconFetch:       "🌐",
@@ -53,7 +54,7 @@ var iconSets = map[string]map[string]string{
 		iconCancelled:   "🛑",
 		iconTimeout:     "⌛",
 		iconCompacted:   "📦",
-		iconTrimmed:     "✂️",
+		iconTrimmed:     "🧹",
 		iconInterrupted: "🛑",
 	},
 	// "dots" mimics Claude Code: one glyph, colored by status.
@@ -100,16 +101,9 @@ func toolIcon(name string) string {
 // (which matters for single-glyph sets; emoji keep their own colors).
 const iconGap = "  "
 
-func iconGapFor(kind string) string {
-	switch kind {
-	case iconGlob, iconEdit:
-		// These emoji render optically narrower than the others; compensate
-		// so their labels have the same visible separation.
-		return iconGap + " "
-	default:
-		return iconGap
-	}
-}
+// iconGapFor is the gap after an icon: the same for every kind, now that
+// every icon is as wide as it measures.
+func iconGapFor(string) string { return iconGap }
 
 func (r *renderer) gutter(kind string, style lipgloss.Style, body string) string {
 	glyph := r.icons[kind]

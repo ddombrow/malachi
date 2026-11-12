@@ -75,7 +75,7 @@ bin/malachi -mode rpc            # headless: JSON commands in, events out (see R
 
 The TUI is full-screen: a scrollable transcript above a pinned input and status
 bar. Each item gets an icon (❯ you, 💬 reply, 💭 thinking, 👀 read, 🔍 grep,
-🗂️ glob, ✏️ edit, 📝 write, >_ bash, ❌ error); set `"icons": "dots"` in
+📂 glob, 🔨 edit, 📝 write, >_ bash, ❌ error); set `"icons": "dots"` in
 settings for a Claude Code-style ⏺.
 The view follows new output unless you scroll up (mouse wheel, PgUp/PgDn,
 Shift+↑/↓, Ctrl+Home/End). Drag over the transcript to select text; releasing
