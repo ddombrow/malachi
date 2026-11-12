@@ -18,6 +18,16 @@ func TextResult(text string) ToolResult {
 // Text returns the concatenated text blocks.
 func (r ToolResult) Text() string { return textOf(r.Content) }
 
+// ResultError is a failure that still has a full result to report: details
+// and all, not just a message. A tool returns it to fail without losing what
+// it gathered; the loop records Result as an error result.
+type ResultError struct{ Result ToolResult }
+
+func (e *ResultError) Error() string { return e.Result.Text() }
+
+// FailWith returns an error that reports r as the call's error result.
+func FailWith(r ToolResult) error { return &ResultError{Result: r} }
+
 // ToolExecutor runs one tool call. A returned error becomes an error tool
 // result whose text is err.Error(). onUpdate may be called with partial
 // results while the tool runs; it is never nil.

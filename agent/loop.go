@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -401,7 +402,7 @@ func runPrepared(ctx context.Context, prep preparedTool, call *ToolCall, emit fu
 		onUpdate := func(partial ToolResult) {
 			emit(&ToolExecutionUpdateEvent{ToolCallID: call.ID, ToolName: call.Name, Args: call.Arguments, PartialResult: partial})
 		}
-		result, isError := runTool(ctx, prep.tool, call, onUpdate)
+		result, isError := ExecuteTool(ctx, prep.tool, call, onUpdate)
 		return toolOutcome{result: result, isError: isError}
 	}
 }
@@ -427,9 +428,11 @@ func finishTool(ctx context.Context, cfg LoopConfig, call *ToolCall, out toolOut
 	return msg
 }
 
-// runTool executes a tool, converting errors and panics into error results:
-// tools are an isolation boundary.
-func runTool(ctx context.Context, tool *Tool, call *ToolCall, onUpdate func(ToolResult)) (result ToolResult, isError bool) {
+// ExecuteTool runs one call of tool, converting errors and panics into error
+// results: tools are an isolation boundary. A failure carrying its own
+// result (ResultError) keeps it, even when ctx was cancelled; any other
+// error under a cancelled ctx reads "Operation aborted".
+func ExecuteTool(ctx context.Context, tool *Tool, call *ToolCall, onUpdate func(ToolResult)) (result ToolResult, isError bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			result, isError = TextResult(fmt.Sprintf("tool %s panicked: %v", tool.Name, r)), true
@@ -437,7 +440,11 @@ func runTool(ctx context.Context, tool *Tool, call *ToolCall, onUpdate func(Tool
 	}()
 	res, err := tool.Execute(ctx, call.ID, call.Arguments, onUpdate)
 	if err != nil {
-		if ctx.Err() != nil {
+		var re *ResultError
+		switch {
+		case errors.As(err, &re):
+			return re.Result, true
+		case ctx.Err() != nil:
 			return TextResult("Operation aborted"), true
 		}
 		return TextResult(err.Error()), true

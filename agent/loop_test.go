@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -127,6 +128,21 @@ func TestLoopToolErrorAndPanicBecomeResults(t *testing.T) {
 	}
 	if !b.IsError || b.Text() != "tool panic panicked: boom" {
 		t.Fatalf("panic result: %+v", b)
+	}
+}
+
+// A tool can fail with a full result, details included.
+func TestLoopToolFailsWithResult(t *testing.T) {
+	tool := &agent.Tool{Name: "script", Execute: func(context.Context, string, map[string]any, func(agent.ToolResult)) (agent.ToolResult, error) {
+		r := agent.TextResult("Error: boom")
+		r.Details = map[string]any{"calls": 2}
+		return agent.ToolResult{}, fmt.Errorf("wrapped: %w", agent.FailWith(r))
+	}}
+	p := fake.New(fake.ToolCalls("", fake.Call{ID: "a", Name: "script"}), fake.Text("ok"))
+	_, out := run(t, p, agent.LoopConfig{Tools: []*agent.Tool{tool}}, "x")
+	res := out[2].(*agent.ToolResultMessage)
+	if !res.IsError || res.Text() != "Error: boom" || res.Details.(map[string]any)["calls"] != 2 {
+		t.Fatalf("got %+v", res)
 	}
 }
 
