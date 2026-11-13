@@ -507,6 +507,17 @@ What it does not stop:
   their contents. While the home directory is private, the directories that
   hold it (`/`, `/home`) cannot be listed either: Landlock would extend the
   listing to everything under them.
+- **Signalling your other programs.** A command can stop or kill any process
+  of yours, malachi included. Keeping signals inside the sandbox would also
+  keep a command from stopping a server an earlier command left running.
+- **On Linux, changing a file's metadata.** Landlock covers a file's contents,
+  not its mode, timestamps or extended attributes, so a command can `chmod`
+  or `touch` any file you own, hidden ones and those outside the writable
+  directories included. It could make a private key world-readable or
+  unusable, though it cannot read or rewrite it.
+- **On Linux, other programs' command lines.** `/proc/<pid>/cmdline` is
+  readable, so a secret passed as an argument to something else you are
+  running can be seen. Their environments cannot.
 - **On Linux**, 32-bit programs get no sockets, whatever the
   network setting: on x86-64 they run otherwise, and on other architectures
   they are killed. The socket filter can only read the native system-call
