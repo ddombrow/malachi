@@ -67,6 +67,13 @@ func TestProfile(t *testing.T) {
 		!strings.Contains(prof, `(allow user-preference-write (preference-domain "com.apple.java.util.prefs"))`) {
 		t.Errorf("preference writes are not limited to Java's domain:\n%s", prof)
 	}
+	// No terminal device opens unless the user asks for pseudo-terminals.
+	withPTY := p
+	withPTY.PTY = true
+	if strings.Contains(prof, "pseudo-tty") || !strings.Contains(prof, `(deny file-read-data file-write-data file-ioctl (literal "/dev/ptmx") (regex #"^/dev/tty")`) ||
+		!strings.Contains(Profile(withPTY), "(allow pseudo-tty)") || strings.Contains(Profile(withPTY), "(deny file-read-data file-write-data file-ioctl") {
+		t.Errorf("terminal devices do not follow the pty setting:\n%s", prof)
+	}
 	// A command registers no service except the one a Chromium browser
 	// names after its own pid.
 	if strings.Count(prof, "mach-register") != 1 ||
@@ -139,7 +146,7 @@ func TestProfilePrivate(t *testing.T) {
 	if strings.Contains(Profile(bare), "(allow file-read-data file-read-xattr)") {
 		t.Errorf("unfiltered read allow:\n%s", Profile(bare))
 	}
-	if strings.Contains(Profile(Policy{Enabled: true}), "file-read-data") {
+	if strings.Contains(Profile(Policy{Enabled: true}), "file-read-data file-read-xattr") {
 		t.Error("read rules without private directories")
 	}
 }

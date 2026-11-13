@@ -111,7 +111,6 @@ func Profile(p Policy) string {
 (allow system-debug mach-priv-task-port (target same-sandbox))
 (allow sysctl-read)
 (allow ipc-posix* ipc-sysv*)
-(allow pseudo-tty)
 (allow user-preference-read)
 (allow user-preference-write (preference-domain "com.apple.java.util.prefs"))
 (allow system-socket)
@@ -142,13 +141,23 @@ func Profile(p Policy) string {
 	for _, w := range p.Writable {
 		b.WriteString("\n  (subpath " + sbplString(w) + ")")
 	}
-	// Devices commands write to as a matter of course. /dev/ptmx hands out
-	// pseudo-terminals (script, tmux, expect), which connect a command only
-	// to its own children.
+	// Devices commands write to as a matter of course.
 	b.WriteString(`
   (literal "/dev/null") (literal "/dev/zero") (literal "/dev/stdout") (literal "/dev/stderr")
-  (literal "/dev/dtracehelper") (literal "/dev/ptmx") (regex #"^/dev/tty") (regex #"^/dev/fd/"))
+  (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))
 `)
+	// Terminals. A pseudo-terminal a command makes for its children
+	// (script, tmux, expect) is a /dev/ttysNNN like the user's other
+	// terminal windows, and Seatbelt cannot tell them apart (found by
+	// testing): what opens one opens the others, where a command could
+	// read what is typed and write what is shown. So no terminal device
+	// opens unless the user asks for pseudo-terminals. Reads are named
+	// because the allow above covers them.
+	if p.PTY {
+		b.WriteString("(allow pseudo-tty)\n" + `(allow file-write* (literal "/dev/ptmx") (regex #"^/dev/tty"))` + "\n")
+	} else {
+		b.WriteString(`(deny file-read-data file-write-data file-ioctl (literal "/dev/ptmx") (regex #"^/dev/tty") (regex #"^/dev/pty"))` + "\n")
+	}
 	if len(p.Private) > 0 {
 		b.WriteString("(deny file-read-data file-read-xattr")
 		for _, d := range p.Private {
@@ -178,6 +187,13 @@ func Profile(p Policy) string {
 	b.WriteString("(allow network*)\n")
 	if !p.Network {
 		b.WriteString("(deny network* (remote ip))\n")
+		// The rule above is matched by the far end, so it does not cover
+		// listening: a command could bind every interface and be connected
+		// to from another machine. Seatbelt cannot tell a loopback address
+		// from any other when binding (found by testing), so with the
+		// network off a command listens on no IP address at all, as on
+		// Linux. Unix sockets are not matched by (local ip).
+		b.WriteString("(deny network-bind network-inbound (local ip))\n")
 		if p.UnixSockets {
 			// Unix sockets are otherwise unrestricted; the resolver must
 			// still be closed (see below).

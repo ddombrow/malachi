@@ -49,7 +49,10 @@ func carve(root string, hidden []string) (grant, split []string) {
 }
 
 // partition splits paths into directories and everything else, dropping
-// paths that do not exist.
+// paths that do not exist and those that lead to a pipe or socket. Landlock
+// takes no rule for those and needs none: it does not confine them. They
+// turn up when /dev is split, where /dev/stderr is whatever the command's
+// error stream is.
 func partition(paths []string) (dirs, files []string) {
 	for _, p := range paths {
 		st, err := os.Stat(p)
@@ -57,6 +60,7 @@ func partition(paths []string) (dirs, files []string) {
 		case err != nil:
 		case st.IsDir():
 			dirs = append(dirs, p)
+		case st.Mode()&(os.ModeNamedPipe|os.ModeSocket) != 0:
 		default:
 			files = append(files, p)
 		}

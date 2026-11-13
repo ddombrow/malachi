@@ -38,6 +38,12 @@ type Policy struct {
 	// surface, and nothing else: no window, no display. macOS only; see
 	// gpuDrivers.
 	GPU bool
+	// PTY lets commands create pseudo-terminals (script, tmux, expect, a
+	// debugger's inferior). macOS cannot tell a terminal a command made
+	// from the user's other terminal windows, so this also lets commands
+	// read what is typed in those and write to them. Off, no terminal
+	// device opens. macOS only.
+	PTY bool
 	// Services are system services commands may reach beyond the built-in
 	// list, by exact name, for a tool that needs one. A service acts
 	// outside the sandbox, so each is the user's decision. macOS only.
@@ -63,6 +69,8 @@ type Config struct {
 	UnixSockets bool
 	// GPU lets commands use the graphics processor; see Policy.
 	GPU bool
+	// PTY lets commands create pseudo-terminals; see Policy.
+	PTY bool
 	// Services are extra system services commands may reach; see Policy.
 	Services []string
 	// ReadAnywhere lifts the read confinement: the user's home becomes
@@ -98,7 +106,7 @@ func privateHomeContainers(userHome, cwd string) []string {
 // Build turns c into a Policy with the default writable roots and hidden
 // paths for this user and platform.
 func Build(c Config) Policy {
-	p := Policy{Enabled: !c.Disabled, Network: !c.NoNet, UnixSockets: c.UnixSockets, GPU: c.GPU}
+	p := Policy{Enabled: !c.Disabled, Network: !c.NoNet, UnixSockets: c.UnixSockets, GPU: c.GPU, PTY: c.PTY}
 	userHome, _ := os.UserHomeDir()
 	inHome := func(rel string) string {
 		if userHome == "" {
@@ -161,6 +169,11 @@ func Build(c Config) Policy {
 		return slices.ContainsFunc(unhidden, func(u string) bool { return within(h, u) })
 	})
 	hidden := slices.Concat(canonicalAll([]string{c.Home}), defaults, canonicalAll(c.Hidden))
+	if runtime.GOOS == "linux" {
+		// The user's other terminals: a command could read what is typed
+		// in them. (On macOS the profile closes them; see Policy.PTY.)
+		hidden = append(hidden, "/dev/pts")
+	}
 
 	for _, s := range c.Services {
 		if s = strings.TrimSpace(s); s != "" && !slices.Contains(p.Services, s) {

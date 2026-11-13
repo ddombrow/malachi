@@ -226,6 +226,10 @@ type SandboxSettings struct {
 	// GPU lets commands use the graphics processor off screen (macOS; it
 	// changes nothing on Linux).
 	GPU bool `json:"gpu,omitempty"`
+	// PTY lets commands create pseudo-terminals (script, tmux). On macOS
+	// that also opens your other terminal windows to them, so it is off by
+	// default. It changes nothing on Linux.
+	PTY bool `json:"pty,omitempty"`
 	// Services are system services commands may reach beyond the built-in
 	// ones, by exact name (macOS; nothing on Linux). Each acts outside
 	// the sandbox for a command, so list only what a tool you use needs.
@@ -262,6 +266,7 @@ func (s *Settings) SandboxConfig(cwd, home string) sandbox.Config {
 		NoNet:        sb.Network == nil || !*sb.Network, // off unless asked for
 		UnixSockets:  sb.UnixSockets,
 		GPU:          sb.GPU,
+		PTY:          sb.PTY,
 		Services:     sb.Services,
 		Cwd:          cwd,
 		Home:         home,

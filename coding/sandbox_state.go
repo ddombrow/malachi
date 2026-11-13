@@ -64,6 +64,9 @@ func (st SandboxState) Describe() string {
 	if st.GPU {
 		b.WriteString("  gpu: usable off screen (macOS)\n")
 	}
+	if st.PTY {
+		b.WriteString("  pseudo-terminals: on; commands can also read and write your other terminal windows (macOS)\n")
+	}
 	if len(st.Services) > 0 {
 		b.WriteString("  extra system services (macOS): " + strings.Join(st.Services, ", ") + "\n")
 	}

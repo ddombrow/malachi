@@ -403,9 +403,10 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   `~/.pypirc`, cargo and Terraform credentials, Maven's `settings.xml` and
   Gradle's `gradle.properties` (repository passwords and signing keys; both
   tools build without them), and the macOS keychains.
-- **The network** is off by default: commands cannot open IP connections or
-  resolve names (which would carry hostnames out as DNS queries), and on
-  Linux cannot create sockets of any family but Unix and netlink. Downloads
+- **The network** is off by default: commands cannot open IP connections,
+  listen for them (a dev server on localhost included), or resolve names
+  (which would carry hostnames out as DNS queries), and on Linux cannot
+  create sockets of any family but Unix and netlink. Downloads
   (`go mod download`, `npm install`, `git fetch`) fail until you turn it on
   with `/network on`, `-network on`, or `"network": true`. This is about
   commands only: malachi itself still sends the conversation, tool output
@@ -424,6 +425,15 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   because those drivers are a large part of the kernel to expose. Apple
   silicon is tested; the drivers of Intel Macs are listed but untested. The
   setting changes nothing on Linux.
+- **Terminals are closed.** A command runs without a controlling terminal
+  and cannot open a terminal device, so it cannot read what you type in
+  your other terminal windows or write to them. On macOS that also means no
+  pseudo-terminals: `script`, tmux and `expect` fail in a command. A
+  terminal a command makes for itself is the same kind of device as your
+  other windows, and macOS cannot tell them apart, so `"pty": true` opens
+  both: pseudo-terminals work, and a command can read and write every
+  terminal you have open. The setting changes nothing on Linux, where
+  commands get no pseudo-terminals.
 - **API keys** that malachi loaded from its `.env`, or that a provider's
   `apiKeyEnv` names, are removed from commands' environment. This holds even
   with the sandbox off. On Linux, malachi also marks its own process
@@ -439,6 +449,7 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
     "network": false,
     "unixSockets": false,
     "gpu": false,
+    "pty": false,
     "services": [],
     "writableRoots": ["~/scratch"],
     "readableRoots": ["~/src/tau"],
@@ -566,9 +577,11 @@ What it does not stop:
   or `touch` any file you own, hidden ones and those outside the writable
   directories included. It could make a private key world-readable or
   unusable, though it cannot read or rewrite it.
-- **On Linux, other programs' command lines.** `/proc/<pid>/cmdline` is
-  readable, so a secret passed as an argument to something else you are
-  running can be seen. Their environments cannot.
+- **Other programs' command lines.** A command can read the arguments of
+  your other processes (on Linux through `/proc/<pid>/cmdline`, on macOS by
+  asking the kernel, though `ps` itself is refused there), so a secret passed
+  as an argument to something else you are running can be seen. Their
+  environments cannot.
 - **On Linux**, 32-bit programs get no sockets, whatever the
   network setting: on x86-64 they run otherwise, and on other architectures
   they are killed. The socket filter can only read the native system-call

@@ -74,6 +74,7 @@ func TestSandboxedCommands(t *testing.T) {
 		{"read hidden via link", "cat env-link", false},
 		{"read elsewhere", "cat /etc/hosts >/dev/null", true},
 		{"dev null", "echo x > /dev/null", true},
+		{"dev stderr", "echo x > /dev/stderr && echo y > /dev/stdout && echo z > /dev/fd/2", true},
 	} {
 		out, ok := sh(t, p, project, c.script)
 		if ok != c.ok {
@@ -147,6 +148,40 @@ func TestSandboxedNetwork(t *testing.T) {
 	p.Network = false
 	if out, ok := sh(t, p, project, connect); ok {
 		t.Fatalf("network off: connect succeeded: %s", out)
+	}
+}
+
+// Network off also means a command serves nothing: it cannot listen on an
+// IP address, where another machine could connect to it and be handed
+// whatever the command can read. Unix sockets are not the network and keep
+// working.
+func TestNetworkOffRefusesListening(t *testing.T) {
+	requireBackend(t)
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, project, _, _, _ := fixture(t)
+	p.Readable = append(p.Readable, filepath.Dir(self))
+	specs := []string{"tcp4 0.0.0.0:0", "tcp4 127.0.0.1:0", "udp4 0.0.0.0:0", "udp4 127.0.0.1:0", "tcp6 [::]:0", "tcp6 [::1]:0", "udp6 [::]:0"}
+	for _, network := range []bool{true, false} {
+		p.Network = network
+		for _, spec := range specs {
+			out, ok := sh(t, p, project, listenEnv+"='"+spec+"' "+self)
+			if strings.Contains(spec, "6") && network && !ok {
+				continue // no IPv6 on this machine
+			}
+			if ok != network {
+				t.Errorf("network=%v: listen %s succeeded=%v: %s", network, spec, ok, out)
+			}
+		}
+	}
+	// Linux cannot tell one unix socket from another, so it has them only
+	// with the setting on.
+	p.Network, p.UnixSockets = false, true
+	// A relative name: the fixture's path is longer than a socket name may be.
+	if out, ok := sh(t, p, project, listenEnv+"='unix s' "+self); !ok {
+		t.Errorf("network off: a unix socket in the project was refused: %s", out)
 	}
 }
 
@@ -608,6 +643,7 @@ func TestSandboxedPseudoTerminal(t *testing.T) {
 		t.Skip("no python3")
 	}
 	p, project, _, _, _ := fixture(t)
+	p.PTY = true
 	script := py + ` -c "
 import os, pty
 pid, fd = pty.fork()
@@ -626,5 +662,27 @@ print(out.decode().strip())
 "`
 	if out, ok := sh(t, p, project, script); !ok || !strings.Contains(out, "on-a-terminal") {
 		t.Errorf("no pseudo-terminal in the sandbox: %s", out)
+	}
+	// Off, which is the default, a command gets none.
+	p.PTY = false
+	if out, ok := sh(t, p, project, script); ok && strings.Contains(out, "on-a-terminal") {
+		t.Errorf("a pseudo-terminal without the setting: %s", out)
+	}
+}
+
+// A terminal window other than malachi's is closed to a command: it can
+// neither read what is typed there nor write what is shown.
+func TestOtherTerminalsAreClosed(t *testing.T) {
+	requireBackend(t)
+	master, name := openTestPTY(t)
+	if _, err := master.Write([]byte("typed-elsewhere\n")); err != nil {
+		t.Fatal(err)
+	}
+	p, project, _, _, _ := fixture(t)
+	if out, ok := sh(t, p, project, "head -n 1 < "+name); ok || strings.Contains(out, "typed-elsewhere") {
+		t.Errorf("read another terminal's input: %v %s", ok, out)
+	}
+	if out, ok := sh(t, p, project, "echo drawn > "+name+" && echo WROTE"); ok || strings.Contains(out, "WROTE") {
+		t.Errorf("wrote to another terminal: %v %s", ok, out)
 	}
 }
