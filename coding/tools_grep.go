@@ -1,7 +1,7 @@
 package coding
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -167,7 +167,18 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any, structured b
 		// count, as the output mode lists them.
 		results []map[string]any
 	)
+	// Any match starts with the pattern's literal prefix, when it has one, so
+	// a file without it is skipped without running the regexp over its lines.
+	var literal []byte
+	if prefix, _ := re.LiteralPrefix(); prefix != "" {
+		literal = []byte(prefix)
+	}
+	// One buffer serves every file: a search reads thousands of them.
+	var buf []byte
 	scan := func(rel string, d fs.DirEntry) error {
+		if hitLimit {
+			return errStopWalk // the last result's trailing context ended with its file
+		}
 		if info, err := d.Info(); err == nil && info.Size() > MaxGrepFileBytes {
 			skippedBig++
 			return nil
@@ -176,8 +187,16 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any, structured b
 		if err != nil {
 			return nil // gone, unreadable, or swapped for a link to a hidden file
 		}
-		defer f.Close()
-		if isBinary(f) {
+		data, err := readInto(&buf, f, MaxGrepFileBytes+1)
+		f.Close()
+		if err != nil {
+			return nil
+		}
+		if len(data) > MaxGrepFileBytes { // grew since it was listed
+			skippedBig++
+			return nil
+		}
+		if bytes.IndexByte(data[:min(len(data), binarySniffBytes)], 0) >= 0 {
 			skippedBin++
 			return nil
 		}
@@ -196,24 +215,27 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any, structured b
 			lines = append(lines, fmt.Sprintf("%s%c%d%c %s", rel, sep, n, sep, clipLine(text, MaxGrepLineWidth)))
 			printed = n
 		}
-		sc := bufio.NewScanner(f)
-		sc.Buffer(make([]byte, 0, 64*1024), MaxGrepFileBytes)
-		for n := 1; sc.Scan(); n++ {
-			text := sc.Text()
-			if !re.MatchString(text) {
+		if len(literal) > 0 && !bytes.Contains(data, literal) {
+			data = nil
+		}
+		for n := 1; len(data) > 0; n++ {
+			var line []byte
+			line, data = nextLine(data)
+			if !re.Match(line) {
 				switch {
 				case after > 0:
-					emit(n, '-', text)
+					emit(n, '-', string(line))
 					after--
 				case hitLimit:
 					return errStopWalk
 				case contextLines > 0:
-					if before = append(before, held{n, text}); len(before) > contextLines {
+					if before = append(before, held{n, string(line)}); len(before) > contextLines {
 						before = before[1:]
 					}
 				}
 				continue
 			}
+			text := string(line)
 			if hitLimit {
 				// A match inside the trailing context of the last result
 				// would be a result past the limit; stop before it.
@@ -410,19 +432,44 @@ func searchEach(dir, single, filter string, pol sandbox.Policy, fn func(rel stri
 	})
 }
 
-// isBinary reports whether f looks like binary data, by sniffing a prefix for
-// a NUL byte the way file(1) does. The file is rewound, so the caller can
-// scan it from the start.
-func isBinary(f *os.File) bool {
-	buf := make([]byte, binarySniffBytes)
-	n, err := f.Read(buf)
-	if _, serr := f.Seek(0, io.SeekStart); serr != nil {
-		return false
+// readInto reads up to limit bytes of f into *buf, growing it as needed, and
+// returns what was read. The result is only valid until the next call.
+func readInto(buf *[]byte, f *os.File, limit int) ([]byte, error) {
+	b := (*buf)[:0]
+	if cap(b) == 0 {
+		b = make([]byte, 0, 64*1024)
 	}
-	if n == 0 || (err != nil && err != io.EOF) {
-		return false
+	for len(b) < limit {
+		if len(b) == cap(b) {
+			b = append(b, 0)[:len(b)]
+		}
+		n, err := f.Read(b[len(b):min(cap(b), limit)])
+		b = b[:len(b)+n]
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			*buf = b
+			return nil, err
+		}
 	}
-	return strings.IndexByte(string(buf[:n]), 0) >= 0
+	*buf = b
+	return b, nil
+}
+
+// nextLine splits the first line off data, without its line ending (\n or
+// \r\n), the way bufio.ScanLines does.
+func nextLine(data []byte) (line, rest []byte) {
+	i := bytes.IndexByte(data, '\n')
+	if i < 0 {
+		line, rest = data, nil
+	} else {
+		line, rest = data[:i], data[i+1:]
+	}
+	if n := len(line); n > 0 && line[n-1] == '\r' {
+		line = line[:n-1]
+	}
+	return line, rest
 }
 
 // clipLine trims a matched line to width, marking the cut so the model knows

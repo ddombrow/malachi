@@ -466,3 +466,43 @@ func TestGrepOutputModes(t *testing.T) {
 		t.Fatal("accepted an unknown output mode")
 	}
 }
+
+// Lines are split the way a line scanner splits them, whatever their endings.
+func TestGrepLineEndings(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "crlf.txt", "one\r\nneedle two\r\n\r\nneedle four")
+	r, err := run(t, NewGrepTool(dir, ToolOptions{}), map[string]any{"pattern": "needle \\w+$"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := r.Text(); !strings.HasPrefix(out, "crlf.txt:2: needle two\ncrlf.txt:4: needle four\n\n") {
+		t.Fatalf("output:\n%q", out)
+	}
+}
+
+// Files without the pattern's literal prefix are skipped unread by the
+// regexp, but they are still files that were searched, and a search that hit
+// its limit still stops at them.
+func TestGrepCountsFilesItRulesOutEarly(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "a.go", "needle1\nafter\n")
+	write(t, dir, "b.go", "nothing here\n")
+	write(t, dir, "c.go", "needle2\n")
+	tool := NewGrepTool(dir, ToolOptions{})
+
+	r, err := run(t, tool, map[string]any{"pattern": "needle\\d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := r.Text(); !strings.Contains(out, "2 matches in 2 of 3 searched files") {
+		t.Fatalf("output:\n%s", out)
+	}
+
+	r, err = run(t, tool, map[string]any{"pattern": "needle\\d", "context": float64(3), "limit": float64(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := r.Text(); !strings.HasPrefix(out, "a.go:1: needle1\na.go-2- after\n\n") || strings.Contains(out, "c.go") {
+		t.Fatalf("output:\n%s", out)
+	}
+}
