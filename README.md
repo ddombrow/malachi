@@ -485,6 +485,10 @@ How it works:
 - **Failing closed.** Where the sandbox cannot run (an older kernel, Windows,
   `sandbox-exec` gone), malachi says so at startup and commands fail rather
   than run unconfined.
+- **Saying what it cannot do.** On Linux before 6.2, Landlock cannot stop a
+  command truncating a file, so a command can empty any file you can write,
+  though not read a hidden one or write contents outside the writable
+  directories. The sandbox still runs there, and malachi says so at startup.
 
 What it does not stop:
 

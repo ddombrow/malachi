@@ -31,6 +31,10 @@ var availability = sync.OnceValue(func() error {
 // Available reports why commands cannot be sandboxed here, or nil.
 func Available() error { return availability() }
 
+// Weakness says what the sandbox cannot enforce on this system though it
+// runs, or "" when it enforces everything it promises.
+func Weakness() string { return "" }
+
 func command(ctx context.Context, p Policy, name string, args ...string) (*exec.Cmd, error) {
 	return exec.CommandContext(ctx, sandboxExec, append([]string{"-p", Profile(p), name}, args...)...), nil
 }

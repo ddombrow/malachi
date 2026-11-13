@@ -40,3 +40,13 @@ func TestProtectProcessHidesEnvironmentFromChild(t *testing.T) {
 		t.Fatalf("protected process environment remained visible to a child (exit %d)", code)
 	}
 }
+
+// Landlock before ABI 3 runs but cannot stop truncation; that is said, and
+// nothing is said where there is nothing to say.
+func TestWeaknessNamesOldLandlock(t *testing.T) {
+	for abi, weak := range map[int]bool{0: false, 1: true, 2: true, 3: false, 6: false} {
+		if got := abiWeakness(abi); (got != "") != weak {
+			t.Errorf("abiWeakness(%d) = %q, want a weakness: %v", abi, got, weak)
+		}
+	}
+}

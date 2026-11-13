@@ -909,6 +909,9 @@ type SandboxState struct {
 	// the sandbox on; they then fail rather than run unconfined. The file
 	// tools enforce the policy either way.
 	Unavailable error
+	// Weakness is what the sandbox cannot enforce on this system even
+	// though it runs (an older kernel), or "".
+	Weakness string
 }
 
 // Sandbox reports the sandbox in force.
@@ -919,7 +922,9 @@ func (s *Session) Sandbox() SandboxState {
 func stateOf(p sandbox.Policy) SandboxState {
 	st := SandboxState{Policy: p}
 	if st.Enabled {
-		st.Unavailable = sandbox.Available()
+		if st.Unavailable = sandbox.Available(); st.Unavailable == nil {
+			st.Weakness = sandbox.Weakness()
+		}
 	}
 	return st
 }

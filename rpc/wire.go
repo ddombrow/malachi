@@ -193,11 +193,13 @@ func codeModeOf(c coding.CodeModeState) codeModeWire {
 
 // sandboxWire is a malachi extension to get_state: what sandboxed commands
 // and file tools may touch. available is false, with a reason, when the
-// sandbox is on but cannot confine commands here (they then fail).
+// sandbox is on but cannot confine commands here (they then fail). weakness
+// is what it cannot enforce here though it runs (an older kernel).
 type sandboxWire struct {
 	Enabled       bool     `json:"enabled"`
 	Available     bool     `json:"available"`
 	Reason        string   `json:"reason,omitempty"`
+	Weakness      string   `json:"weakness,omitempty"`
 	Network       bool     `json:"network"`
 	UnixSockets   bool     `json:"unixSockets"`
 	WritableRoots []string `json:"writableRoots"`
@@ -215,6 +217,9 @@ func sandboxOf(st coding.SandboxState) sandboxWire {
 	}
 	if st.Unavailable != nil {
 		w.Reason = st.Unavailable.Error()
+	}
+	if st.Enabled {
+		w.Weakness = st.Weakness
 	}
 	if !st.Enabled {
 		// Off, nothing is confined: the lists would only mislead.

@@ -10,13 +10,15 @@ import (
 )
 
 // Notice is what a frontend says at startup about a sandbox that is not
-// protecting anything, or "" when it is.
+// protecting anything, or not everything it promises, or "" when it is.
 func (st SandboxState) Notice() string {
 	switch {
 	case !st.Enabled:
 		return "Sandbox off: commands and file tools can reach everything you can."
 	case st.Unavailable != nil:
 		return fmt.Sprintf("Sandbox unavailable: %v. Commands will fail rather than run unconfined; run with -sandbox off to allow them anyway.", st.Unavailable)
+	case st.Weakness != "":
+		return fmt.Sprintf("Sandbox limited: %s.", st.Weakness)
 	}
 	return ""
 }
@@ -46,6 +48,9 @@ func (st SandboxState) Describe() string {
 		b.WriteString(st.Notice() + "\n")
 	default:
 		b.WriteString("Sandbox on: commands run confined, and the file tools follow the same rules.\n")
+		if st.Weakness != "" {
+			b.WriteString(st.Notice() + "\n")
+		}
 	}
 	network := "on"
 	if !st.Network {

@@ -37,6 +37,23 @@ func landlockABI() int {
 // Available reports why commands cannot be sandboxed here, or nil.
 func Available() error { return availability() }
 
+// truncateABI is the Landlock ABI (Linux 6.2) from which truncating a file
+// counts as writing it.
+const truncateABI = 3
+
+// Weakness says what the sandbox cannot enforce on this system though it
+// runs, or "" when it enforces everything it promises.
+func Weakness() string { return abiWeakness(landlockABI()) }
+
+func abiWeakness(abi int) string {
+	if abi < 1 || abi >= truncateABI {
+		return ""
+	}
+	return fmt.Sprintf("this kernel's Landlock (ABI %d) cannot stop a command truncating a file, so commands can empty any file you can write, "+
+		"hidden ones and those outside the writable directories included; they still cannot read hidden files or write contents elsewhere. Linux 6.2 or later closes this",
+		abi)
+}
+
 func command(ctx context.Context, p Policy, name string, args ...string) (*exec.Cmd, error) {
 	raw, err := json.Marshal(spec{Policy: p, Name: name, Args: args})
 	if err != nil {

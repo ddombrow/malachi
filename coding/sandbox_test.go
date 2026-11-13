@@ -372,3 +372,18 @@ func TestSandboxDisplayOmitsMissingRoots(t *testing.T) {
 		t.Fatalf("describe lacks the existing %s:\n%s", cargo, st.Describe())
 	}
 }
+
+// A sandbox that runs but cannot enforce everything says so at startup and
+// in /sandbox; one that is off or unavailable says that instead.
+func TestSandboxNoticeNamesAWeakness(t *testing.T) {
+	st := SandboxState{Policy: sandbox.Policy{Enabled: true}, Weakness: "cannot stop truncation"}
+	if got := st.Notice(); !strings.Contains(got, "Sandbox limited: cannot stop truncation") {
+		t.Fatalf("Notice() = %q", got)
+	}
+	if got := st.Describe(); !strings.Contains(got, "Sandbox on") || !strings.Contains(got, "cannot stop truncation") {
+		t.Fatalf("Describe() = %q", got)
+	}
+	if got := (SandboxState{Policy: sandbox.Policy{Enabled: true}}).Notice(); got != "" {
+		t.Fatalf("a sandbox in full force should say nothing, got %q", got)
+	}
+}
