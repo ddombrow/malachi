@@ -69,8 +69,8 @@ type Config struct {
 	// readable outside the readable roots too, hidden paths aside.
 	ReadAnywhere bool
 	// Writable, Readable and Hidden extend the defaults. Unhidden removes
-	// default hidden paths, never malachi's home or an entry of Hidden:
-	// defaults: a hidden path equal to or under one of these is dropped.
+	// default hidden paths, never malachi's home or an entry of Hidden: a
+	// default equal to or under one of these is dropped.
 	Writable []string
 	Readable []string
 	Hidden   []string
@@ -83,6 +83,10 @@ type Config struct {
 func privateHomeContainers(userHome, cwd string) []string {
 	var out []string
 	for _, root := range []string{"/Users", "/home"} {
+		// Canonical, as the paths compared with it are: /home is a link on
+		// some systems (to /var/home, for one), and the container would
+		// otherwise never be found to hold the home directory inside it.
+		root = Canonical(root)
 		if info, err := os.Stat(root); err == nil && info.IsDir() &&
 			(within(Canonical(userHome), root) || within(Canonical(cwd), root)) {
 			out = append(out, root)
