@@ -479,9 +479,9 @@ How it works:
 - **macOS** runs commands under `sandbox-exec` with a generated profile.
   Apple deprecated the tool but offers no replacement, and other coding
   agents rely on it too.
-- **Linux** uses Landlock (kernel 5.13 or later), plus seccomp when the
-  network is off. malachi applies it through itself, with nothing else to
-  install.
+- **Linux** uses Landlock (kernel 5.13 or later) for files and a seccomp
+  filter for sockets, on x86-64, arm64, riscv64 and loong64. malachi applies
+  it through itself, with nothing else to install.
 - **Failing closed.** Where the sandbox cannot run (an older kernel, Windows,
   `sandbox-exec` gone), malachi says so at startup and commands fail rather
   than run unconfined.
@@ -503,6 +503,10 @@ What it does not stop:
   their contents. While the home directory is private, the directories that
   hold it (`/`, `/home`) cannot be listed either: Landlock would extend the
   listing to everything under them.
+- **On Linux**, 32-bit programs get no sockets, whatever the
+  network setting: on x86-64 they run otherwise, and on other architectures
+  they are killed. The socket filter can only read the native system-call
+  table, so it refuses what it cannot check.
 - **On Linux**, a writable directory that itself contains a hidden path (say,
   malachi run in your home directory) cannot gain new entries at its top
   level.

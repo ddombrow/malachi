@@ -21,7 +21,8 @@ var availability = sync.OnceValue(func() error {
 	if v := landlockABI(); v < 1 {
 		return errors.New("the kernel has no Landlock support (needs Linux 5.13 or later with Landlock enabled)")
 	}
-	return nil
+	_, err := nativeArch()
+	return err
 })
 
 // landlockABI returns the kernel's Landlock ABI version, or 0 without it.

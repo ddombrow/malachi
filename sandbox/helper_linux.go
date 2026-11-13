@@ -7,10 +7,8 @@ import (
 	"os/exec"
 	"syscall"
 
-	seccomp "github.com/elastic/go-seccomp-bpf"
 	"github.com/landlock-lsm/go-landlock/landlock"
 	ll "github.com/landlock-lsm/go-landlock/landlock/syscall"
-	"golang.org/x/sys/unix"
 )
 
 // devices commands write to as a matter of course.
@@ -70,55 +68,4 @@ func restrictFS(p Policy) error {
 	// Best effort over the ABIs this kernel lacks, never over Landlock
 	// itself: runHelper has already required ABI 1 or later.
 	return landlock.V5.BestEffort().RestrictPaths(rules...)
-}
-
-// denySockets installs a seccomp filter making socket(2) fail with EPERM
-// for what p does not allow.
-//
-// With the network off, every family is denied except netlink (kernel-local:
-// listing interfaces, which many tools do at startup, needs it) and, if
-// allowed, Unix: a default-deny list, so families such as Bluetooth, CAN or
-// VSOCK cannot carry data out either. io_uring, which can create sockets
-// without socket(2), is denied too.
-//
-// Unix sockets are denied unless allowed: Landlock cannot restrict
-// connecting to one by path before ABI 9, which few kernels have.
-// socketpair(2) still works.
-func denySockets(p Policy) error {
-	var socketRules []seccomp.NameWithConditions
-	if !p.Network {
-		allowed := []uint64{syscall.AF_NETLINK}
-		if p.UnixSockets {
-			allowed = append(allowed, syscall.AF_UNIX)
-		}
-		var notAllowed seccomp.ArgumentConditions // all must hold: ANDed
-		for _, family := range allowed {
-			notAllowed = append(notAllowed, seccomp.Condition{Argument: 0, Operation: seccomp.NotEqual, Value: family})
-		}
-		socketRules = append(socketRules, seccomp.NameWithConditions{Name: "socket", Conditions: notAllowed})
-	} else if !p.UnixSockets {
-		socketRules = append(socketRules, seccomp.NameWithConditions{
-			Name: "socket", Conditions: seccomp.ArgumentConditions{{Argument: 0, Operation: seccomp.Equal, Value: syscall.AF_UNIX}},
-		})
-	}
-	// NETLINK_USERSOCK is userspace-to-userspace IPC. Keep the general
-	// AF_NETLINK allowance for kernel route queries without leaving that side
-	// channel open. Put both rules in one group: conditions for the same syscall
-	// are ORed by the seccomp compiler.
-	socketRules = append(socketRules, seccomp.NameWithConditions{
-		Name: "socket",
-		Conditions: seccomp.ArgumentConditions{
-			{Argument: 0, Operation: seccomp.Equal, Value: syscall.AF_NETLINK},
-			{Argument: 2, Operation: seccomp.Equal, Value: unix.NETLINK_USERSOCK},
-		},
-	})
-	groups := []seccomp.SyscallGroup{{Action: seccomp.ActionErrno, NamesWithCondtions: socketRules}}
-	if !p.Network {
-		groups = append(groups, seccomp.SyscallGroup{Action: seccomp.ActionErrno, Names: []string{"io_uring_setup"}})
-	}
-	return seccomp.LoadFilter(seccomp.Filter{
-		NoNewPrivs: true,
-		Flag:       seccomp.FilterFlagTSync,
-		Policy:     seccomp.Policy{DefaultAction: seccomp.ActionAllow, Syscalls: groups},
-	})
 }
