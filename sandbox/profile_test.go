@@ -13,7 +13,7 @@ func TestProfile(t *testing.T) {
 		"(deny process-info* (target others))",
 		"(deny file-write*)",
 		`(subpath "/w")`,
-		`(deny file-read* file-write*` + "\n" + `  (subpath "/h \"q\" \\b"))`,
+		`(deny file-read* file-read-data file-read-xattr file-write*` + "\n" + `  (subpath "/h \"q\" \\b"))`,
 		"(deny network* (remote ip))",
 	} {
 		if !strings.Contains(prof, want) {
@@ -63,7 +63,7 @@ func TestProfilePrivate(t *testing.T) {
 	prof := Profile(p)
 	deny := strings.Index(prof, "(deny file-read-data file-read-xattr\n  (subpath \"/home/u\"))")
 	allow := strings.Index(prof, "(allow file-read-data file-read-xattr")
-	hidden := strings.Index(prof, "(deny file-read* file-write*")
+	hidden := strings.Index(prof, "(deny file-read* file-read-data file-read-xattr file-write*")
 	if deny < 0 || allow < 0 || hidden < 0 {
 		t.Fatalf("profile lacks a read rule:\n%s", prof)
 	}

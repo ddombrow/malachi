@@ -43,7 +43,10 @@ func Profile(p Policy) string {
 		}
 	}
 	if len(p.Hidden) > 0 {
-		b.WriteString("(deny file-read* file-write*")
+		// The two operations are named again because an allow that names an
+		// operation beats a later deny that only covers it by wildcard: with
+		// file-read* alone, a hidden path inside a readable root stays readable.
+		b.WriteString("(deny file-read* file-read-data file-read-xattr file-write*")
 		for _, h := range p.Hidden {
 			b.WriteString("\n  (subpath " + sbplString(h) + ")")
 		}

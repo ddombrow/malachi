@@ -342,4 +342,13 @@ func TestSandboxedPrivateReads(t *testing.T) {
 	if out, ok := sh(t, p, project, "cat "+filepath.Join(other, "notes.txt")); !ok || !strings.Contains(out, "private-words") {
 		t.Errorf("read root added: %v %s", ok, out)
 	}
+
+	// A hidden path stays hidden inside a root that is otherwise readable:
+	// the project itself, and a read root.
+	p.Hidden = append(p.Hidden, filepath.Join(project, "main.go"), filepath.Join(other, "notes.txt"))
+	for _, script := range []string{"cat main.go", "cat " + filepath.Join(other, "notes.txt"), "echo x >> main.go"} {
+		if out, ok := sh(t, p, project, script); ok {
+			t.Errorf("%s: a hidden path inside a readable root was reachable: %s", script, out)
+		}
+	}
 }
