@@ -306,6 +306,7 @@ func (m *MCPManager) start(ctx context.Context, srv *mcpServer, pol sandbox.Poli
 		return nil, nil, err
 	}
 	cmd.Dir, cmd.Env = m.cwd, env
+	newSession(cmd) // no controlling terminal: see newSession
 	sctx, cancel := context.WithTimeout(ctx, mcpStartTimeout)
 	defer cancel()
 	proc, err := mcp.Start(sctx, cmd, mcp.Options{

@@ -601,3 +601,28 @@ func TestEditReplaceAll(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+// A command runs in a session of its own, so it has no controlling
+// terminal: it cannot write over malachi's interface through /dev/tty, or
+// type into it.
+func TestBashHasNoControllingTerminal(t *testing.T) {
+	tool := NewBashTool(t.TempDir(), ToolOptions{})
+	// Run from a terminal, this is the terminal the test would write to.
+	r, err := run(t, tool, map[string]any{"command": "(: > /dev/tty) 2>/dev/null && echo has-a-terminal; true", "description": "Opening the terminal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(r.Text(), "has-a-terminal") {
+		t.Fatalf("the command could open /dev/tty:\n%s", r.Text())
+	}
+	if runtime.GOOS != "linux" {
+		return // ps names the session differently elsewhere
+	}
+	r, err = run(t, tool, map[string]any{"command": `test "$(ps -o sid= -p $$ | tr -d ' ')" = "$$" && echo leads-its-session`, "description": "Checking the session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.Text(), "leads-its-session") {
+		t.Fatalf("the command is not in a session of its own:\n%s", r.Text())
+	}
+}
