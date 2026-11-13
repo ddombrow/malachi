@@ -21,8 +21,6 @@ events, and sessions, and reads tau session files.
 > - Everything a tool returns is sent to your model provider, network on or
 >   off, and with the network on whatever a command can read it can send
 >   anywhere.
-> - On macOS a command can still ask system services to act for it, such as
->   opening a URL in your browser.
 >
 > Use it on work you can recover (a version-controlled checkout, committed
 > first), and use a container or VM for repositories you do not trust, whose
@@ -402,7 +400,9 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   sessions, settings) or credential stores: `~/.ssh`, `~/.gnupg`, `~/.aws`,
   `~/.azure`, `~/.kube`, `~/.docker/config.json`, `~/.config/gh`,
   `~/.config/gcloud`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`,
-  `~/.pypirc`, cargo and Terraform credentials, and the macOS keychains.
+  `~/.pypirc`, cargo and Terraform credentials, Maven's `settings.xml` and
+  Gradle's `gradle.properties` (repository passwords and signing keys; both
+  tools build without them), and the macOS keychains.
 - **The network** is off by default: commands cannot open IP connections or
   resolve names (which would carry hostnames out as DNS queries), and on
   Linux cannot create sockets of any family but Unix and netlink. Downloads
@@ -417,6 +417,13 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   resolution and logging still work. On Linux, commands cannot create Unix
   sockets at all. `"unixSockets": true` lifts this, along with that
   protection.
+- **Devices are out of reach on macOS**, the GPU included, so a command
+  that renders or computes on it finds no device. `"gpu": true` opens the
+  graphics drivers by name, for rendering and compute off screen, and
+  nothing else: a command still cannot open a window. It is off by default
+  because those drivers are a large part of the kernel to expose. Apple
+  silicon is tested; the drivers of Intel Macs are listed but untested. The
+  setting changes nothing on Linux.
 - **API keys** that malachi loaded from its `.env`, or that a provider's
   `apiKeyEnv` names, are removed from commands' environment. This holds even
   with the sandbox off. On Linux, malachi also marks its own process
@@ -431,17 +438,22 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
     "enabled": true,
     "network": false,
     "unixSockets": false,
+    "gpu": false,
+    "services": [],
     "writableRoots": ["~/scratch"],
     "readableRoots": ["~/src/tau"],
     "readAnywhere": false,
-    "hiddenPaths": ["~/.config/my-token"]
+    "hiddenPaths": ["~/.config/my-token"],
+    "unhiddenPaths": ["~/.m2/settings.xml"]
   }
 }
 ```
 
-`writableRoots`, `readableRoots` and `hiddenPaths` add to the defaults, and
-`readAnywhere` lets the model read your whole home directory, hidden paths
-aside. Settings are read only
+`writableRoots`, `readableRoots` and `hiddenPaths` add to the defaults.
+`unhiddenPaths` takes paths off the default hidden list, for a build that
+needs one, such as Maven's `settings.xml` for a private repository; it cannot
+unhide malachi's home or anything in `hiddenPaths`. `readAnywhere` lets the
+model read your whole home directory, hidden paths aside. Settings are read only
 from `~/.malachi/settings.json`, which the sandbox hides, so a project cannot
 widen its own sandbox. `-sandbox off` turns the sandbox off for one run, and
 `-sandbox on` turns it on over a setting. `/network on` and `/network off`
@@ -478,7 +490,50 @@ How it works:
 
 - **macOS** runs commands under `sandbox-exec` with a generated profile.
   Apple deprecated the tool but offers no replacement, and other coding
-  agents rely on it too.
+  agents rely on it too. The profile denies by default: a command can run
+  and signal processes, read system information, use files and sockets as
+  the policy allows, and reach a short list of system services (user
+  lookups, logging, preferences, file-change events, and with the network on
+  name resolution and certificate trust). It cannot ask another program to
+  act for it, so `open`, the clipboard (`pbcopy`, `pbpaste`), AppleScript
+  and the keychain do not work in a command, and neither do devices (IOKit),
+  apart from the GPU if you allow it. A debugger works on what the command
+  started and cannot attach to your other programs. A tool that needs a
+  service that is not on the list fails, often with an error that does not
+  say why; the system log names what was refused, and `"services"` in the
+  sandbox settings allows more by exact name:
+
+  ```sh
+  log show --last 1m --predicate 'process == "launchd" AND eventMessage CONTAINS "Sandbox restriction"'
+  ```
+
+  Sandboxes do not nest on macOS, so a tool that starts its own fails
+  inside malachi's. `swift build` is one: run it as
+  `swift build --disable-sandbox`, which skips SwiftPM's sandbox while
+  malachi's still applies (for a package built by `xcodebuild`, the option is
+  `-IDEPackageSupportDisableManifestSandbox=YES`). malachi tells the model so
+  when it sees the error. `xcodebuild test` does not work by default: it
+  goes through the test-manager daemon, which UI tests also use to drive
+  other apps. `swift test` covers a package; for an app project, list the
+  daemon yourself:
+  `"services": ["com.apple.testmanagerd", "com.apple.testmanagerd.control"]`.
+  Headless browsers: Chromium's headless shell runs, started without its
+  own sandbox since sandboxes do not nest. Playwright's headless Chromium
+  does both by default. Puppeteer needs to be told:
+  `puppeteer.launch({ headless: "shell", args: ["--no-sandbox"] })`, and
+  its browsers made readable with `"readableRoots": ["~/.cache/puppeteer"]`. The
+  full Chrome binary in headless mode registers as an app first: under
+  Playwright (`channel: "chrome"`) it runs with
+  `"services": ["com.apple.coreservices.launchservicesd"]`, and under
+  Puppeteer, where it is the default, it does not run. A browser with a
+  window does not run, nor does headless WebKit, and Firefox does not start
+  inside any macOS sandbox.
+  A service you list acts with your full access, not the command's, so a
+  list is only as tight as its loosest entry. The iOS simulator is the plain
+  case and stays closed: a program started in a simulator
+  (`simctl spawn`) runs outside the sandbox and can read hidden paths and
+  write anywhere you can. Listing `com.apple.CoreSimulator.CoreSimulatorService`
+  switches the sandbox off for any command that cares to use it.
 - **Linux** uses Landlock (kernel 5.13 or later) for files and a seccomp
   filter for sockets, on x86-64, arm64, riscv64 and loong64. malachi applies
   it through itself, with nothing else to install.
@@ -499,10 +554,6 @@ What it does not stop:
   home directory, and the readable directories inside it. With the network
   on it can be sent somewhere. Whatever a tool returns is sent to the model
   provider, network on or off.
-- **On macOS, other programs acting for a command.** The profile allows by
-  default and confines files, IP and Unix sockets, but a command can still
-  ask system services for things, such as opening a URL in your browser
-  (`open`), which then runs outside the sandbox.
 - **On Linux**, the names inside a hidden directory can be listed, though not
   their contents. While the home directory is private, the directories that
   hold it (`/`, `/home`) cannot be listed either: Landlock would extend the
