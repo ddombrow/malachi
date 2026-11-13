@@ -202,6 +202,8 @@ type sandboxWire struct {
 	Weakness      string   `json:"weakness,omitempty"`
 	Network       bool     `json:"network"`
 	UnixSockets   bool     `json:"unixSockets"`
+	GPU           bool     `json:"gpu"`
+	Services      []string `json:"services"`
 	WritableRoots []string `json:"writableRoots"`
 	// PrivatePaths (the user's home) are readable only under ReadableRoots
 	// or WritableRoots; empty, everything not hidden is readable.
@@ -212,7 +214,7 @@ type sandboxWire struct {
 
 func sandboxOf(st coding.SandboxState) sandboxWire {
 	w := sandboxWire{
-		Enabled: st.Enabled, Available: st.Unavailable == nil, Network: st.Network, UnixSockets: st.UnixSockets,
+		Enabled: st.Enabled, Available: st.Unavailable == nil, Network: st.Network, UnixSockets: st.UnixSockets, GPU: st.GPU, Services: st.Services,
 		WritableRoots: st.Writable, PrivatePaths: st.Private, ReadableRoots: st.Readable, HiddenPaths: st.Hidden,
 	}
 	if st.Unavailable != nil {
@@ -223,10 +225,10 @@ func sandboxOf(st coding.SandboxState) sandboxWire {
 	}
 	if !st.Enabled {
 		// Off, nothing is confined: the lists would only mislead.
-		w.Network, w.UnixSockets = true, true
-		w.WritableRoots, w.PrivatePaths, w.ReadableRoots, w.HiddenPaths = nil, nil, nil, nil
+		w.Network, w.UnixSockets, w.GPU = true, true, true
+		w.WritableRoots, w.PrivatePaths, w.ReadableRoots, w.HiddenPaths, w.Services = nil, nil, nil, nil, nil
 	}
-	for _, list := range []*[]string{&w.WritableRoots, &w.PrivatePaths, &w.ReadableRoots, &w.HiddenPaths} {
+	for _, list := range []*[]string{&w.WritableRoots, &w.PrivatePaths, &w.ReadableRoots, &w.HiddenPaths, &w.Services} {
 		if *list == nil {
 			*list = []string{}
 		}

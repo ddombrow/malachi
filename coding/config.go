@@ -220,12 +220,23 @@ func LoadSettings(home string) (*Settings, error) {
 // are read only from malachi's home, which the sandbox hides, so a project
 // cannot widen its own sandbox.
 type SandboxSettings struct {
-	Enabled       *bool    `json:"enabled,omitempty"` // default true
-	Network       *bool    `json:"network,omitempty"` // default false
-	UnixSockets   bool     `json:"unixSockets,omitempty"`
+	Enabled     *bool `json:"enabled,omitempty"` // default true
+	Network     *bool `json:"network,omitempty"` // default false
+	UnixSockets bool  `json:"unixSockets,omitempty"`
+	// GPU lets commands use the graphics processor off screen (macOS; it
+	// changes nothing on Linux).
+	GPU bool `json:"gpu,omitempty"`
+	// Services are system services commands may reach beyond the built-in
+	// ones, by exact name (macOS; nothing on Linux). Each acts outside
+	// the sandbox for a command, so list only what a tool you use needs.
+	Services      []string `json:"services,omitempty"`
 	WritableRoots []string `json:"writableRoots,omitempty"`
 	ReadableRoots []string `json:"readableRoots,omitempty"`
 	HiddenPaths   []string `json:"hiddenPaths,omitempty"`
+	// UnhiddenPaths make default hidden paths readable again, for a build
+	// that needs one (Maven's settings.xml for a private repository). They
+	// cannot unhide malachi's home or an entry of HiddenPaths.
+	UnhiddenPaths []string `json:"unhiddenPaths,omitempty"`
 	// ReadAnywhere lets commands and file tools read your whole home
 	// directory, hidden paths aside, instead of only the project and the
 	// readable roots.
@@ -250,11 +261,14 @@ func (s *Settings) SandboxConfig(cwd, home string) sandbox.Config {
 		Disabled:     sb.Enabled != nil && !*sb.Enabled,
 		NoNet:        sb.Network == nil || !*sb.Network, // off unless asked for
 		UnixSockets:  sb.UnixSockets,
+		GPU:          sb.GPU,
+		Services:     sb.Services,
 		Cwd:          cwd,
 		Home:         home,
 		Writable:     expand(sb.WritableRoots),
 		Readable:     expand(sb.ReadableRoots),
 		Hidden:       expand(sb.HiddenPaths),
+		Unhidden:     expand(sb.UnhiddenPaths),
 		ReadAnywhere: sb.ReadAnywhere,
 	}
 }

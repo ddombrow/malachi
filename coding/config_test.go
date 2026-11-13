@@ -80,7 +80,7 @@ func TestContextWindowFallsBackWhenUnset(t *testing.T) {
 
 func TestSandboxSettings(t *testing.T) {
 	var s Settings
-	if err := json.Unmarshal([]byte(`{"sandbox":{"network":false,"unixSockets":true,"writableRoots":["~/scratch","rel"],"hiddenPaths":["/etc/secret"]}}`), &s); err != nil {
+	if err := json.Unmarshal([]byte(`{"sandbox":{"network":false,"unixSockets":true,"writableRoots":["~/scratch","rel"],"hiddenPaths":["/etc/secret"],"unhiddenPaths":["~/.m2/settings.xml"],"gpu":true,"services":["com.apple.testmanagerd"]}}`), &s); err != nil {
 		t.Fatal(err)
 	}
 	cwd, home := t.TempDir(), t.TempDir()
@@ -94,6 +94,9 @@ func TestSandboxSettings(t *testing.T) {
 	}
 	if !slices.Equal(c.Hidden, []string{"/etc/secret"}) {
 		t.Fatalf("hidden %v", c.Hidden)
+	}
+	if !slices.Equal(c.Unhidden, []string{filepath.Join(userHome, ".m2", "settings.xml")}) || !c.GPU || !slices.Equal(c.Services, []string{"com.apple.testmanagerd"}) {
+		t.Fatalf("unhidden %v gpu %v", c.Unhidden, c.GPU)
 	}
 	if err := json.Unmarshal([]byte(`{"sandbox":{"readableRoots":["~/src/tau"],"readAnywhere":true}}`), &s); err != nil {
 		t.Fatal(err)

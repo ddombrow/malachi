@@ -60,7 +60,14 @@ func (st SandboxState) Describe() string {
 	if st.UnixSockets {
 		sockets = "any (local daemons such as Docker are reachable)"
 	}
-	fmt.Fprintf(&b, "  network: %s\n  unix sockets: %s\n  writable:\n", network, sockets)
+	fmt.Fprintf(&b, "  network: %s\n  unix sockets: %s\n", network, sockets)
+	if st.GPU {
+		b.WriteString("  gpu: usable off screen (macOS)\n")
+	}
+	if len(st.Services) > 0 {
+		b.WriteString("  extra system services (macOS): " + strings.Join(st.Services, ", ") + "\n")
+	}
+	b.WriteString("  writable:\n")
 	for _, w := range existing(st.Writable) {
 		b.WriteString("    " + w + "\n")
 	}
