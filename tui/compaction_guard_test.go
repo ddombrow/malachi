@@ -69,12 +69,23 @@ func compactingModel(t *testing.T, release <-chan struct{}, after ...fake.Script
 	}()
 	// Cleanups run last first, so this waits for the compaction (the test
 	// releases it on return) before the temp directories it writes to are
-	// removed.
+	// removed. A prompt held through the compaction starts a run as it
+	// ends, and that run logs to the same directories, so it is waited for
+	// too: removing them under it failed with "directory not empty".
 	t.Cleanup(func() {
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
 			t.Error("the compaction never finished")
+			return
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for st := s.State(); st.Running || st.Compacting; st = s.State() {
+			if time.Now().After(deadline) {
+				t.Error("the held prompt's run never finished")
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
 		}
 	})
 	waitUntil(t, "the compaction to start", func() bool { return s.State().Compacting })
