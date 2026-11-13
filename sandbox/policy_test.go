@@ -211,10 +211,19 @@ func privateFixture(t *testing.T, c func(userHome string) Config) (p Policy, use
 	return Build(cfg), Canonical(userHome), Canonical(project)
 }
 
+func TestPrivateHomeContainers(t *testing.T) {
+	// The helper only includes known containers when the current home or cwd
+	// is within them; arbitrary temporary directories are not home containers.
+	root := t.TempDir()
+	if got := privateHomeContainers(filepath.Join(root, "home", "current"), filepath.Join(root, "home", "current")); len(got) != 0 {
+		t.Fatalf("unexpected non-system containers: %v", got)
+	}
+}
+
 func TestPrivateHome(t *testing.T) {
 	p, userHome, project := privateFixture(t, nil)
-	if !slices.Equal(p.Private, []string{userHome}) {
-		t.Fatalf("private %v, want the user's home", p.Private)
+	if !slices.Contains(p.Private, userHome) {
+		t.Fatalf("private %v lacks the user's home", p.Private)
 	}
 	outside := filepath.Join(filepath.Dir(userHome), "outside", "x")
 	for _, c := range []struct {
@@ -269,9 +278,10 @@ func TestReadRootsExtendTheDefaults(t *testing.T) {
 
 func TestReadAnywhere(t *testing.T) {
 	p, userHome, _ := privateFixture(t, func(string) Config { return Config{ReadAnywhere: true} })
-	if len(p.Private) != 0 {
-		t.Fatalf("private %v with ReadAnywhere", p.Private)
+	if slices.Contains(p.Private, userHome) {
+		t.Fatalf("current home remained private with ReadAnywhere: %v", p.Private)
 	}
+	// ReadAnywhere applies to the current home; hidden paths remain denied.
 	if err := p.CheckRead(filepath.Join(userHome, "other", "notes.txt")); err != nil {
 		t.Fatal(err)
 	}

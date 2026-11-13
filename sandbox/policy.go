@@ -1,6 +1,6 @@
 // Package sandbox confines what model-chosen commands and file tools may
-// touch: writes only under a set of writable roots, reads inside the user's
-// home only under a set of readable roots, no access at all to hidden paths
+// touch: writes only under a set of writable roots, reads inside private home
+// containers only under a set of readable roots, no access at all to hidden paths
 // (credentials, malachi's own home), and optionally no network.
 //
 // Commands are confined by the operating system (Seatbelt on macOS, Landlock
@@ -77,6 +77,20 @@ type Config struct {
 	Unhidden []string
 }
 
+// privateHomeContainers returns existing multi-user home containers. They are
+// private even when the runtime's current home is elsewhere (for example a
+// host /Users mounted into a Linux VM whose HOME is /home/lima.guest).
+func privateHomeContainers(userHome, cwd string) []string {
+	var out []string
+	for _, root := range []string{"/Users", "/home"} {
+		if info, err := os.Stat(root); err == nil && info.IsDir() &&
+			(within(Canonical(userHome), root) || within(Canonical(cwd), root)) {
+			out = append(out, root)
+		}
+	}
+	return out
+}
+
 // Build turns c into a Policy with the default writable roots and hidden
 // paths for this user and platform.
 func Build(c Config) Policy {
@@ -112,9 +126,21 @@ func Build(c Config) Policy {
 	}
 	writable = append(writable, c.Writable...)
 
-	var private, readable []string
-	if !c.ReadAnywhere && userHome != "" {
-		private = []string{userHome}
+	// Home directories are private containers, not just the current user's
+	// home. On macOS the host homes live under /Users; on Linux (including
+	// common VM/container layouts) they live under /home. Keeping the
+	// containers private prevents a policy that happens to use the VM's home
+	// (for example /home/lima.guest) from exposing sibling users or mounted
+	// host homes.
+	private := privateHomeContainers(userHome, c.Cwd)
+	var readable []string
+	if c.ReadAnywhere {
+		// ReadAnywhere applies to this user's home, not to sibling homes.
+		if userHome != "" {
+			readable = append(readable, userHome)
+		}
+	} else if userHome != "" {
+		private = append(private, userHome)
 		readable = append(defaultReadable(userHome), c.Cwd)
 		readable = append(readable, c.Readable...)
 	}
