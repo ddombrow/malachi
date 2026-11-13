@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 )
@@ -32,7 +33,16 @@ type Policy struct {
 	// push with loaded keys). On macOS sockets under writable roots still
 	// work; on Linux no Unix sockets can be created.
 	UnixSockets bool
-	Writable    []string // roots under which writes are allowed
+	// GPU lets commands use the graphics processor, for rendering and
+	// compute off screen. It opens the GPU's drivers, a large kernel
+	// surface, and nothing else: no window, no display. macOS only; see
+	// gpuDrivers.
+	GPU bool
+	// Services are system services commands may reach beyond the built-in
+	// list, by exact name, for a tool that needs one. A service acts
+	// outside the sandbox, so each is the user's decision. macOS only.
+	Services []string
+	Writable []string // roots under which writes are allowed
 	// Private directories (the user's home) are readable only under a
 	// Readable or Writable root. Everything outside them stays readable:
 	// commands need the system's files to run at all, and private data
@@ -51,10 +61,15 @@ type Config struct {
 	NoNet    bool
 	// UnixSockets allows connecting to any Unix socket; see Policy.
 	UnixSockets bool
+	// GPU lets commands use the graphics processor; see Policy.
+	GPU bool
+	// Services are extra system services commands may reach; see Policy.
+	Services []string
 	// ReadAnywhere lifts the read confinement: the user's home becomes
 	// readable outside the readable roots too, hidden paths aside.
 	ReadAnywhere bool
 	// Writable, Readable and Hidden extend the defaults. Unhidden removes
+	// default hidden paths, never malachi's home or an entry of Hidden:
 	// defaults: a hidden path equal to or under one of these is dropped.
 	Writable []string
 	Readable []string
@@ -65,7 +80,7 @@ type Config struct {
 // Build turns c into a Policy with the default writable roots and hidden
 // paths for this user and platform.
 func Build(c Config) Policy {
-	p := Policy{Enabled: !c.Disabled, Network: !c.NoNet, UnixSockets: c.UnixSockets}
+	p := Policy{Enabled: !c.Disabled, Network: !c.NoNet, UnixSockets: c.UnixSockets, GPU: c.GPU}
 	userHome, _ := os.UserHomeDir()
 	inHome := func(rel string) string {
 		if userHome == "" {
@@ -81,7 +96,20 @@ func Build(c Config) Policy {
 		writable = append(writable, safeDerivedRoot(dir, userHome)) // go-build, pip, and most other caches
 	}
 	writable = append(writable, safeDerivedRoot(os.Getenv("GOCACHE"), userHome), safeDerivedRoot(goModCache(userHome), userHome),
-		inHome(".npm"), inHome(".cargo/registry"), inHome(".cargo/git"), inHome(".rustup"))
+		inHome(".npm"), inHome(".cargo/registry"), inHome(".cargo/git"), inHome(".rustup"),
+		inHome(".cache/clang"),                        // Swift's module cache
+		inHome("Library/Developer/Xcode/DerivedData")) // xcodebuild's build directory
+	for _, dir := range darwinClangCaches(os.TempDir()) {
+		writable = append(writable, safeDerivedRoot(dir, userHome))
+	}
+	// Maven's and Gradle's caches and working state, by name: their
+	// settings beside them (settings.xml, gradle.properties, init.d) run or
+	// configure every later build, and stay read-only.
+	for _, rel := range []string{".m2/repository", ".m2/wrapper",
+		".gradle/caches", ".gradle/wrapper", ".gradle/daemon", ".gradle/native", ".gradle/jdks",
+		".gradle/notifications", ".gradle/workers", ".gradle/kotlin", ".gradle/.tmp"} {
+		writable = append(writable, inHome(rel))
+	}
 	writable = append(writable, c.Writable...)
 
 	var private, readable []string
@@ -91,19 +119,43 @@ func Build(c Config) Policy {
 		readable = append(readable, c.Readable...)
 	}
 
-	hidden := []string{c.Home}
+	// Unhidden removes defaults only. malachi's home holds the API keys and
+	// the settings that decide this policy, and stays hidden whatever is
+	// listed; so does a path the user hid themselves.
+	var defaults []string
 	for _, rel := range defaultHidden {
-		hidden = append(hidden, inHome(rel))
+		defaults = append(defaults, inHome(rel))
 	}
-	hidden = append(hidden, c.Hidden...)
 	unhidden := canonicalAll(c.Unhidden)
-	hidden = slices.DeleteFunc(canonicalAll(hidden), func(h string) bool {
+	defaults = slices.DeleteFunc(canonicalAll(defaults), func(h string) bool {
 		return slices.ContainsFunc(unhidden, func(u string) bool { return within(h, u) })
 	})
+	hidden := slices.Concat(canonicalAll([]string{c.Home}), defaults, canonicalAll(c.Hidden))
 
+	for _, s := range c.Services {
+		if s = strings.TrimSpace(s); s != "" && !slices.Contains(p.Services, s) {
+			p.Services = append(p.Services, s)
+		}
+	}
 	p.Writable, p.Hidden = canonicalAll(writable), hidden
 	p.Private, p.Readable = canonicalAll(private), canonicalAll(readable)
 	return p
+}
+
+// darwinClangCaches are where clang and the Swift interpreter keep compiled
+// modules on macOS: under the per-user cache directory, which sits beside
+// the per-user temporary directory (.../T and .../C), as "clang" for the
+// Command Line Tools and "org.llvm.clang" for Xcode, which also caches what
+// it learns about SDKs in "com.apple.DeveloperTools". Only those parts are
+// returned, since other programs' caches live there too. Elsewhere, or when
+// the temporary directory is not the per-user one, there are none.
+func darwinClangCaches(tmp string) []string {
+	tmp = filepath.Clean(tmp)
+	if runtime.GOOS != "darwin" || filepath.Base(tmp) != "T" || !strings.HasPrefix(tmp, "/var/folders/") {
+		return nil
+	}
+	cache := filepath.Join(filepath.Dir(tmp), "C")
+	return []string{filepath.Join(cache, "clang"), filepath.Join(cache, "org.llvm.clang"), filepath.Join(cache, "com.apple.DeveloperTools")}
 }
 
 // defaultReadable are the places in the user's home that ordinary commands
@@ -188,6 +240,9 @@ var defaultHidden = []string{
 	".config/gh", ".config/gcloud", ".config/op", ".password-store",
 	".netrc", ".git-credentials", ".npmrc", ".pypirc",
 	".cargo/credentials", ".cargo/credentials.toml", ".terraform.d/credentials.tfrc.json",
+	// Repository passwords and signing keys. Maven and Gradle carry on
+	// without these files when they cannot be read.
+	".m2/settings.xml", ".m2/settings-security.xml", ".gradle/gradle.properties",
 	"Library/Keychains",
 }
 

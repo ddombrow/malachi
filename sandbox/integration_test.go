@@ -3,6 +3,7 @@ package sandbox
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -350,5 +351,230 @@ func TestSandboxedPrivateReads(t *testing.T) {
 		if out, ok := sh(t, p, project, script); ok {
 			t.Errorf("%s: a hidden path inside a readable root was reachable: %s", script, out)
 		}
+	}
+}
+
+// A command may register one kind of service name, the one a Chromium
+// browser gives its helper processes, and nothing that looks like it.
+func TestSandboxedServiceRegistration(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Seatbelt only")
+	}
+	requireBackend(t)
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("no python3")
+	}
+	p, project, _, _, _ := fixture(t)
+	register := py + ` -c "
+import ctypes, sys
+lib = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
+bootstrap = ctypes.c_uint.in_dll(lib, 'bootstrap_port')
+for name in sys.argv[1:]:
+    port = ctypes.c_uint()
+    print(name, 'registered' if lib.bootstrap_check_in(bootstrap, name.encode(), ctypes.byref(port)) == 0 else 'refused')
+" `
+	own := fmt.Sprintf("malachi.test.MachPortRendezvousServer.%d", os.Getpid())
+	refused := []string{"malachi.test.other", own + "x", own + ".more", "com.apple.pasteboard.1"}
+	out, ok := sh(t, p, project, register+own+" "+strings.Join(refused, " "))
+	if !ok {
+		t.Fatalf("registration probe failed: %s", out)
+	}
+	out = strings.TrimSpace(out) + "\n"
+	if !strings.Contains(out, own+" registered\n") {
+		t.Errorf("the rendezvous name was refused:\n%s", out)
+	}
+	for _, name := range refused {
+		if !strings.Contains(out, name+" refused\n") {
+			t.Errorf("%s was not refused:\n%s", name, out)
+		}
+	}
+}
+
+// On macOS a command reaches only the system services on the allow-list:
+// not the ones that would act for it outside the sandbox (opening a URL,
+// reading the clipboard, the keychain daemon), and the ones that can carry
+// data out only with the network on.
+func TestSandboxedServices(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Seatbelt only")
+	}
+	requireBackend(t)
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("no python3")
+	}
+	p, project, _, _, _ := fixture(t)
+	// bootstrap_look_up is what every client library does first; it
+	// returns 0 when the sandbox lets the name through.
+	lookup := py + ` -c "
+import ctypes, sys
+lib = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
+bootstrap = ctypes.c_uint.in_dll(lib, 'bootstrap_port')
+for name in sys.argv[1:]:
+    port = ctypes.c_uint()
+    print(name, 'open' if lib.bootstrap_look_up(bootstrap, name.encode(), ctypes.byref(port)) == 0 else 'closed')
+" `
+	const (
+		users      = "com.apple.system.opendirectoryd.libinfo"
+		resolver   = "com.apple.dnssd.service"
+		launch     = "com.apple.coreservices.launchservicesd"
+		pasteboard = "com.apple.pasteboard.1"
+		keychain   = "com.apple.SecurityServer"
+	)
+	names := strings.Join([]string{users, resolver, launch, pasteboard, keychain}, " ")
+	for _, c := range []struct {
+		network bool
+		want    map[string]string
+	}{
+		{false, map[string]string{users: "open", resolver: "closed", launch: "closed", pasteboard: "closed", keychain: "closed"}},
+		{true, map[string]string{users: "open", resolver: "open", launch: "closed", pasteboard: "closed", keychain: "closed"}},
+	} {
+		p.Network = c.network
+		out, ok := sh(t, p, project, lookup+names)
+		if !ok {
+			t.Fatalf("network=%v: lookup failed: %s", c.network, out)
+		}
+		for name, want := range c.want {
+			if !strings.Contains(out, name+" "+want) {
+				t.Errorf("network=%v: %s is not %s:\n%s", c.network, name, want, out)
+			}
+		}
+	}
+	// A service the user lists opens, and only that one.
+	p.Network, p.Services = false, []string{pasteboard}
+	if out, _ := sh(t, p, project, lookup+names); !strings.Contains(out, pasteboard+" open") || !strings.Contains(out, launch+" closed") {
+		t.Errorf("listing a service did not open it alone:\n%s", out)
+	}
+	// The services exist: without the sandbox the same lookups succeed, so
+	// "closed" above is the sandbox and not a missing service.
+	out, ok := sh(t, Policy{}, project, lookup+names)
+	if !ok || strings.Contains(out, "closed") {
+		t.Skipf("services missing here, nothing to compare against: %s", out)
+	}
+}
+
+// On macOS a debugger in a command works on what the command started, and
+// cannot attach to a process outside the sandbox, which would be running
+// code there.
+func TestSandboxedDebugger(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Seatbelt only")
+	}
+	requireBackend(t)
+	lldb, err := exec.LookPath("lldb")
+	if err != nil {
+		t.Skip("no lldb")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, project, _, _, _ := fixture(t)
+	// The test binary running no tests: a program that exits at once.
+	launch := lldb + " -b -o run -o quit -- " + self + " -test.run='^$' 2>&1"
+	const exited = "exited with status = 0"
+	if out, _ := sh(t, Policy{}, project, launch); !strings.Contains(out, exited) {
+		t.Skipf("debugging does not work here even without the sandbox: %s", out)
+	}
+	if out, _ := sh(t, p, project, launch); !strings.Contains(out, exited) {
+		t.Errorf("a command could not debug a process it started: %s", out)
+	}
+
+	outside := exec.Command(self)
+	outside.Env = append(os.Environ(), sleepEnv+"=1")
+	if err := outside.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		outside.Process.Kill()
+		outside.Wait()
+	}()
+	attach := lldb + " -b -p " + strconv.Itoa(outside.Process.Pid) + " -o 'process status' -o detach -o quit 2>&1"
+	if out, _ := sh(t, p, project, attach); strings.Contains(out, "stopped") {
+		t.Errorf("a command attached to a process outside the sandbox: %s", out)
+	}
+	if out, _ := sh(t, Policy{}, project, attach); !strings.Contains(out, "stopped") {
+		t.Logf("attaching fails here without the sandbox too, so the refusal above shows little: %s", out)
+	}
+}
+
+// On macOS devices are closed to commands, and the GPU setting opens the
+// graphics drivers and surfaces without opening the others.
+func TestSandboxedGPU(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Seatbelt only")
+	}
+	requireBackend(t)
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("no python3")
+	}
+	p, project, _, _, _ := fixture(t)
+	// IOServiceOpen on the first service of each class: IOSurfaceRoot is
+	// what every GPU client draws to and exists on every Mac, virtual ones
+	// included; IOHIDSystem is the keyboard and mouse.
+	open := py + ` -c "
+import ctypes, sys
+iokit = ctypes.CDLL('/System/Library/Frameworks/IOKit.framework/IOKit')
+libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
+iokit.IOServiceMatching.restype = ctypes.c_void_p
+iokit.IOServiceGetMatchingService.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+task = ctypes.c_uint.in_dll(libc, 'mach_task_self_')
+for name in sys.argv[1:]:
+    service = iokit.IOServiceGetMatchingService(0, iokit.IOServiceMatching(name.encode()))
+    conn = ctypes.c_uint()
+    if not service:
+        print(name, 'missing')
+    else:
+        print(name, 'open' if iokit.IOServiceOpen(service, task, 0, ctypes.byref(conn)) == 0 else 'closed')
+" IOSurfaceRoot IOHIDSystem`
+	free, ok := sh(t, Policy{}, project, open)
+	if !ok || !strings.Contains(free, "IOSurfaceRoot open") {
+		t.Skipf("no surfaces to open here even without the sandbox: %s", free)
+	}
+	if out, _ := sh(t, p, project, open); !strings.Contains(out, "IOSurfaceRoot closed") {
+		t.Errorf("devices open by default: %s", out)
+	}
+	p.GPU = true
+	out, _ := sh(t, p, project, open)
+	if !strings.Contains(out, "IOSurfaceRoot open") {
+		t.Errorf("surfaces closed with the GPU allowed: %s", out)
+	}
+	if strings.Contains(out, "IOHIDSystem open") {
+		t.Errorf("the GPU setting opened input devices: %s", out)
+	}
+}
+
+// On macOS a command can open a pseudo-terminal and run a child on it, as
+// script, tmux and expect do.
+func TestSandboxedPseudoTerminal(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Seatbelt only")
+	}
+	requireBackend(t)
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("no python3")
+	}
+	p, project, _, _, _ := fixture(t)
+	script := py + ` -c "
+import os, pty
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp('sh', ['sh', '-c', 'test -t 1 && echo on-a-terminal'])
+out = b''
+try:
+    while True:
+        chunk = os.read(fd, 1024)
+        if not chunk:
+            break
+        out += chunk
+except OSError:
+    pass
+print(out.decode().strip())
+"`
+	if out, ok := sh(t, p, project, script); !ok || !strings.Contains(out, "on-a-terminal") {
+		t.Errorf("no pseudo-terminal in the sandbox: %s", out)
 	}
 }

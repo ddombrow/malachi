@@ -81,9 +81,35 @@ func TestEnvironmentDerivedWritableRootsCannotCoverFilesystemOrHome(t *testing.T
 
 func TestUnhiddenRemovesDefaults(t *testing.T) {
 	_, project, _, home, _ := fixture(t)
-	p := Build(Config{Cwd: project, Home: home, Unhidden: []string{home}})
-	if slices.Contains(p.Hidden, home) {
-		t.Fatal("unhidden path still hidden")
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	settings := Canonical(filepath.Join(userHome, ".m2/settings.xml"))
+	ssh := Canonical(filepath.Join(userHome, ".ssh"))
+	mine := Canonical(filepath.Join(userHome, ".m2/settings-security.xml"))
+	if p := Build(Config{Cwd: project, Home: home}); !slices.Contains(p.Hidden, settings) {
+		t.Fatal("Maven's settings are not hidden by default")
+	}
+	p := Build(Config{Cwd: project, Home: home, Unhidden: []string{settings}})
+	if slices.Contains(p.Hidden, settings) {
+		t.Error("unhidden path still hidden")
+	}
+	if !slices.Contains(p.Hidden, ssh) {
+		t.Error("unhiding one default dropped another")
+	}
+
+	// Not malachi's home, and not what the user hid, even when a listed
+	// path covers them.
+	p = Build(Config{Cwd: project, Home: home, Hidden: []string{mine}, Unhidden: []string{home, userHome, "/"}})
+	if !slices.Contains(p.Hidden, Canonical(home)) {
+		t.Error("malachi's home was unhidden")
+	}
+	if !slices.Contains(p.Hidden, mine) {
+		t.Error("a path the user hid was unhidden")
+	}
+	if slices.Contains(p.Hidden, ssh) {
+		t.Error("a default under an unhidden directory is still hidden")
 	}
 }
 
@@ -338,5 +364,22 @@ func TestTmpHoldingHomeIsNotWritable(t *testing.T) {
 	}
 	if err := p.CheckRead(filepath.Join(userHome, "elsewhere", "x")); err == nil {
 		t.Fatal("home under /tmp is readable")
+	}
+}
+
+func TestDarwinClangCaches(t *testing.T) {
+	both := []string{"/var/folders/8h/abc/C/clang", "/var/folders/8h/abc/C/org.llvm.clang", "/var/folders/8h/abc/C/com.apple.DeveloperTools"}
+	for tmp, want := range map[string][]string{
+		"/var/folders/8h/abc/T/": both,
+		"/var/folders/8h/abc/T":  both,
+		"/tmp":                   nil,
+		"/Users/u/T":             nil, // a TMPDIR someone set: no per-user cache beside it
+	} {
+		if runtime.GOOS != "darwin" {
+			want = nil
+		}
+		if got := darwinClangCaches(tmp); !slices.Equal(got, want) {
+			t.Errorf("%s: got %q want %q", tmp, got, want)
+		}
 	}
 }

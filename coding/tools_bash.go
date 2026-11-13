@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
+	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -397,8 +400,13 @@ wait:
 	}
 	denial := ""
 	if exitCode != 0 && !cancelled && !timedOut {
-		if denial = sandboxDenial(pol, out.snapshot()); denial != "" {
+		if denial = sandboxDenial(pol, out.snapshot()); strings.Contains(denial, nestedSandboxSign) {
+			text += "\n" + nestedSandboxHint
+		} else if denial != "" {
 			text += "\n" + sandboxHint(pol)
+		} else if tool := serviceCommand(pol, runtime.GOOS, command); tool != "" {
+			denial = tool + ": system services are closed to sandboxed commands"
+			text += "\n" + serviceHint(tool)
 		}
 	}
 
@@ -449,6 +457,53 @@ func sandboxDenial(p sandbox.Policy, output string) string {
 		}
 	}
 	return ""
+}
+
+// nestedSandboxSign is what macOS prints when a command tries to start a
+// sandbox of its own (`swift build` does, for package manifests): Seatbelt
+// sandboxes do not nest.
+const nestedSandboxSign = "sandbox_apply: Operation not permitted"
+
+const nestedSandboxHint = "[The command tried to start its own sandbox, which cannot be done inside malachi's on macOS." +
+	" If the tool has an option to skip its own sandbox (`swift build --disable-sandbox`," +
+	" `xcodebuild -IDEPackageSupportDisableManifestSandbox=YES`), use it: malachi's sandbox still confines the command.]"
+
+// serviceCommands are macOS tools that only ask another program to act:
+// LaunchServices, the pasteboard, AppleEvents, the keychain daemon. The
+// sandbox closes those services, and the tools then fail with errors that
+// say nothing of it ("No application knows how to open URL"), or silently.
+var serviceCommands = []string{"open", "pbcopy", "pbpaste", "osascript", "security"}
+
+// commandSeparators end one simple command in a shell line.
+var commandSeparators = regexp.MustCompile(`[;|&()\n]+`)
+
+// serviceCommand returns the first of serviceCommands that command runs, or
+// "" if none or the sandbox does not close services here. It reads only the
+// word each simple command starts with, so an argument named "open" does
+// not count.
+func serviceCommand(p sandbox.Policy, goos, command string) string {
+	if !p.Enabled || goos != "darwin" {
+		return ""
+	}
+	for _, simple := range commandSeparators.Split(command, -1) {
+		for _, word := range strings.Fields(simple) {
+			if strings.Contains(word, "=") && !strings.HasPrefix(word, "=") {
+				continue // VAR=value before the command
+			}
+			if name := path.Base(word); slices.Contains(serviceCommands, name) {
+				return name
+			}
+			break
+		}
+	}
+	return ""
+}
+
+// serviceHint explains a failed command that needed a closed service.
+func serviceHint(tool string) string {
+	return "[This is probably the sandbox: on macOS, sandboxed commands cannot ask other programs to act for them, so `" + tool +
+		"` cannot work here: no opening apps, files or URLs, no clipboard, no AppleScript, no keychain." +
+		" If the task needs it, ask the user to do it; do not try to work around the sandbox.]"
 }
 
 // sandboxHint explains a failure that looks like a sandbox denial, so the

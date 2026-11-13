@@ -233,6 +233,38 @@ func TestDiagnosticsRecordsSandboxDenials(t *testing.T) {
 	}
 }
 
+// A tool's own sandbox cannot start inside ours; the denial is recognised
+// so the hint can say to skip the tool's, not to ask for more access.
+func TestNestedSandboxIsRecognised(t *testing.T) {
+	denial := sandboxDenial(sandbox.Policy{Enabled: true}, "Building...\nsandbox-exec: sandbox_apply: Operation not permitted\n")
+	if !strings.Contains(denial, nestedSandboxSign) {
+		t.Fatalf("denial %q lacks %q", denial, nestedSandboxSign)
+	}
+}
+
+func TestServiceCommand(t *testing.T) {
+	on := sandbox.Policy{Enabled: true}
+	for _, tc := range []struct {
+		goos, command, want string
+		pol                 sandbox.Policy
+	}{
+		{"darwin", "open http://localhost:3000", "open", on},
+		{"darwin", "npm run build && /usr/bin/open dist/index.html", "open", on},
+		{"darwin", "cat notes.txt | pbcopy", "pbcopy", on},
+		{"darwin", "FOO=1 osascript -e 'return 1'", "osascript", on},
+		{"darwin", "(cd web; open .)", "open", on},
+		// Only the word a command starts with counts.
+		{"darwin", "grep -r open . ; ./open_file x", "", on},
+		{"darwin", "go test ./...", "", on},
+		{"darwin", "open .", "", sandbox.Policy{}},
+		{"linux", "open .", "", on},
+	} {
+		if got := serviceCommand(tc.pol, tc.goos, tc.command); got != tc.want {
+			t.Errorf("%s %q: got %q want %q", tc.goos, tc.command, got, tc.want)
+		}
+	}
+}
+
 func TestSandboxDenialFromCommandOutput(t *testing.T) {
 	on := sandbox.Policy{Enabled: true}
 	cases := []struct {
