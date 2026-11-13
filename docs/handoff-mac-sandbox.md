@@ -111,8 +111,9 @@ the README's "What it does not stop".
 
 1. Turn each confirmed finding into a real test, and fix it.
 2. Update the README's "What it does not stop" for anything that stays.
-   The entries for metadata and command lines say "On Linux"; the probes in
-   rows 5 to 9 say whether that qualifier is right.
+   The entries for metadata and command lines say "On Linux"; the
+   `chmod-outside`, `touch-outside`, `xattr-outside` and `ps-outside` probes
+   say whether that qualifier is right.
 3. Delete this file and `sandbox/macprobe_darwin_test.go`.
 4. Cut v0.4.1. `2785667` alone justifies it.
 
