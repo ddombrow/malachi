@@ -8,6 +8,7 @@ import (
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -742,5 +743,83 @@ func TestCompactionMakesTheLastMeasurementStale(t *testing.T) {
 	}
 	if st := s.ContextStats(); st.Stale || st.EffectivePrompt() != 1234 {
 		t.Fatalf("a new measurement should replace the estimate: %+v", st)
+	}
+}
+
+// The summariser is not shown tool output, so a summary is not checked for
+// names that appear only there. One file read used to fill the sample of
+// identifiers, and a faithful summary was then reported as having lost them.
+func TestSummaryIsNotFaultedForToolOutputItNeverSaw(t *testing.T) {
+	source, err := os.ReadFile("compact.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := []agent.Message{
+		agent.NewUserText("fix the boundary bug in coding/compact.go, see `compactBoundary`"),
+		&agent.AssistantMessage{Content: []agent.Content{
+			&agent.ToolCall{ID: "1", Name: "read", Arguments: map[string]any{"path": "coding/compact.go"}},
+		}},
+		&agent.ToolResultMessage{ToolCallID: "1", ToolName: "read", Content: []agent.Content{&agent.TextContent{Text: string(source)}}},
+		assistantText("fixed `compactBoundary`: agent.UserMessage is the anchor now"),
+	}
+	summary := "## Goal\nFix the boundary bug in coding/compact.go.\n\n## Progress\nDone: `compactBoundary` anchors on agent.UserMessage.\n\n" +
+		"## Next Steps\nNone.\n\n## Critical Context\ncoding/compact.go, compactBoundary, agent.UserMessage. " + strings.Repeat("Nothing else is pending. ", 6)
+	if w := validateSummary(summary, messages); len(w) != 0 {
+		t.Fatalf("a summary that kept everything it was shown should not warn: %v", w)
+	}
+	// What it was shown still counts, including the path a tool was run on.
+	lossy := "## Goal\nFix a bug.\n\n## Progress\nDone.\n\n" + strings.Repeat("Nothing else is pending. ", 10)
+	if w := validateSummary(lossy, messages); len(w) != 1 || !strings.Contains(w[0], "identifiers") {
+		t.Fatalf("a summary that dropped the names it was shown should say so: %v", w)
+	}
+}
+
+// A summary cut off by the output limit loses its last sections, which are
+// the next steps and the exact names; that is said rather than left to be
+// discovered when the work resumes.
+func TestSummarizeWarnsWhenTheSummaryIsCutOff(t *testing.T) {
+	s := summarizeFixture(t, func(_ context.Context, _ agent.Request, b *ai.Builder) {
+		b.Text(goodSummary)
+		b.Done(agent.StopLength)
+	})
+	res, err := s.Summarize(context.Background(), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "cut off") {
+		t.Fatalf("warnings = %v, want the output limit named", res.Warnings)
+	}
+}
+
+// A user message late in the window is not where the tail starts: keeping
+// only it would summarize away the reply it answers.
+func TestCompactBoundaryKeepsMoreThanALatePrompt(t *testing.T) {
+	// One long agentic turn, then a new prompt and the reply that overflowed.
+	messages := []agent.Message{agent.NewUserText("start")}
+	for i := range 30 {
+		id := fmt.Sprint(i)
+		messages = append(messages,
+			&agent.AssistantMessage{Content: []agent.Content{&agent.ToolCall{ID: id, Name: "bash", Arguments: map[string]any{}}}},
+			&agent.ToolResultMessage{ToolCallID: id, ToolName: "bash"})
+	}
+	messages = append(messages, assistantText("option one or option two?"), agent.NewUserText("the second one"), assistantText(""))
+
+	keepFrom, err := compactBoundary(messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept := len(messages) - keepFrom; kept < compactKeepMessages {
+		t.Fatalf("kept %d messages, want the whole window of %d", kept, compactKeepMessages)
+	}
+	if _, ok := messages[keepFrom].(*agent.ToolResultMessage); ok {
+		t.Fatal("the tail must not open with a tool result whose call was summarized")
+	}
+
+	// A user message early enough in the window is still the boundary.
+	early := slices.Clone(messages)
+	at := len(early) - compactMinKeepMessages
+	early[at] = agent.NewUserText("a steer")
+	if keepFrom, err = compactBoundary(early); err != nil || keepFrom != at {
+		t.Fatalf("boundary = %d, %v; want the user message at %d", keepFrom, err, at)
 	}
 }

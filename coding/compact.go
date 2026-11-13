@@ -38,6 +38,9 @@ const (
 	// for the current exchange to be coherent, since a summary describes the
 	// past and the tail is what the agent is in the middle of.
 	compactKeepMessages = 20
+	// compactMinKeepMessages is the least a turn boundary may leave of that
+	// tail. A boundary that would keep fewer is not used: see compactBoundary.
+	compactMinKeepMessages = compactKeepMessages / 2
 
 	// minSummaryBytes rejects an empty or truncated summary. A summary shorter
 	// than this has almost certainly lost the conversation.
@@ -192,7 +195,7 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 	s.mu.Unlock()
 
 	report("summarizing")
-	summary, usage, err := s.summarizeOnce(ctx, runtime, model, body, instructions, previous != "", progress)
+	summary, usage, stop, err := s.summarizeOnce(ctx, runtime, model, body, instructions, previous != "", progress)
 	if err != nil {
 		return nil, err
 	}
@@ -201,6 +204,11 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 	warnings := validateSummary(summary, prefix)
 	if summary == "" {
 		return nil, errors.New("compact: the model returned an empty summary; nothing was changed")
+	}
+	if stop == agent.StopLength {
+		// The headings are written in order, so what a cut-off summary lacks
+		// is its end: the next steps and the exact names.
+		warnings = append(warnings, "the summary hit the output token limit and is cut off; its last sections may be missing")
 	}
 	summary += renderFilesChanged(files)
 
@@ -254,10 +262,10 @@ func (s *Session) Summarize(ctx context.Context, instructions string, phases fun
 	return result, nil
 }
 
-// summarizeOnce runs the summarisation request and returns the text.
-// progress, when non-nil, is called with the running count of characters the
-// model has produced so far.
-func (s *Session) summarizeOnce(ctx context.Context, provider agent.Provider, model, body, instructions string, folding bool, progress func(int)) (string, agent.Usage, error) {
+// summarizeOnce runs the summarisation request and returns the text and why
+// the model stopped writing it. progress, when non-nil, is called with the
+// running count of characters the model has produced so far.
+func (s *Session) summarizeOnce(ctx context.Context, provider agent.Provider, model, body, instructions string, folding bool, progress func(int)) (string, agent.Usage, agent.StopReason, error) {
 	if instructions != "" {
 		body = "Pay particular attention to: " + instructions + "\n\n" + body
 	}
@@ -276,6 +284,7 @@ func (s *Session) summarizeOnce(ctx context.Context, provider agent.Provider, mo
 	}
 	var out strings.Builder
 	var usage agent.Usage
+	var stop agent.StopReason
 	for ev := range provider.Stream(ctx, req) {
 		switch e := ev.(type) {
 		case *agent.TextDelta:
@@ -284,16 +293,16 @@ func (s *Session) summarizeOnce(ctx context.Context, provider agent.Provider, mo
 				progress(out.Len())
 			}
 		case *agent.AssistantDone:
-			usage = e.Message.Usage
+			usage, stop = e.Message.Usage, e.Message.StopReason
 		case *agent.AssistantError:
 			msg := "the provider failed"
 			if e.Error != nil && e.Error.ErrorMessage != "" {
 				msg = e.Error.ErrorMessage
 			}
-			return "", usage, fmt.Errorf("compact: %s", msg)
+			return "", usage, stop, fmt.Errorf("compact: %s", msg)
 		}
 	}
-	return strings.TrimSpace(out.String()), usage, nil
+	return strings.TrimSpace(out.String()), usage, stop, nil
 }
 
 // compactBoundary picks where the retained tail begins: far enough back that
@@ -306,12 +315,18 @@ func (s *Session) summarizeOnce(ctx context.Context, provider agent.Provider, mo
 // user message in the window; the tail then starts at the nearest assistant
 // message, which opens with the calls its results belong to. The user's
 // request for that turn is in the summarized prefix.
+//
+// The same goes for a user message that arrives late in the window, such as
+// a prompt that overflowed the context or a steer near the end of a run.
+// Starting the tail there would keep little but that message, and what it
+// answers ("yes, do the second one") would survive only as summary. A turn
+// boundary is used only if it keeps at least compactMinKeepMessages.
 func compactBoundary(messages []agent.Message) (int, error) {
 	if len(messages) <= compactKeepMessages {
 		return 0, ErrNothingToSummarize
 	}
 	keepFrom := len(messages) - compactKeepMessages
-	for i := keepFrom; i < len(messages); i++ {
+	for i := keepFrom; i <= len(messages)-compactMinKeepMessages; i++ {
 		if _, ok := messages[i].(*agent.UserMessage); ok {
 			keepFrom = i
 			break
@@ -338,36 +353,47 @@ func compactBoundary(messages []agent.Message) (int, error) {
 func transcriptJSON(messages []agent.Message) string {
 	var b strings.Builder
 	b.WriteString("```json\n[")
-	first := true
+	for i, e := range summarizerView(messages) {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, "\n{\"role\": %s, \"text\": %s}", quoteJSON(e.role), quoteJSON(e.text))
+	}
+	b.WriteString("\n]\n```")
+	return b.String()
+}
+
+// summarizerEntry is one message as the summariser is shown it.
+type summarizerEntry struct{ role, text string }
+
+// summarizerView is the conversation as the summariser sees it. It is also
+// what a summary is checked against: a summary cannot be faulted for losing
+// something its author was never shown.
+func summarizerView(messages []agent.Message) []summarizerEntry {
+	var out []summarizerEntry
 	calls := map[string]*agent.ToolCall{}
 	for _, m := range messages {
-		var role, text string
+		var e summarizerEntry
 		switch m := m.(type) {
 		case *agent.UserMessage:
-			role, text = "user", agent.MessageText(m)
+			e = summarizerEntry{"user", agent.MessageText(m)}
 		case *agent.AssistantMessage:
-			role, text = "assistant", agent.MessageText(m)
+			e = summarizerEntry{"assistant", agent.MessageText(m)}
 			for _, call := range m.ToolCalls() {
 				calls[call.ID] = call
 			}
 		case *agent.ToolResultMessage:
-			role, text = "tool", toolActivity(m, calls[m.ToolCallID])
+			e = summarizerEntry{"tool", toolActivity(m, calls[m.ToolCallID])}
 		default:
 			// A previous summary, which is passed on separately as the
 			// previous handover.
 			continue
 		}
-		if strings.TrimSpace(text) == "" {
-			continue
+		if strings.TrimSpace(e.text) != "" {
+			out = append(out, e)
 		}
-		if !first {
-			b.WriteString(",")
-		}
-		first = false
-		fmt.Fprintf(&b, "\n{\"role\": %s, \"text\": %s}", quoteJSON(role), quoteJSON(text))
 	}
-	b.WriteString("\n]\n```")
-	return b.String()
+	return out
 }
 
 // quoteJSON encodes s as a JSON string. HTML escaping is off: the reader is a
@@ -538,12 +564,26 @@ func validateSummary(summary string, dropped []agent.Message) []string {
 }
 
 // distinctiveIdentifiers collects the tokens worth checking for, capped so a
-// long conversation does not turn this into a scan of everything.
+// long conversation does not turn this into a scan of everything. They come
+// from what the summariser was shown, plus the previous handover it was asked
+// to carry forward. Tool output is not shown to it, so its identifiers are not
+// expected back: counting them made one file read fill the sample with names
+// no summary could contain, and nearly every compaction warn.
 func distinctiveIdentifiers(messages []agent.Message) []string {
+	var texts []string
+	if len(messages) > 0 {
+		if c, ok := messages[0].(*agent.CompactionSummaryMessage); ok {
+			previous, _ := splitFilesChanged(c.Summary)
+			texts = append(texts, previous)
+		}
+	}
+	for _, e := range summarizerView(messages) {
+		texts = append(texts, e.text)
+	}
 	seen := map[string]bool{}
 	var out []string
-	for _, m := range messages {
-		for _, match := range identifierish.FindAllString(agent.MessageText(m), -1) {
+	for _, text := range texts {
+		for _, match := range identifierish.FindAllString(text, -1) {
 			id := strings.Trim(match, "`")
 			if len(id) < 4 || seen[id] {
 				continue
