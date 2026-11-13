@@ -88,6 +88,37 @@ func TestSandboxedCommands(t *testing.T) {
 	}
 }
 
+// A directory name is data wherever the policy is written out: one made of
+// the characters a profile is written in confines commands like any other.
+func TestSandboxedOddProjectName(t *testing.T) {
+	requireBackend(t)
+	root := Canonical(t.TempDir())
+	project := filepath.Join(root, "a\"b\\c) (allow default) ;#\nd")
+	outside, home := filepath.Join(root, "outside"), filepath.Join(root, "malachi")
+	for _, d := range []string{project, outside, home} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(home, "key"), []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := projectOnly(Build(Config{Cwd: project, Home: home}), project)
+	for _, c := range []struct {
+		name, script string
+		ok           bool
+	}{
+		{"write inside", "echo hi > in.txt && cat in.txt", true},
+		{"write outside", "echo hi > ../outside/x", false},
+		{"read hidden", "cat ../malachi/key", false},
+	} {
+		out, ok := sh(t, p, project, c.script)
+		if ok != c.ok || strings.Contains(out, "secret") {
+			t.Errorf("%s: succeeded=%v, want %v; output: %s", c.name, ok, c.ok, out)
+		}
+	}
+}
+
 // Network off blocks IP connections; checked against a local listener so the
 // test never reaches the internet.
 func TestSandboxedNetwork(t *testing.T) {
@@ -336,6 +367,25 @@ func TestSandboxedPrivateReads(t *testing.T) {
 		}
 		if strings.Contains(out, "private-words") {
 			t.Errorf("%s: private content leaked: %s", c.name, out)
+		}
+	}
+
+	// A file the sandbox refuses does not become readable under a new name
+	// in the project: not by a hard link, and not by a copy-on-write clone.
+	key := filepath.Join(userHome, ".ssh", "id_ed25519")
+	clone := "cp -c"
+	if runtime.GOOS == "linux" {
+		clone = "cp --reflink=always"
+	}
+	for i, src := range []string{filepath.Join(other, "notes.txt"), key} {
+		for j, script := range []string{
+			fmt.Sprintf("ln %s link%d && cat link%d", src, i, i),
+			fmt.Sprintf("%s %s clone%d && cat clone%d", clone, src, i, i),
+		} {
+			out, ok := sh(t, p, project, script)
+			if ok || strings.Contains(out, "private-words") || strings.Contains(out, "content") {
+				t.Errorf("%d/%d %s: a refused file was reachable under a new name: %v %s", i, j, script, ok, out)
+			}
 		}
 	}
 

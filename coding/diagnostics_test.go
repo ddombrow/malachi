@@ -301,3 +301,21 @@ func TestSandboxDenialFromCommandOutput(t *testing.T) {
 		t.Fatalf("records %v", recs)
 	}
 }
+
+// Commands get a short allow-list of the environment, never the rest of
+// it, and a name from malachi's .env stays out even when it is allowed.
+func TestCommandEnvIsAnAllowList(t *testing.T) {
+	t.Setenv("MALACHI_TEST_UNLISTED", "unlisted")
+	t.Setenv("MALACHI_TEST_ALLOWED", "allowed")
+	t.Setenv("MALACHI_TEST_KEY", "key")
+	env := commandEnv([]string{"MALACHI_TEST_ALLOWED", "malachi_test_key"}, []string{"MALACHI_TEST_KEY"})
+	got := strings.Join(env, "\n")
+	if !strings.Contains(got, "MALACHI_TEST_ALLOWED=allowed") {
+		t.Errorf("an allowed name was dropped:\n%s", got)
+	}
+	for _, bad := range []string{"MALACHI_TEST_UNLISTED", "MALACHI_TEST_KEY"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("%s reached the command's environment:\n%s", bad, got)
+		}
+	}
+}
