@@ -10,14 +10,14 @@ type block struct {
 }
 
 // transcript is the conversation shown in the viewport. Rendering is cached
-// per renderer, and appending only renders the new blocks, so long sessions
-// stay cheap to redraw.
+// per renderer as lines, and appending only renders the new blocks, so long
+// sessions stay cheap to redraw.
 type transcript struct {
 	blocks []block
 
 	cacheFor *renderer
 	cacheN   int
-	cache    strings.Builder
+	cache    []string
 }
 
 func (t *transcript) add(f func(r *renderer) string) {
@@ -26,28 +26,29 @@ func (t *transcript) add(f func(r *renderer) string) {
 
 func (t *transcript) reset() {
 	t.blocks = nil
-	t.cacheFor, t.cacheN = nil, 0
-	t.cache.Reset()
+	t.cacheFor, t.cacheN, t.cache = nil, 0, nil
 }
 
-// text renders the transcript with r, reusing previous work when r has not
-// changed since the last call.
-func (t *transcript) text(r *renderer) string {
+// lines renders the transcript with r, reusing previous work when r has not
+// changed since the last call. The result is the cache itself: callers must
+// not modify it.
+func (t *transcript) lines(r *renderer) []string {
 	if t.cacheFor != r {
-		t.cacheFor, t.cacheN = r, 0
-		t.cache.Reset()
+		t.cacheFor, t.cacheN, t.cache = r, 0, nil
 	}
 	for ; t.cacheN < len(t.blocks); t.cacheN++ {
 		out := t.blocks[t.cacheN].render(r)
 		if strings.TrimSpace(out) == "" {
 			continue // e.g. an assistant turn that was only tool calls
 		}
-		// Blocks begin with a newline (item()); one more makes the blank
-		// line that separates items.
-		if t.cache.Len() > 0 {
-			t.cache.WriteByte('\n')
-		}
-		t.cache.WriteString(out)
+		// Blocks begin with a newline (item()), so each starts with the blank
+		// line that separates it from the one before.
+		t.cache = append(t.cache, strings.Split(out, "\n")...)
 	}
-	return t.cache.String()
+	return t.cache
+}
+
+// text is the rendered transcript as one string.
+func (t *transcript) text(r *renderer) string {
+	return strings.Join(t.lines(r), "\n")
 }

@@ -18,7 +18,6 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -28,25 +27,28 @@ import (
 
 // Messages delivered to the Bubble Tea loop.
 type (
-	// sessionEventMsg carries one event from Session.Subscribe: an agent.Event
-	// or one of coding's session events.
-	sessionEventMsg struct{ e any }
-	bridgeClosedMsg struct{}
+	// sessionEventsMsg carries events from Session.Subscribe (agent.Event
+	// values and coding's session events): every one that was waiting when
+	// the UI came back for more, in order. Handling them in one update means
+	// one redraw, so a burst (a fast stream, a chatty tool) cannot queue
+	// redraws faster than they can be drawn.
+	sessionEventsMsg []any
+	bridgeClosedMsg  struct{}
 )
 
 // bridge forwards session events into the UI. Events are delivered through a
 // channel read by a tea.Cmd, so the session's goroutines never touch UI state.
 type bridge struct {
-	ch    chan tea.Msg
+	ch    chan any
 	done  chan struct{}
 	unsub func()
 }
 
 func newBridge(s *coding.Session) *bridge {
-	b := &bridge{ch: make(chan tea.Msg, 4096), done: make(chan struct{})}
+	b := &bridge{ch: make(chan any, 4096), done: make(chan struct{})}
 	b.unsub = s.Subscribe(func(e any) {
 		select {
-		case b.ch <- sessionEventMsg{e}:
+		case b.ch <- e:
 		case <-b.done:
 		}
 	})
@@ -70,12 +72,24 @@ func (b *bridge) next() tea.Cmd {
 		select {
 		case <-b.done:
 			return bridgeClosedMsg{}
-		case msg := <-b.ch:
+		case e := <-b.ch:
+			events := sessionEventsMsg{e}
+			for len(events) < cap(b.ch) {
+				select {
+				case <-b.done:
+					return bridgeClosedMsg{}
+				case e := <-b.ch:
+					events = append(events, e)
+					continue
+				default:
+				}
+				break
+			}
 			select {
 			case <-b.done:
 				return bridgeClosedMsg{}
 			default:
-				return msg
+				return events
 			}
 		}
 	}
@@ -107,7 +121,7 @@ type model struct {
 	r      *renderer
 	input  textarea.Model
 	spin   spinner.Model
-	vp     viewport.Model
+	vp     scroller
 	tr     transcript
 
 	width, height int
@@ -187,7 +201,6 @@ func newModel(s *coding.Session, initialPrompt string) *model {
 		bridge:   newBridge(s),
 		input:    ta,
 		spin:     spinner.New(spinner.WithSpinner(spinner.MiniDot)),
-		vp:       viewport.New(),
 		width:    80,
 		height:   24,
 		chrome:   chromeRows,
@@ -204,8 +217,6 @@ func newModel(s *coding.Session, initialPrompt string) *model {
 	m.syncMCP(s.MCPState())
 	m.r = newRenderer(m.contentWidth(), m.isDark, m.s.Settings().Icons, m.s.Cwd())
 	m.applyInputStyles()
-	m.vp.MouseWheelEnabled = true
-	m.vp.MouseWheelDelta = 3
 	m.showSession(s)
 	// After the banner, so a withheld project file is the first thing a new
 	// session says about itself.
@@ -340,11 +351,11 @@ func (m *model) refresh() {
 	// scrolls the input instead of refusing what is typed into it.
 	m.input.MaxContentHeight = inputMaxHeight
 	m.vp.SetHeight(max(1, m.height-m.input.Height()-m.chrome))
-	content := m.tr.text(m.r)
-	if live := m.live(); live != "" {
-		content += "\n" + live
+	var live []string
+	if s := m.live(); s != "" {
+		live = strings.Split(s, "\n")
 	}
-	m.vp.SetContent(strings.TrimLeft(content, "\n"))
+	m.vp.SetLines(m.tr.lines(m.r), live)
 	if follow {
 		m.vp.GotoBottom()
 	}
@@ -382,9 +393,15 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		m.applyInputStyles()
 		return nil
 
-	case sessionEventMsg:
-		cmd := m.handleEvent(msg.e)
-		return tea.Batch(cmd, m.bridge.next())
+	case sessionEventsMsg:
+		cmds := make([]tea.Cmd, 0, len(msg)+1)
+		for _, e := range msg {
+			cmds = append(cmds, m.handleEvent(e))
+			// A trim is noticed between updates; noticing it here keeps its
+			// marker next to the request it belongs to.
+			m.noteTrim()
+		}
+		return tea.Batch(append(cmds, m.bridge.next())...)
 
 	case submitMsg:
 		return m.submit(msg.text)
@@ -403,9 +420,13 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		return m.print(msg.render)
 
 	case tea.MouseWheelMsg:
-		var cmd tea.Cmd
-		m.vp, cmd = m.vp.Update(msg)
-		return cmd
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			m.vp.ScrollUp(wheelLines)
+		case tea.MouseWheelDown:
+			m.vp.ScrollDown(wheelLines)
+		}
+		return nil
 
 	case tea.MouseClickMsg:
 		if m.jumpWidgetHit(msg) {
@@ -726,11 +747,13 @@ func (m *model) live() string {
 	var b strings.Builder
 	if m.partial != nil {
 		if th := strings.TrimSpace(m.partial.ThinkingText()); th != "" && m.partial.Text() == "" {
-			lines := lastN(wrapLines(th, m.contentWidth()-m.r.gutterWidth(iconThinking)-1), 3)
+			lines := lastN(wrapLines(expandTabs(th, 4), m.contentWidth()-m.r.gutterWidth(iconThinking)-1), 3)
 			b.WriteString(item(m.r.gutter(iconThinking, m.r.st.thinking, m.r.st.thinking.Render(strings.Join(lines, "\n")))))
 		}
 		if text := strings.TrimLeft(m.partial.Text(), "\n"); text != "" {
-			lines := wrapLines(text, m.contentWidth()-m.r.gutterWidth(iconReply)-1)
+			// A tab has no width of its own, so wrapping would let the line
+			// run past the edge; the finished message expands them too.
+			lines := wrapLines(expandTabs(text, 4), m.contentWidth()-m.r.gutterWidth(iconReply)-1)
 			b.WriteString(item(m.r.gutter(iconReply, lipgloss.NewStyle(), strings.Join(lines, "\n"))))
 		}
 		for _, c := range m.partial.ToolCalls() {

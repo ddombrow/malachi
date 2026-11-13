@@ -44,8 +44,8 @@ func TestScriptDetailsFromDisk(t *testing.T) {
 func TestScriptProgressAndResult(t *testing.T) {
 	m := newTestModel(t)
 	args := map[string]any{"code": "// look around\nconst r = await tools.read({path: \"go.mod\"});\nreturn r.text"}
-	m.Update(sessionEventMsg{&agent.ToolExecutionStartEvent{ToolCallID: "s", ToolName: "script", Args: args}})
-	m.Update(sessionEventMsg{&agent.ToolExecutionUpdateEvent{ToolCallID: "s", ToolName: "script", Args: args,
+	m.Update(sessionEventsMsg{&agent.ToolExecutionStartEvent{ToolCallID: "s", ToolName: "script", Args: args}})
+	m.Update(sessionEventsMsg{&agent.ToolExecutionUpdateEvent{ToolCallID: "s", ToolName: "script", Args: args,
 		PartialResult: agent.ToolResult{Content: []agent.Content{&agent.TextContent{Text: "3 calls, 1 running"}}, Details: scriptRun()}}})
 	live := ansi.Strip(m.live())
 	for _, want := range []string{"script const r = await tools.read({path: \"go.mod\"}); …", "✓ read go.mod", "✗ grep TODO", "read main.go"} {

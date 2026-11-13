@@ -9,6 +9,7 @@ import (
 
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/coding"
@@ -453,14 +454,7 @@ func truncateWidth(s string, w int) string {
 	if lipgloss.Width(s) <= w {
 		return s
 	}
-	if w == 1 {
-		return "…"
-	}
-	runes := []rune(s)
-	for len(runes) > 0 && lipgloss.Width(string(runes)) > w-1 {
-		runes = runes[:len(runes)-1]
-	}
-	return string(runes) + "…"
+	return ansi.Truncate(s, w, "…")
 }
 
 // truncateLeft keeps the end of s (the informative part of a path) within w.
@@ -561,7 +555,12 @@ func wrapLines(s string, width int) []string {
 		var cur strings.Builder
 		curW := 0
 		for _, r := range line {
-			w := lipgloss.Width(string(r))
+			// Printable ASCII is one cell; only the rest needs measuring,
+			// which matters because the live area re-wraps on every token.
+			w := 1
+			if r < ' ' || r > '~' {
+				w = lipgloss.Width(string(r))
+			}
 			if curW > 0 && curW+w > width {
 				out = append(out, cur.String())
 				cur.Reset()

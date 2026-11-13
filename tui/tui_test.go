@@ -62,7 +62,7 @@ func TestStreamingTextIsLiveThenPrinted(t *testing.T) {
 	m := newTestModel(t)
 	partial := agent.NewAssistantMessage("m")
 	partial.Content = []agent.Content{&agent.TextContent{Text: "Hello wor"}}
-	m.Update(sessionEventMsg{&agent.MessageUpdateEvent{Message: partial, AssistantMessageEvent: &agent.TextDelta{Delta: "wor", Partial: partial}}})
+	m.Update(sessionEventsMsg{&agent.MessageUpdateEvent{Message: partial, AssistantMessageEvent: &agent.TextDelta{Delta: "wor", Partial: partial}}})
 	if v := m.View().Content; !strings.Contains(v, "Hello wor") {
 		t.Fatalf("live area missing partial text:\n%s", v)
 	}
@@ -85,8 +85,8 @@ func TestStreamingTextIsLiveThenPrinted(t *testing.T) {
 func TestToolLifecycle(t *testing.T) {
 	m := newTestModel(t)
 	args := map[string]any{"command": "go test ./..."}
-	m.Update(sessionEventMsg{&agent.ToolExecutionStartEvent{ToolCallID: "c", ToolName: "bash", Args: args}})
-	m.Update(sessionEventMsg{&agent.ToolExecutionUpdateEvent{ToolCallID: "c", ToolName: "bash", PartialResult: agent.TextResult("ok pkg/a")}})
+	m.Update(sessionEventsMsg{&agent.ToolExecutionStartEvent{ToolCallID: "c", ToolName: "bash", Args: args}})
+	m.Update(sessionEventsMsg{&agent.ToolExecutionUpdateEvent{ToolCallID: "c", ToolName: "bash", PartialResult: agent.TextResult("ok pkg/a")}})
 	v := m.View().Content
 	if !strings.Contains(v, "$ go test ./...") || !strings.Contains(v, "ok pkg/a") {
 		t.Fatalf("running tool not shown:\n%s", v)
@@ -133,7 +133,7 @@ func TestCopyLatestAssistantResponse(t *testing.T) {
 
 	a := agent.NewAssistantMessage("m")
 	a.Content = []agent.Content{&agent.TextContent{Text: "A **copyable** answer."}}
-	m.Update(sessionEventMsg{&agent.MessageEndEvent{Message: a}})
+	m.Update(sessionEventsMsg{&agent.MessageEndEvent{Message: a}})
 	if m.lastReply != "A **copyable** answer." {
 		t.Fatalf("stored reply = %q", m.lastReply)
 	}
@@ -372,7 +372,7 @@ func TestSpinnerStopsWhenIdle(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("idle session must not re-arm spinner")
 	}
-	m.Update(sessionEventMsg{coding.CompactionStartEvent{Reason: coding.CompactionManual}})
+	m.Update(sessionEventsMsg{coding.CompactionStartEvent{Reason: coding.CompactionManual}})
 	// A compaction is work too, and its line carries the spinner.
 	release := make(chan struct{})
 	defer close(release)
@@ -642,8 +642,8 @@ func TestContextGaugeMarksAnOverWindowPrompt(t *testing.T) {
 func TestCompactShowsPhasesAndTheSummary(t *testing.T) {
 	m := newTestModel(t)
 
-	m.Update(sessionEventMsg{coding.CompactionStartEvent{Reason: coding.CompactionManual}})
-	m.Update(sessionEventMsg{coding.CompactionProgressEvent{Reason: coding.CompactionManual, Phase: "summarizing"}})
+	m.Update(sessionEventsMsg{coding.CompactionStartEvent{Reason: coding.CompactionManual}})
+	m.Update(sessionEventsMsg{coding.CompactionProgressEvent{Reason: coding.CompactionManual, Phase: "summarizing"}})
 	if live := ansi.Strip(m.live()); !strings.Contains(live, "compact · summarizing") {
 		t.Errorf("live area should name the step: %q", live)
 	}
@@ -653,12 +653,12 @@ func TestCompactShowsPhasesAndTheSummary(t *testing.T) {
 		t.Errorf("compaction should not draw a bar: %q", ansi.Strip(m.live()))
 	}
 	// A step carrying a count reports it; a bare step says it is still to come.
-	m.Update(sessionEventMsg{coding.CompactionProgressEvent{Reason: coding.CompactionManual, Phase: "summarizing 3.1 kB"}})
+	m.Update(sessionEventsMsg{coding.CompactionProgressEvent{Reason: coding.CompactionManual, Phase: "summarizing 3.1 kB"}})
 	if live := ansi.Strip(m.live()); !strings.Contains(live, "summarizing 3.1 kB") {
 		t.Errorf("live area should carry the count: %q", live)
 	}
 
-	m.Update(sessionEventMsg{coding.CompactionEndEvent{Reason: coding.CompactionManual, Result: &coding.SummarizeResult{
+	m.Update(sessionEventsMsg{coding.CompactionEndEvent{Reason: coding.CompactionManual, Result: &coding.SummarizeResult{
 		Summary:      "## Goal\nFix the parser.",
 		Replaced:     180,
 		Kept:         20,

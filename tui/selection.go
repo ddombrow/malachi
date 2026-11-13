@@ -135,11 +135,10 @@ func (m *model) selectedText() string {
 	if !m.sel.active {
 		return ""
 	}
-	lines := strings.Split(m.vp.GetContent(), "\n")
 	start, end := m.sel.bounds()
 	var out []string
-	for i := start.line; i <= end.line && i < len(lines); i++ {
-		plain := ansi.Strip(lines[i])
+	for i := start.line; i <= end.line && i < m.vp.TotalLineCount(); i++ {
+		plain := ansi.Strip(m.vp.Line(i))
 		c0, c1, ok := m.sel.span(i, ansi.StringWidth(plain), m.lineGutter(plain))
 		if !ok {
 			out = append(out, "")

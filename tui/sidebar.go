@@ -284,12 +284,11 @@ func (m *model) withSidebar(transcript string) string {
 	if !m.sidebarShown() {
 		return transcript
 	}
+	// The scroller's rows are each exactly the content width already.
 	lines := strings.Split(transcript, "\n")
 	side := m.sidebarLines(len(lines))
-	w := m.contentWidth()
 	for i, l := range lines {
-		l = ansi.Truncate(l, w, "")
-		lines[i] = l + strings.Repeat(" ", max(0, w-lipgloss.Width(l))) + side[i]
+		lines[i] = l + side[i]
 	}
 	return strings.Join(lines, "\n")
 }

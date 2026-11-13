@@ -98,8 +98,8 @@ func pump(t *testing.T, m *model, what string, done func() bool) {
 	deadline := time.After(3 * time.Second)
 	for !done() {
 		select {
-		case msg := <-m.bridge.ch:
-			m.Update(msg)
+		case e := <-m.bridge.ch:
+			m.Update(sessionEventsMsg{e})
 		case <-deadline:
 			t.Fatalf("timed out waiting for %s", what)
 		}
@@ -184,15 +184,15 @@ func TestSessionChangesRefusedDuringCompaction(t *testing.T) {
 // it cannot be left on screen by a step reported after the end.
 func TestCompactionLineFollowsEvents(t *testing.T) {
 	m := newTestModel(t)
-	m.Update(sessionEventMsg{coding.CompactionStartEvent{Reason: coding.CompactionThreshold}})
+	m.Update(sessionEventsMsg{coding.CompactionStartEvent{Reason: coding.CompactionThreshold}})
 	if live := ansi.Strip(m.live()); !strings.Contains(live, "auto · compacting") {
 		t.Fatalf("live area: %q", live)
 	}
-	m.Update(sessionEventMsg{coding.CompactionProgressEvent{Reason: coding.CompactionThreshold, Phase: "summarizing 3.1 kB"}})
+	m.Update(sessionEventsMsg{coding.CompactionProgressEvent{Reason: coding.CompactionThreshold, Phase: "summarizing 3.1 kB"}})
 	if live := ansi.Strip(m.live()); !strings.Contains(live, "summarizing 3.1 kB") {
 		t.Fatalf("live area should carry the step: %q", live)
 	}
-	m.Update(sessionEventMsg{coding.CompactionEndEvent{Reason: coding.CompactionThreshold, Result: &coding.SummarizeResult{Summary: handover, Replaced: 30, Kept: 20}}})
+	m.Update(sessionEventsMsg{coding.CompactionEndEvent{Reason: coding.CompactionThreshold, Result: &coding.SummarizeResult{Summary: handover, Replaced: 30, Kept: 20}}})
 	if live := ansi.Strip(m.live()); strings.Contains(live, "compact") {
 		t.Fatalf("the line should be gone once the compaction ended: %q", live)
 	}
@@ -201,7 +201,7 @@ func TestCompactionLineFollowsEvents(t *testing.T) {
 		t.Fatalf("transcript:\n%s", text)
 	}
 	// A progress event with no compaction under way is ignored.
-	m.Update(sessionEventMsg{coding.CompactionProgressEvent{Phase: "writing"}})
+	m.Update(sessionEventsMsg{coding.CompactionProgressEvent{Phase: "writing"}})
 	if m.phase != "" {
 		t.Fatalf("stray progress put the line back: %q", m.phase)
 	}
