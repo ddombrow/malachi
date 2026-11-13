@@ -3,11 +3,14 @@ package session
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ddombrow/malachi/agent"
 )
@@ -105,5 +108,38 @@ func TestReplayReportsEntryIDsPerMessage(t *testing.T) {
 	// The compaction summary is synthesized; the rest came from entries.
 	if want := []string{"", "e5", "e8"}; strings.Join(st.EntryIDs, ",") != strings.Join(want, ",") {
 		t.Fatalf("entry ids = %v, want %v", st.EntryIDs, want)
+	}
+}
+
+func TestLatestIsTheNewestSessionThatLoads(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Latest(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("empty directory: err = %v, want fs.ErrNotExist", err)
+	}
+	now := time.Now()
+	write := func(name, body string, age time.Duration) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, now.Add(-age), now.Add(-age)); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	entry := `{"id":"a","parent_id":null,"timestamp":1,"type":"session_info","cwd":"/x"}` + "\n"
+	write("old.jsonl", entry, 3*time.Hour)
+	newest := write("new.jsonl", entry, 2*time.Hour)
+	write("broken.jsonl", "{not json\n", time.Hour)
+	write("notes.txt", "not a session", 0)
+
+	got, err := Latest(dir)
+	if err != nil || got != newest {
+		t.Fatalf("Latest = %q, %v; want %q (the newest that loads)", got, err, newest)
+	}
+	infos, err := List(dir)
+	if err != nil || len(infos) == 0 || infos[0].Path != got {
+		t.Fatalf("Latest must agree with List's first entry: %v, %v", infos, err)
 	}
 }

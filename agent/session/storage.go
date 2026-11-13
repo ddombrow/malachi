@@ -151,16 +151,32 @@ func List(dir string) ([]Info, error) {
 	return out, nil
 }
 
-// Latest returns the newest session in dir, or fs.ErrNotExist.
+// Latest returns the newest session in dir, or fs.ErrNotExist. Like List it
+// passes over files that do not load, but it reads only as many as it must:
+// listing every session to find one made starting with -c slower with every
+// session a project had accumulated.
 func Latest(dir string) (string, error) {
-	infos, err := List(dir)
+	matches, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
 	if err != nil {
 		return "", err
 	}
-	if len(infos) == 0 {
-		return "", fs.ErrNotExist
+	type candidate struct {
+		path     string
+		modified time.Time
 	}
-	return infos[0].Path, nil
+	var found []candidate
+	for _, p := range matches {
+		if st, err := os.Stat(p); err == nil {
+			found = append(found, candidate{p, st.ModTime()})
+		}
+	}
+	sort.SliceStable(found, func(i, j int) bool { return found[i].modified.After(found[j].modified) })
+	for _, c := range found {
+		if _, err := Load(c.path); err == nil {
+			return c.path, nil
+		}
+	}
+	return "", fs.ErrNotExist
 }
 
 // Find resolves a session reference: a path, or a (prefix of a) file name
