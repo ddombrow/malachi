@@ -185,10 +185,12 @@ editor opens; each session is opened in the project the editor names, and
 saved and resumed like any other.
 
 - **What works.** Streamed replies and thinking, a card per tool call (its
-  file, output, and an edit's diff), Stop, a model and a thinking-level
-  picker, a network on/off picker while the sandbox is on (like `/sandbox`
-  in the TUI: it changes only that session), the context meter, and reopening past threads (`session/list`,
-  `session/load`, which replays the conversation).
+  file and output; an edit or a write shows as the editor's own diff, and a
+  command that exits non-zero as failed), Stop, a model and a
+  thinking-level picker, a network on/off picker while the sandbox is on
+  (like `/sandbox` in the TUI: it changes only that session), the context
+  meter, and reopening past threads (`session/list`, `session/load`, which
+  replays the conversation).
 - **The sandbox is the boundary.** malachi asks no per-tool permission, and
   uses neither the editor's file system nor its terminal: commands and file
   tools run in malachi's own sandbox, as in the TUI. Zed's agent sandbox
@@ -203,10 +205,17 @@ saved and resumed like any other.
   `mcp.json`'s (installed commands, sandboxed, a minimal environment), and
   `mcp.json` wins a name clash. Only stdio servers are accepted.
 - **Slash commands.** `/sandbox` shows what malachi's sandbox allows in that
-  session (the same report as in the TUI). `/allow-read <dir>` and `/allow-write <dir>` widen
-  the sandbox for that session, with the same limits as in the TUI (not
+  session (the same report as in the TUI). `/allow-read <dir>` and
+  `/allow-write <dir>` widen the sandbox for that session, with the same limits as in the TUI (not
   your whole home, nothing hidden). malachi handles them itself; they never
   reach the model.
+- **Other folders in the window.** Folders an editor opens beside the
+  project (ACP's `additionalDirectories`) become readable for that session,
+  as `/allow-read` would make them; writing there still takes `/allow-write`
+  or `writableRoots`.
+- **A weakened sandbox is said.** When the sandbox is off or cannot confine
+  commands here, the session says so once: as a notice if the editor shows
+  them, else at the start of the first reply.
 - **Not yet.** Other slash commands, images in prompts, and ACP v2.
 
 Zed's `dev: open acp logs` shows the traffic; malachi's own notes go to

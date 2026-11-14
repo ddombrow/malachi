@@ -33,6 +33,18 @@ type acpSession struct {
 	// models is the provider's live model list, nil until fetched.
 	models      []string
 	compactions int
+	// warned is set once the sandbox's notice, if any, has been given.
+	warned bool
+	// before holds an edited file's text from when its tool call started,
+	// by call id, so the call's end can show the change as a diff.
+	before map[string]snapshot
+}
+
+// snapshot is a file's text before a tool changed it.
+type snapshot struct {
+	path   string
+	text   string
+	exists bool
 }
 
 // turn is one session/prompt waiting for its run to settle.
@@ -44,13 +56,20 @@ type turn struct {
 }
 
 func newSession(sv *Server, s *coding.Session) *acpSession {
-	return &acpSession{sv: sv, id: s.ID(), s: s, cwd: s.Cwd()}
+	return &acpSession{sv: sv, id: s.ID(), s: s, cwd: s.Cwd(), before: map[string]snapshot{}}
 }
 
 func (as *acpSession) attach() {
 	unsub := as.s.Subscribe(as.event)
+	// The harness calls its listeners synchronously, before a tool runs:
+	// the session's events arrive later, when the file may have changed.
+	unsnap := as.s.Harness.Subscribe(func(e agent.Event) {
+		if st, ok := e.(*agent.ToolExecutionStartEvent); ok {
+			as.snapshot(st.ToolCallID, st.ToolName, st.Args)
+		}
+	})
 	as.mu.Lock()
-	as.unsub = unsub
+	as.unsub = func() { unsub(); unsnap() }
 	as.mu.Unlock()
 }
 
@@ -103,6 +122,7 @@ func (as *acpSession) prompt(ctx context.Context, text string) (string, error) {
 	// Events from earlier work are delivered first, so a late
 	// AgentSettledEvent cannot end this turn.
 	as.s.Flush()
+	as.warnFirstTurn()
 	t := &turn{done: make(chan struct{})}
 	as.mu.Lock()
 	as.turn = t
@@ -427,6 +447,48 @@ func (as *acpSession) replay() {
 					as.update(u)
 				}
 			}
+		}
+	}
+}
+
+// opened runs once the client has the session's id: the commands it has,
+// and a warning when the sandbox is off or cannot confine commands here.
+func (as *acpSession) opened() {
+	as.advertise()
+	if as.sv.clientCaps().Session.Notices == nil {
+		return // said at the start of the first turn instead
+	}
+	if n := as.s.Sandbox().Notice(); n != "" {
+		as.mu.Lock()
+		as.warned = true
+		as.mu.Unlock()
+		as.update(noticeUpdate{SessionUpdate: "notice", Severity: "warning", Title: n})
+	}
+}
+
+// warnFirstTurn says what opened could not, to a client without notices:
+// once, as the start of the first reply.
+func (as *acpSession) warnFirstTurn() {
+	as.mu.Lock()
+	warned := as.warned
+	as.warned = true
+	as.mu.Unlock()
+	if n := as.s.Sandbox().Notice(); !warned && n != "" {
+		as.update(chunkUpdate{SessionUpdate: "agent_message_chunk", Content: textBlock("**" + n + "**\n\n")})
+	}
+}
+
+// addDirectories makes the client's additional workspace roots readable for
+// this session, as /allow-read would. They are the user's folders, open in
+// the editor beside the project; writing to them still takes /allow-write
+// or writableRoots, so opening a folder never lets the model change it.
+func (as *acpSession) addDirectories(dirs []string) {
+	for _, d := range dirs {
+		if err := as.s.Sandbox().CheckRead(d); err == nil {
+			continue // already readable: outside your home, or a root already
+		}
+		if _, err := as.s.AddReadableRoot(d); err != nil {
+			as.sv.logf("additional directory %s not made readable: %v", d, err)
 		}
 	}
 }

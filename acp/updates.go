@@ -1,9 +1,13 @@
 package acp
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/coding"
@@ -90,26 +94,102 @@ func (as *acpSession) toolStart(id, name string, args map[string]any) toolCallUp
 		Title: toolTitle(name, args), Kind: toolKind(name), Status: toolInProgress,
 		RawInput: args,
 	}
-	if p, ok := args["path"].(string); ok && p != "" {
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(as.cwd, p)
-		}
+	if p := as.pathArg(args); p != "" {
 		u.Locations = []toolLocation{{Path: p}}
 	}
 	return u
 }
 
+// pathArg is a call's path argument resolved as the file tools resolve it:
+// ~ is your home, and a relative path is the project's.
+func (as *acpSession) pathArg(args map[string]any) string {
+	p, _ := args["path"].(string)
+	if p == "" {
+		return ""
+	}
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			p = filepath.Join(home, strings.TrimPrefix(p, "~"))
+		}
+	}
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(as.cwd, p)
+	}
+	return filepath.Clean(p)
+}
+
+// maxDiffBytes bounds a file shown as a diff; a bigger one shows its patch.
+const maxDiffBytes = 1 << 20
+
+// snapshot keeps the text an edit or write is about to change, so its end
+// can show the change as the client's own diff. Only what the sandbox lets
+// the tools read is read: a hidden file stays unread, even for display.
+func (as *acpSession) snapshot(id, name string, args map[string]any) {
+	if name != "edit" && name != "write" {
+		return
+	}
+	p := as.pathArg(args)
+	if p == "" || as.s.Sandbox().CheckRead(p) != nil {
+		return
+	}
+	snap := snapshot{path: p}
+	if info, err := os.Stat(p); err == nil {
+		if !info.Mode().IsRegular() || info.Size() > maxDiffBytes {
+			return
+		}
+		b, err := os.ReadFile(p)
+		if err != nil || !utf8.Valid(b) {
+			return
+		}
+		snap.text, snap.exists = string(b), true
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return
+	}
+	as.mu.Lock()
+	as.before[id] = snap
+	as.mu.Unlock()
+}
+
+// diff is the change a finished edit or write made, from its snapshot.
+func (as *acpSession) diff(id string) (toolCallContent, bool) {
+	as.mu.Lock()
+	snap, ok := as.before[id]
+	delete(as.before, id)
+	as.mu.Unlock()
+	if !ok {
+		return toolCallContent{}, false
+	}
+	b, err := os.ReadFile(snap.path)
+	if err != nil || len(b) > maxDiffBytes || !utf8.Valid(b) {
+		return toolCallContent{}, false
+	}
+	after := string(b)
+	c := toolCallContent{Type: "diff", Path: snap.path, NewText: &after}
+	if snap.exists {
+		c.OldText = &snap.text
+	}
+	return c, true
+}
+
 // toolEnd reports a finished call: its output, plus an edit's patch.
 func (as *acpSession) toolEnd(id, _ string, r agent.ToolResult, isError bool) toolCallUpdate {
 	u := toolCallUpdate{SessionUpdate: "tool_call_update", ToolCallID: id, Status: toolCompleted}
-	if isError {
+	d, _ := r.Details.(map[string]any)
+	if isError || nonZeroExit(d) {
 		u.Status = toolFailed
+	}
+	diff, haveDiff := as.diff(id)
+	if haveDiff && !isError {
+		// The client's own diff view says it all; the tool's "replaced 2
+		// blocks" text adds nothing to it.
+		u.Content = []toolCallContent{diff}
+		return u
 	}
 	if text := r.Text(); text != "" {
 		c := textBlock(text)
 		u.Content = append(u.Content, toolCallContent{Type: "content", Content: &c})
 	}
-	if d, ok := r.Details.(map[string]any); ok {
+	if d != nil {
 		if patch, ok := d["patch"].(string); ok && patch != "" {
 			fence := "```"
 			for strings.Contains(patch, fence) {
@@ -120,6 +200,19 @@ func (as *acpSession) toolEnd(id, _ string, r agent.ToolResult, isError bool) to
 		}
 	}
 	return u
+}
+
+// nonZeroExit reports a command that ran and failed: the model sees it as
+// output, but the client should show the call as failed. Details read back
+// from a session file carry numbers as float64.
+func nonZeroExit(d map[string]any) bool {
+	switch code := d["exit_code"].(type) {
+	case int:
+		return code != 0
+	case float64:
+		return code != 0
+	}
+	return false
 }
 
 // toolKind maps a tool to the icon a client shows for it.

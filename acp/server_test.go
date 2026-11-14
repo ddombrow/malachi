@@ -581,3 +581,112 @@ func TestAllowCommandsWidenTheSandboxWithoutTheModel(t *testing.T) {
 		t.Fatalf("path prompt: %q, %d calls", text(us, "agent_message_chunk"), p.Calls())
 	}
 }
+
+// finals returns each tool call's last update with a final status, by id.
+func finals(us []map[string]any) map[string]map[string]any {
+	out := map[string]map[string]any{}
+	for _, u := range us {
+		if u["sessionUpdate"] == "tool_call_update" && (u["status"] == "completed" || u["status"] == "failed") {
+			out[u["toolCallId"].(string)] = u
+		}
+	}
+	return out
+}
+
+func TestToolCardsShowDiffsAndFailedCommands(t *testing.T) {
+	cwd := t.TempDir()
+	os.WriteFile(filepath.Join(cwd, "a.txt"), []byte("one\ntwo\n"), 0o644)
+	c := start(t, t.TempDir(), testSettings(), fake.New(
+		fake.ToolCalls("", fake.Call{ID: "edit", Name: "edit", Args: map[string]any{"path": "a.txt", "edits": []any{map[string]any{"oldText": "two", "newText": "TWO"}}}}),
+		fake.ToolCalls("", fake.Call{ID: "new", Name: "write", Args: map[string]any{"path": "b.txt", "content": "fresh\n"}}),
+		fake.ToolCalls("", fake.Call{ID: "fail", Name: "bash", Args: map[string]any{"command": "echo nope; exit 3"}}),
+		fake.ToolCalls("", fake.Call{ID: "ok", Name: "bash", Args: map[string]any{"command": "echo fine"}}),
+		fake.Text("done"),
+	))
+	c.initialize()
+	id, _ := c.newSession(cwd)
+	_, us := c.prompt(id, "go")
+	f := finals(us)
+
+	diff := func(callID string) map[string]any {
+		content, _ := f[callID]["content"].([]any)
+		if len(content) != 1 || content[0].(map[string]any)["type"] != "diff" {
+			t.Fatalf("%s: want one diff, got %v", callID, f[callID])
+		}
+		return content[0].(map[string]any)
+	}
+	if d := diff("edit"); d["path"] != filepath.Join(cwd, "a.txt") || d["oldText"] != "one\ntwo\n" || d["newText"] != "one\nTWO\n" {
+		t.Errorf("edit diff: %v", d)
+	}
+	if d := diff("new"); d["oldText"] != nil || d["newText"] != "fresh\n" {
+		t.Errorf("new file diff: %v", d)
+	}
+	if f["fail"]["status"] != "failed" || !strings.Contains(mustJSON(f["fail"]), "nope") {
+		t.Errorf("exit 3 should be failed, with its output: %v", f["fail"])
+	}
+	if f["ok"]["status"] != "completed" {
+		t.Errorf("exit 0: %v", f["ok"])
+	}
+}
+
+func TestSandboxNoticeIsGivenOnce(t *testing.T) {
+	off := testSettings()
+	disabled := false
+	off.Sandbox.Enabled = &disabled
+
+	// A client with notices gets one after the session opens.
+	c := start(t, t.TempDir(), off, fake.New(fake.Text("hi")))
+	resp, _ := c.await(c.call("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{"session": map[string]any{"notices": map[string]any{}}}}))
+	result(t, resp)
+	id, _ := c.newSession(t.TempDir())
+	n := c.until("notice", func(u map[string]any) bool { return u["sessionUpdate"] == "notice" })
+	if n["severity"] != "warning" || !strings.Contains(n["title"].(string), "Sandbox off") {
+		t.Fatalf("notice: %v", n)
+	}
+	if _, us := c.prompt(id, "hi"); strings.Contains(text(us, "agent_message_chunk"), "Sandbox off") {
+		t.Fatalf("warned twice: %q", text(us, "agent_message_chunk"))
+	}
+
+	// One without them hears it at the start of the first reply, once.
+	c = start(t, t.TempDir(), off, fake.New(fake.Text("hi"), fake.Text("again")))
+	c.initialize()
+	id, _ = c.newSession(t.TempDir())
+	if _, us := c.prompt(id, "hi"); !strings.HasPrefix(text(us, "agent_message_chunk"), "**Sandbox off") {
+		t.Fatalf("first reply: %q", text(us, "agent_message_chunk"))
+	}
+	if _, us := c.prompt(id, "hi"); text(us, "agent_message_chunk") != "again" {
+		t.Fatalf("second reply: %q", text(us, "agent_message_chunk"))
+	}
+
+	// A sandbox in full force says nothing.
+	c = start(t, t.TempDir(), testSettings(), fake.New(fake.Text("hi")))
+	c.initialize()
+	id, _ = c.newSession(t.TempDir())
+	if _, us := c.prompt(id, "hi"); text(us, "agent_message_chunk") != "hi" {
+		t.Fatalf("sandboxed reply: %q", text(us, "agent_message_chunk"))
+	}
+}
+
+func TestAdditionalDirectoriesAreReadableOnly(t *testing.T) {
+	dir, err := os.MkdirTemp(os.Getenv("HOME"), "malachi-acp-extra-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	c := start(t, t.TempDir(), testSettings())
+	if caps := c.initialize()["agentCapabilities"].(map[string]any)["sessionCapabilities"].(map[string]any); caps["additionalDirectories"] == nil {
+		t.Fatalf("not advertised: %v", caps)
+	}
+	resp, _ := c.await(c.call("session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}, "additionalDirectories": []any{dir}}))
+	as, _ := c.sv.session(result(t, resp)["sessionId"].(string))
+	if err := as.s.Sandbox().CheckRead(filepath.Join(dir, "f")); err != nil {
+		t.Errorf("not readable: %v", err)
+	}
+	if err := as.s.Sandbox().CheckWrite(filepath.Join(dir, "f")); err == nil {
+		t.Error("an additional directory became writable")
+	}
+	resp, _ = c.await(c.call("session/new", map[string]any{"cwd": t.TempDir(), "additionalDirectories": []any{"relative/dir"}}))
+	if resp["error"] == nil {
+		t.Error("relative additional directory accepted")
+	}
+}

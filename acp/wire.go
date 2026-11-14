@@ -27,6 +27,7 @@ type initializeParams struct {
 type clientCapabilities struct {
 	Session struct {
 		Compaction *struct{} `json:"compaction,omitempty"`
+		Notices    *struct{} `json:"notices,omitempty"`
 	} `json:"session"`
 }
 
@@ -57,7 +58,8 @@ type mcpCapabilities struct {
 }
 
 type sessionCapabilities struct {
-	List *struct{} `json:"list,omitempty"`
+	List                  *struct{} `json:"list,omitempty"`
+	AdditionalDirectories *struct{} `json:"additionalDirectories,omitempty"`
 }
 
 // mcpServer is one server a client passes with a session. Only stdio
@@ -78,8 +80,9 @@ type envVar struct {
 }
 
 type newSessionParams struct {
-	Cwd        string      `json:"cwd"`
-	MCPServers []mcpServer `json:"mcpServers"`
+	Cwd                   string      `json:"cwd"`
+	MCPServers            []mcpServer `json:"mcpServers"`
+	AdditionalDirectories []string    `json:"additionalDirectories,omitempty"`
 }
 
 type newSessionResult struct {
@@ -88,9 +91,10 @@ type newSessionResult struct {
 }
 
 type loadSessionParams struct {
-	SessionID  string      `json:"sessionId"`
-	Cwd        string      `json:"cwd"`
-	MCPServers []mcpServer `json:"mcpServers"`
+	SessionID             string      `json:"sessionId"`
+	Cwd                   string      `json:"cwd"`
+	MCPServers            []mcpServer `json:"mcpServers"`
+	AdditionalDirectories []string    `json:"additionalDirectories,omitempty"`
 }
 
 type loadSessionResult struct {
@@ -209,8 +213,12 @@ const (
 )
 
 type toolCallContent struct {
-	Type    string        `json:"type"` // content
+	Type    string        `json:"type"` // content or diff
 	Content *contentBlock `json:"content,omitempty"`
+	// A diff's file, and its text before (nil for a new file) and after.
+	Path    string  `json:"path,omitempty"`
+	OldText *string `json:"oldText,omitempty"`
+	NewText *string `json:"newText,omitempty"`
 }
 
 type toolLocation struct {
@@ -242,6 +250,13 @@ type usageUpdate struct {
 	SessionUpdate string `json:"sessionUpdate"` // usage_update
 	Used          int64  `json:"used"`
 	Size          int64  `json:"size"`
+}
+
+type noticeUpdate struct {
+	SessionUpdate string `json:"sessionUpdate"` // notice
+	Severity      string `json:"severity"`      // info, warning or error
+	Title         string `json:"title"`
+	Description   string `json:"description,omitempty"`
 }
 
 type compactionUpdate struct {

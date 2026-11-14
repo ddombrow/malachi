@@ -113,7 +113,7 @@ func (sv *Server) request(ctx context.Context, method string, params json.RawMes
 			AgentCapabilities: agentCapabilities{
 				LoadSession:         true,
 				PromptCapabilities:  promptCapabilities{EmbeddedContext: true},
-				SessionCapabilities: sessionCapabilities{List: &struct{}{}},
+				SessionCapabilities: sessionCapabilities{List: &struct{}{}, AdditionalDirectories: &struct{}{}},
 			},
 			AgentInfo:   implementation{Name: "malachi", Title: "malachi", Version: coding.Version},
 			AuthMethods: []any{},
@@ -125,11 +125,11 @@ func (sv *Server) request(ctx context.Context, method string, params json.RawMes
 		if err := decode(params, &p); err != nil {
 			return nil, err
 		}
-		as, err := sv.open(p.Cwd, "", p.MCPServers)
+		as, err := sv.open(p.Cwd, "", p.MCPServers, p.AdditionalDirectories)
 		if err != nil {
 			return nil, err
 		}
-		return followed{newSessionResult{SessionID: as.id, ConfigOptions: as.configOptions()}, as.advertise}, nil
+		return followed{newSessionResult{SessionID: as.id, ConfigOptions: as.configOptions()}, as.opened}, nil
 	case "session/load":
 		var p loadSessionParams
 		if err := decode(params, &p); err != nil {
@@ -138,12 +138,12 @@ func (sv *Server) request(ctx context.Context, method string, params json.RawMes
 		if !validSessionID(p.SessionID) {
 			return nil, invalidParams(fmt.Errorf("unknown session id %q", p.SessionID))
 		}
-		as, err := sv.open(p.Cwd, p.SessionID, p.MCPServers)
+		as, err := sv.open(p.Cwd, p.SessionID, p.MCPServers, p.AdditionalDirectories)
 		if err != nil {
 			return nil, err
 		}
 		as.replay()
-		return followed{loadSessionResult{ConfigOptions: as.configOptions()}, as.advertise}, nil
+		return followed{loadSessionResult{ConfigOptions: as.configOptions()}, as.opened}, nil
 	case "session/list":
 		var p listSessionsParams
 		if err := decode(params, &p); err != nil {
@@ -218,9 +218,14 @@ func validSessionID(id string) bool {
 }
 
 // open opens a new session in cwd, or resumes the one called resume.
-func (sv *Server) open(cwd, resume string, servers []mcpServer) (*acpSession, error) {
+func (sv *Server) open(cwd, resume string, servers []mcpServer, dirs []string) (*acpSession, error) {
 	if !filepath.IsAbs(cwd) {
 		return nil, invalidParams(fmt.Errorf("cwd must be an absolute path, not %q", cwd))
+	}
+	for _, d := range dirs {
+		if !filepath.IsAbs(d) {
+			return nil, invalidParams(fmt.Errorf("additional directories must be absolute paths, not %q", d))
+		}
 	}
 	opts := sv.opts.Session
 	opts.Cwd, opts.Resume = cwd, resume
@@ -243,6 +248,7 @@ func (sv *Server) open(cwd, resume string, servers []mcpServer) (*acpSession, er
 		return nil, invalidParams(fmt.Errorf("unknown session id %q", resume))
 	}
 	as := newSession(sv, s)
+	as.addDirectories(dirs)
 	sv.mu.Lock()
 	old := sv.sessions[as.id]
 	sv.sessions[as.id] = as
