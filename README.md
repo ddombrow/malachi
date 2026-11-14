@@ -439,9 +439,17 @@ or ignored; what tools may touch is the [sandbox](#sandbox)'s job.
 Commands the model runs are confined by the operating system, and the file
 tools (read, write, edit, grep, glob) check the same rules themselves:
 
-- **Writes** only under the project, the temp directories, the user cache
-  directory (Go's build cache, among others), the Go module cache, and npm,
-  cargo and rustup caches.
+- **Writes** only under the project, the temp directories, build and
+  package caches, the Go module cache, and npm, cargo and rustup caches. On
+  macOS that is the whole user cache directory. On Linux it is the caches of
+  compilers, package managers, linters and test tools inside `~/.cache`, by
+  name (`go-build`, `pip`, `uv`, `yarn`, `pnpm`, `ms-playwright`, `ccache`
+  and so on), and not the directory: shells load code from it (oh-my-zsh's
+  and fish's completions, Powerlevel10k's instant prompt), so a file written
+  there would run in your next shell. A tool whose cache is not on the list,
+  or has never run and so has no directory yet, fails to write it: create
+  the directory and add it to `"writableRoots"`. `/dev/shm` is writable
+  too, since semaphores and shared memory live there.
 - **Reads in your home directory** only under the project, the writable
   directories and the toolchains commands need to run: cargo, rustup, nvm,
   pyenv, rbenv, asdf, volta, bun, deno, mise, uv, pnpm, sdkman, gradle and
@@ -459,7 +467,11 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   `~/.config/gcloud`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`,
   `~/.pypirc`, cargo and Terraform credentials, Maven's `settings.xml` and
   Gradle's `gradle.properties` (repository passwords and signing keys; both
-  tools build without them), and the macOS keychains.
+  tools build without them), and the macOS keychains. malachi's own cache is
+  hidden too (it holds the script interpreter as machine code, which
+  malachi runs), and on Linux so are your runtime directory
+  (`/run/user/<uid>`: display authority cookies, and podman's registry
+  credentials) and the systemd journal.
 - **The network** is off by default: commands cannot open IP connections,
   listen for them (a dev server on localhost included), or resolve names
   (which would carry hostnames out as DNS queries), and on Linux cannot

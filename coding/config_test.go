@@ -92,8 +92,14 @@ func TestSandboxSettings(t *testing.T) {
 	if want := []string{filepath.Join(userHome, "scratch"), filepath.Join(cwd, "rel")}; !slices.Equal(c.Writable, want) {
 		t.Fatalf("writable %v, want %v", c.Writable, want)
 	}
-	if !slices.Equal(c.Hidden, []string{"/etc/secret"}) {
-		t.Fatalf("hidden %v", c.Hidden)
+	// The user's hidden path, and malachi's own cache: the compiled script
+	// interpreter it loads must not be a command's to replace.
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"/etc/secret", filepath.Join(cache, "malachi")}; !slices.Equal(c.Hidden, want) {
+		t.Fatalf("hidden %v, want %v", c.Hidden, want)
 	}
 	if !slices.Equal(c.Unhidden, []string{filepath.Join(userHome, ".m2", "settings.xml")}) || !c.GPU || !c.PTY || !slices.Equal(c.Services, []string{"com.apple.testmanagerd"}) {
 		t.Fatalf("unhidden %v gpu %v", c.Unhidden, c.GPU)

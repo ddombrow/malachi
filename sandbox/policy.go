@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -119,7 +120,19 @@ func Build(c Config) Policy {
 	// containers, it would make the whole home directory writable.
 	writable := []string{c.Cwd, safeDerivedRoot("/tmp", userHome), safeDerivedRoot(os.TempDir(), userHome)}
 	if dir, err := os.UserCacheDir(); err == nil {
-		writable = append(writable, safeDerivedRoot(dir, userHome)) // go-build, pip, and most other caches
+		if runtime.GOOS == "linux" {
+			for _, name := range linuxCaches {
+				writable = append(writable, safeDerivedRoot(filepath.Join(dir, name), userHome))
+			}
+		} else {
+			writable = append(writable, safeDerivedRoot(dir, userHome)) // go-build, pip, and most other caches
+		}
+	}
+	if runtime.GOOS == "linux" {
+		// POSIX semaphores and shared memory are files here: without it
+		// Python's multiprocessing (and so every process pool) cannot make
+		// a lock, and headless browsers cannot start.
+		writable = append(writable, "/dev/shm")
 	}
 	writable = append(writable, safeDerivedRoot(os.Getenv("GOCACHE"), userHome), safeDerivedRoot(goModCache(userHome), userHome),
 		inHome(".npm"), inHome(".cargo/registry"), inHome(".cargo/git"), inHome(".rustup"),
@@ -164,6 +177,9 @@ func Build(c Config) Policy {
 	for _, rel := range defaultHidden {
 		defaults = append(defaults, inHome(rel))
 	}
+	if runtime.GOOS == "linux" {
+		defaults = append(defaults, linuxHidden(os.Getenv("XDG_RUNTIME_DIR"), os.Getuid())...)
+	}
 	unhidden := canonicalAll(c.Unhidden)
 	defaults = slices.DeleteFunc(canonicalAll(defaults), func(h string) bool {
 		return slices.ContainsFunc(unhidden, func(u string) bool { return within(h, u) })
@@ -183,6 +199,54 @@ func Build(c Config) Policy {
 	p.Writable, p.Hidden = canonicalAll(writable), hidden
 	p.Private, p.Readable = canonicalAll(private), canonicalAll(readable)
 	return p
+}
+
+// linuxCaches are the directories under the user's cache directory
+// (~/.cache) that commands may write: the caches of compilers, package
+// managers, linters and test tools, by name. The cache directory as a whole
+// is not writable, because it is not only caches of that kind. Shells load
+// code from it (oh-my-zsh's and fish's completions, Powerlevel10k's instant
+// prompt, which .zshrc sources), so a file written there runs in the user's
+// next shell, outside the sandbox; and browsers and other programs keep
+// what they fetched there. A tool whose cache is not listed needs its
+// directory added as a writable root.
+//
+// Hugging Face's directory is listed by its parts, since the login token is
+// kept beside them.
+var linuxCaches = []string{
+	// Go
+	"go-build", "golangci-lint", "gopls", "staticcheck", "goimports",
+	// Python
+	"pip", "pipx", "uv", "pypoetry", "pdm", "hatch", "pre-commit", "ruff", "black", "pylint", "jedi", "matplotlib",
+	"huggingface/hub", "huggingface/datasets", "huggingface/xet", "huggingface/modules", "torch",
+	// JavaScript
+	"yarn", "pnpm", "deno", "node-gyp", "node", "typescript", "turbo", "electron", "electron-builder",
+	"ms-playwright", "puppeteer", "Cypress",
+	// C, C++, Rust, Zig
+	"clang", "ccache", "sccache", "zig", "bazel", "bazelisk", "vcpkg", "conan",
+	// JVM, .NET, Ruby, PHP, Dart, Elixir, Haskell, Nix
+	"coursier", "JNA", "kotlin", "NuGetPackages", "bundle", "composer", "dart", "mix", "rebar3", "cabal", "nix",
+	// Infrastructure tools
+	"helm", "terraform", "ansible",
+}
+
+// linuxHidden are what a Linux system keeps outside the home directory that
+// a command has no business reading:
+//
+//   - The user's runtime directory (/run/user/<uid>): the X11 and ICE
+//     authority cookies, the desktop's settings database, and where podman
+//     and skopeo keep registry credentials (containers/auth.json).
+//   - The systemd journal, which holds what every program of the user's has
+//     logged.
+//
+// They are hidden rather than private so that the directories holding them
+// (/run, /var/log) can still be listed.
+func linuxHidden(runtimeDir string, uid int) []string {
+	out := []string{"/run/user/" + strconv.Itoa(uid), "/var/log/journal", "/run/log/journal"}
+	if filepath.IsAbs(runtimeDir) {
+		out = append(out, runtimeDir)
+	}
+	return out
 }
 
 // darwinClangCaches are where clang and the Swift interpreter keep compiled

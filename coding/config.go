@@ -269,6 +269,15 @@ func (s *Settings) SandboxConfig(cwd, home string) sandbox.Config {
 		}
 		return out
 	}
+	// malachi's own cache holds the script interpreter compiled to machine
+	// code, which malachi loads and runs. It sits in the user's cache
+	// directory, which commands may write (all of it on macOS), so it is
+	// hidden like malachi's home: a command that could replace it would be
+	// running code in malachi itself.
+	hidden := expand(sb.HiddenPaths)
+	if dir, err := os.UserCacheDir(); err == nil {
+		hidden = append(hidden, filepath.Join(dir, "malachi"))
+	}
 	return sandbox.Config{
 		Disabled:     sb.Enabled != nil && !*sb.Enabled,
 		NoNet:        sb.Network == nil || !*sb.Network, // off unless asked for
@@ -280,7 +289,7 @@ func (s *Settings) SandboxConfig(cwd, home string) sandbox.Config {
 		Home:         home,
 		Writable:     expand(sb.WritableRoots),
 		Readable:     expand(sb.ReadableRoots),
-		Hidden:       expand(sb.HiddenPaths),
+		Hidden:       hidden,
 		Unhidden:     expand(sb.UnhiddenPaths),
 		ReadAnywhere: sb.ReadAnywhere,
 	}
