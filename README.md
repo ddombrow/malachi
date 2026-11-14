@@ -490,13 +490,17 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   one made outside the sandbox; that takes a recent kernel (Landlock ABI 9),
   and on an older one commands cannot create Unix sockets at all.
   `"unixSockets": true` lifts this, along with that protection.
-- **Devices are out of reach on macOS**, the GPU included, so a command
-  that renders or computes on it finds no device. `"gpu": true` opens the
-  graphics drivers by name, for rendering and compute off screen, and
-  nothing else: a command still cannot open a window. It is off by default
-  because those drivers are a large part of the kernel to expose. Apple
-  silicon is tested; the drivers of Intel Macs are listed but untested. The
-  setting changes nothing on Linux.
+- **Devices are out of reach**, the GPU included, so a command that renders
+  or computes on it finds no device (on Linux, Mesa falls back to drawing
+  on the CPU). `"gpu": true` opens the graphics drivers by name, for
+  rendering and compute off screen, and nothing else: a command still
+  cannot open a window. It is off by default because those drivers are a
+  large part of the kernel to expose. On macOS, Apple silicon is tested;
+  the drivers of Intel Macs are listed but untested. On Linux it opens the
+  render nodes (`/dev/dri/renderD*`), which carry rendering and compute and
+  cannot set a display's mode, and leaves the display's own nodes closed;
+  an AMD GPU under Mesa is tested. NVIDIA's proprietary driver, ROCm's
+  compute device and WSL's GPU are listed but untested.
 - **Terminals are closed.** A command runs without a controlling terminal
   and cannot open a terminal device, so it cannot read what you type in
   your other terminal windows or write to them. On macOS that also means no

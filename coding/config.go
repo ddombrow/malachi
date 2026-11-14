@@ -231,8 +231,9 @@ type SandboxSettings struct {
 	Enabled     *bool `json:"enabled,omitempty"` // default true
 	Network     *bool `json:"network,omitempty"` // default false
 	UnixSockets bool  `json:"unixSockets,omitempty"`
-	// GPU lets commands use the graphics processor off screen (macOS; it
-	// changes nothing on Linux).
+	// GPU lets commands use the graphics processor off screen: its drivers
+	// on macOS, its render nodes on Linux. Off by default, since it opens a
+	// large part of the kernel.
 	GPU bool `json:"gpu,omitempty"`
 	// PTY lets commands create pseudo-terminals (script, tmux). On macOS
 	// that also opens your other terminal windows to them, so it is off by

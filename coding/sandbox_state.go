@@ -63,7 +63,7 @@ func (st SandboxState) Describe() string {
 	}
 	fmt.Fprintf(&b, "  network: %s\n  unix sockets: %s\n", network, sockets)
 	if st.GPU {
-		b.WriteString("  gpu: usable off screen (macOS)\n")
+		b.WriteString("  gpu: usable off screen\n")
 	}
 	if st.PTY {
 		if runtime.GOOS == "linux" {

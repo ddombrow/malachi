@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"syscall"
 
@@ -15,6 +16,38 @@ import (
 
 // devices commands write to as a matter of course.
 var devices = []string{"/dev/null", "/dev/zero", "/dev/full", "/dev/random", "/dev/urandom", "/dev/tty"}
+
+// gpuDevicePatterns are the device nodes a command may open with Policy.GPU:
+// the ones a program renders and computes through, and none that drive a
+// display.
+//
+// /dev/dri/renderD* are the kernel's render nodes, which every open driver
+// (Intel, AMD, Nouveau and the rest of Mesa) offers for exactly this: they
+// carry rendering and compute and refuse mode setting. The card* nodes
+// beside them, which set modes and are what a display server holds, stay
+// closed. Rendering on an AMD GPU through its render node is tested here.
+//
+// The rest are the vendors' own, as their documentation lists them, and are
+// untested here: NVIDIA's proprietary driver (the control device, one device
+// per GPU, unified memory for CUDA, and its capability files; not
+// nvidia-modeset, which is the display's), AMD's compute interface (ROCm),
+// and the GPU of the Windows Subsystem for Linux.
+var gpuDevicePatterns = []string{
+	"/dev/dri/renderD*",
+	"/dev/nvidiactl", "/dev/nvidia[0-9]*", "/dev/nvidia-uvm", "/dev/nvidia-uvm-tools", "/dev/nvidia-caps/*",
+	"/dev/kfd",
+	"/dev/dxg",
+}
+
+// gpuDevices are the GPU device nodes present on this system.
+func gpuDevices() []string {
+	var out []string
+	for _, pattern := range gpuDevicePatterns {
+		matches, _ := filepath.Glob(pattern)
+		out = append(out, matches...)
+	}
+	return out
+}
 
 // runHelper confines this process to the spec's policy and execs its
 // command. It returns only on failure.
@@ -94,6 +127,9 @@ func restrictFS(p Policy, own, ptys bool) error {
 		landlock.RWDirs(rwDirs...).WithRefer().IgnoreIfMissing(),
 		landlock.RWFiles(rwFiles...).IgnoreIfMissing(),
 		landlock.RWFiles(devices...).IgnoreIfMissing(),
+	}
+	if p.GPU {
+		rules = append(rules, landlock.RWFiles(gpuDevices()...).WithIoctlDev().IgnoreIfMissing())
 	}
 	if ptys {
 		rules = append(rules,

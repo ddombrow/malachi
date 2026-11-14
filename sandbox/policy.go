@@ -37,8 +37,8 @@ type Policy struct {
 	UnixSockets bool
 	// GPU lets commands use the graphics processor, for rendering and
 	// compute off screen. It opens the GPU's drivers, a large kernel
-	// surface, and nothing else: no window, no display. macOS only; see
-	// gpuDrivers.
+	// surface, and nothing else: no window, no display. See gpuDrivers
+	// (macOS) and gpuDevicePatterns (Linux).
 	GPU bool
 	// PTY lets commands create pseudo-terminals (script, tmux, expect, a
 	// debugger's inferior). macOS cannot tell a terminal a command made
