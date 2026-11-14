@@ -191,7 +191,10 @@ saved and resumed like any other.
   `session/load`, which replays the conversation).
 - **The sandbox is the boundary.** malachi asks no per-tool permission, and
   uses neither the editor's file system nor its terminal: commands and file
-  tools run in malachi's own sandbox, as in the TUI.
+  tools run in malachi's own sandbox, as in the TUI. Zed's agent sandbox
+  settings (`agent.sandbox_permissions`, its writable paths) are for Zed's
+  own agent and change nothing here; widen malachi's with `/allow-read`,
+  `/allow-write`, the network picker, or `sandbox` in `~/.malachi/settings.json`.
 - **Project trust.** When a project's instruction files are undecided, the
   first prompt brings up the editor's permission dialog: trust for this
   session, always, not now, or never. Dismissing it sends nothing.
