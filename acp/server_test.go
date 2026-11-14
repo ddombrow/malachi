@@ -545,7 +545,7 @@ func TestAllowCommandsWidenTheSandboxWithoutTheModel(t *testing.T) {
 	c.initialize()
 	id, _ := c.newSession(t.TempDir())
 	ad := c.until("available_commands_update", func(u map[string]any) bool { return u["sessionUpdate"] == "available_commands_update" })
-	if s := mustJSON(ad["availableCommands"]); !strings.Contains(s, `"allow-read"`) || !strings.Contains(s, `"allow-write"`) {
+	if s := mustJSON(ad["availableCommands"]); !strings.Contains(s, `"sandbox"`) || !strings.Contains(s, `"allow-read"`) || !strings.Contains(s, `"allow-write"`) {
 		t.Fatalf("commands: %s", s)
 	}
 	as, _ := c.sv.session(id)
@@ -562,6 +562,9 @@ func TestAllowCommandsWidenTheSandboxWithoutTheModel(t *testing.T) {
 	}
 	if err := as.s.Sandbox().CheckWrite(filepath.Join(dir, "f")); err != nil {
 		t.Fatalf("not writable after /allow-write: %v", err)
+	}
+	if _, us = c.prompt(id, "/sandbox"); !strings.Contains(text(us, "agent_message_chunk"), "network: off") || !strings.Contains(text(us, "agent_message_chunk"), dir) {
+		t.Fatalf("/sandbox does not show the network and the added root: %q", text(us, "agent_message_chunk"))
 	}
 	if _, us = c.prompt(id, "/allow-write"); !strings.Contains(text(us, "agent_message_chunk"), "Usage: /allow-write") {
 		t.Fatalf("no usage: %q", text(us, "agent_message_chunk"))

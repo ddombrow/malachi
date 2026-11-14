@@ -6,10 +6,11 @@ import (
 )
 
 // commands are the slash commands malachi handles itself, never sending
-// them to the model. They are the user widening the sandbox for one
-// session, as the same commands do in the TUI: the model cannot type into
+// them to the model. They show the sandbox, or are the user widening it
+// for one session, as the same commands do in the TUI: the model cannot type into
 // the editor's prompt box, so nothing it does reaches them.
 var commands = []command{
+	{Name: "sandbox", Description: "Show what malachi's sandbox lets commands and file tools touch in this session"},
 	{Name: "allow-read", Description: "Allow reading a directory in your home for this session", Input: &commandInput{Hint: "directory"}},
 	{Name: "allow-write", Description: "Allow writes to a directory for this session", Input: &commandInput{Hint: "directory"}},
 }
@@ -43,6 +44,10 @@ func slashCommand(prompt []contentBlock) (name, arg string, ok bool) {
 func (as *acpSession) command(name, arg string) {
 	var msg string
 	switch name {
+	case "sandbox":
+		// The TUI's own description, fenced so its indentation survives
+		// the client's markdown.
+		msg = "```text\n" + strings.TrimRight(as.s.Sandbox().Describe(), "\n") + "\n```"
 	case "allow-read":
 		root, err := as.s.AddReadableRoot(arg)
 		if err != nil {

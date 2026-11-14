@@ -202,7 +202,8 @@ saved and resumed like any other.
   `"acp": {"editorMcpServers": true}`; then they run under the same rules as
   `mcp.json`'s (installed commands, sandboxed, a minimal environment), and
   `mcp.json` wins a name clash. Only stdio servers are accepted.
-- **Slash commands.** `/allow-read <dir>` and `/allow-write <dir>` widen
+- **Slash commands.** `/sandbox` shows what malachi's sandbox allows in that
+  session (the same report as in the TUI). `/allow-read <dir>` and `/allow-write <dir>` widen
   the sandbox for that session, with the same limits as in the TUI (not
   your whole home, nothing hidden). malachi handles them itself; they never
   reach the model.
