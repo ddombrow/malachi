@@ -337,3 +337,34 @@ func TestSessionMCPCarriesAcrossReopen(t *testing.T) {
 		t.Errorf("server restarted across Reopen: %s then %s", first, again)
 	}
 }
+
+func TestExtraMCPServersFollowMCPJSONRules(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	write(t, home, MCPConfigFile, `{"mcpServers":{"shared":{"command":"/bin/mcp-json-wins","disabled":true}}}`)
+	opts := testOpts(t, home, cwd, fake.New(fake.Text("ok")))
+	opts.ExtraMCPServers = map[string]MCPServerConfig{
+		"shared":   {Command: "/bin/editor-loses"},
+		"launcher": {Command: "npx", Args: []string{"-y", "pkg"}},
+	}
+	s, err := Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	byName := map[string]MCPServerState{}
+	for _, st := range s.MCPState().Servers {
+		byName[st.Name] = st
+	}
+	if len(byName) != 2 {
+		t.Fatalf("servers: %+v", byName)
+	}
+	if st := byName["shared"]; st.Status != MCPDisabled {
+		t.Errorf("mcp.json's entry should win the clash: %+v", st)
+	}
+	if st := byName["launcher"]; !strings.Contains(st.Error, "fetches and runs packages") {
+		t.Errorf("a launcher from the editor must be refused: %+v", st)
+	}
+	if s.ID() == "" || !strings.HasSuffix(s.Path(), s.ID()+".jsonl") {
+		t.Errorf("ID %q does not name the session file %q", s.ID(), s.Path())
+	}
+}

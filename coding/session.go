@@ -46,6 +46,11 @@ type Options struct {
 	// Empty uses settings (off by default).
 	Network string
 
+	// ExtraMCPServers are servers added to mcp.json's for this session, such
+	// as the ones an ACP client passes. They get mcp.json's rules; on a name
+	// clash mcp.json wins. A manager handed over by Reopen keeps its own.
+	ExtraMCPServers map[string]MCPServerConfig
+
 	// mcp is a running MCP manager handed over by the session this one
 	// replaces (Reopen).
 	mcp *MCPManager
@@ -135,6 +140,10 @@ type persistedMessage struct {
 	message agent.Message
 	entryID string
 }
+
+// ID is the conversation's id: the session file's name without .jsonl, or
+// a random id for a session kept in memory. Resuming by it finds the file.
+func (s *Session) ID() string { return s.sessionID }
 
 // SessionsDir returns the directory holding cwd's sessions, named like tau's
 // project session directories: a readable slug plus a short path digest.
@@ -327,6 +336,7 @@ func Open(opts Options) (*Session, error) {
 	s.mcp = opts.mcp
 	if freshMCP {
 		cfg, err := LoadMCPConfig(s.home)
+		cfg = cfg.with(opts.ExtraMCPServers)
 		s.mcp = newMCPManager(cfg, err, cwd, toolOpts, s.sandboxPolicy, s.diag)
 	}
 	s.mcp.bind(s.sandboxPolicy, nil, codeMode)

@@ -61,6 +61,21 @@ func (c MCPConfig) Names() []string {
 	return names
 }
 
+// with returns c plus extra's servers, keeping c's on a name clash.
+func (c MCPConfig) with(extra map[string]MCPServerConfig) MCPConfig {
+	if len(extra) == 0 {
+		return c
+	}
+	servers := make(map[string]MCPServerConfig, len(c.Servers)+len(extra))
+	for n, sc := range extra {
+		servers[n] = sc
+	}
+	for n, sc := range c.Servers {
+		servers[n] = sc
+	}
+	return MCPConfig{Servers: servers}
+}
+
 // LoadMCPConfig reads <home>/mcp.json. A missing file is no servers.
 func LoadMCPConfig(home string) (MCPConfig, error) {
 	b, err := os.ReadFile(filepath.Join(home, MCPConfigFile))

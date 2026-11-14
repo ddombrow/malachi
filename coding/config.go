@@ -67,7 +67,15 @@ type Settings struct {
 	// CodeMode offers the script tool; nil means on.
 	CodeMode  *bool                     `json:"codeMode,omitempty"`
 	Sandbox   SandboxSettings           `json:"sandbox,omitzero"`
+	ACP       ACPSettings               `json:"acp,omitzero"`
 	Providers map[string]ProviderConfig `json:"providers,omitempty"`
+}
+
+// ACPSettings configure the ACP agent mode (-mode acp).
+type ACPSettings struct {
+	// EditorMCPServers accepts the stdio MCP servers an ACP client passes
+	// with a session, under mcp.json's rules. Off, they are ignored.
+	EditorMCPServers bool `json:"editorMcpServers,omitempty"`
 }
 
 // CodeModeEnabled reports whether the script tool is offered.
