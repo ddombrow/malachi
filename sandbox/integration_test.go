@@ -686,3 +686,33 @@ func TestOtherTerminalsAreClosed(t *testing.T) {
 		t.Errorf("wrote to another terminal: %v %s", ok, out)
 	}
 }
+
+// A symlink beside a hidden path must not bring it back. Landlock grants are
+// made entry by entry around a hidden path, and a rule on a link lands on
+// what the link leads to: a link to the hidden directory, or to one above
+// it, would grant the very thing being carved around.
+func TestSandboxedSymlinkBesideHidden(t *testing.T) {
+	requireBackend(t)
+	p, project, _, _, secret := fixture(t)
+	if err := os.WriteFile(filepath.Join(secret, "key"), []byte("hunter2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(secret)
+	for name, target := range map[string]string{"to-secret": secret, "to-parent": root} {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(secret, "key"),
+		filepath.Join(root, "to-secret", "key"),
+		filepath.Join(root, "to-parent", "secrets", "key"),
+	} {
+		if out, ok := sh(t, p, project, "cat "+path); ok {
+			t.Errorf("read a hidden file through %s: %s", path, out)
+		}
+		if _, ok := sh(t, p, project, "echo x >> "+path); ok {
+			t.Errorf("wrote a hidden file through %s", path)
+		}
+	}
+}

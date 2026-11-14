@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -40,6 +41,15 @@ func carve(root string, hidden []string) (grant, split []string) {
 	}
 	split = []string{root}
 	for _, e := range entries {
+		// A link is never granted. Landlock puts a rule on what a path
+		// leads to, so a link to the hidden path, or to a directory above
+		// it (/var/run to /run, a home directory reached through a link),
+		// would grant what is being carved around. Nothing is lost: a link
+		// can be read and followed without a rule, and where it leads is
+		// judged by the rules for that place.
+		if e.Type()&fs.ModeSymlink != 0 {
+			continue
+		}
 		child := filepath.Join(root, e.Name())
 		g, s := carve(child, under)
 		grant = append(grant, g...)
