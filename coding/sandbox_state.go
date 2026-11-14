@@ -3,6 +3,7 @@ package coding
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -65,7 +66,11 @@ func (st SandboxState) Describe() string {
 		b.WriteString("  gpu: usable off screen (macOS)\n")
 	}
 	if st.PTY {
-		b.WriteString("  pseudo-terminals: on; commands can also read and write your other terminal windows (macOS)\n")
+		if runtime.GOOS == "linux" {
+			b.WriteString("  pseudo-terminals: on, in a set of the command's own; commands run in a user namespace, where files that are not yours appear owned by nobody\n")
+		} else {
+			b.WriteString("  pseudo-terminals: on; commands can also read and write your other terminal windows (macOS)\n")
+		}
 	}
 	if len(st.Services) > 0 {
 		b.WriteString("  extra system services (macOS): " + strings.Join(st.Services, ", ") + "\n")

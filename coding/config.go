@@ -236,7 +236,9 @@ type SandboxSettings struct {
 	GPU bool `json:"gpu,omitempty"`
 	// PTY lets commands create pseudo-terminals (script, tmux). On macOS
 	// that also opens your other terminal windows to them, so it is off by
-	// default. It changes nothing on Linux.
+	// default. On Linux they get a set of their own instead, at the price
+	// of running in a user namespace, where files that are not yours appear
+	// owned by nobody; that is why it is off by default there.
 	PTY bool `json:"pty,omitempty"`
 	// Services are system services commands may reach beyond the built-in
 	// ones, by exact name (macOS; nothing on Linux). Each acts outside

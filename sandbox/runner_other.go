@@ -14,9 +14,9 @@ func Available() error {
 	return errors.New("no sandbox backend for " + runtime.GOOS)
 }
 
-// Weakness says what the sandbox cannot enforce on this system though it
-// runs, or "" when it enforces everything it promises.
-func Weakness() string { return "" }
+// Weakness says what the sandbox cannot do for p on this system though it
+// runs, or "" when it does everything it promises.
+func Weakness(Policy) string { return "" }
 
 func command(context.Context, Policy, string, ...string) (*exec.Cmd, error) {
 	return nil, Available()

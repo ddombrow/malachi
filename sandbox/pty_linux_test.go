@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -123,5 +124,60 @@ func TestOwnUnixSocketsNeedsANewKernel(t *testing.T) {
 		if got := ownUnixSockets(Policy{Enabled: true, UnixSockets: c.allowAll}, c.abi); got != c.want {
 			t.Errorf("ownUnixSockets(unixSockets=%v, abi %d) = %v, want %v", c.allowAll, c.abi, got, c.want)
 		}
+	}
+}
+
+// requirePTYBackend skips where commands cannot be given pseudo-terminals:
+// a system that does not let an unprivileged process make a user namespace
+// (some CI runners).
+func requirePTYBackend(t *testing.T) {
+	t.Helper()
+	if err := privatePTYAvailable(); err != nil {
+		t.Skipf("no private pseudo-terminals here: %v", err)
+	}
+}
+
+// With pseudo-terminals on, a command's are a set of its own: the user's
+// other terminals are not in it, and the right to mount that made the set
+// is gone before the command runs.
+func TestSandboxedPseudoTerminalsArePrivate(t *testing.T) {
+	requireBackend(t)
+	requirePTYBackend(t)
+	master, name := openTestPTY(t)
+	if _, err := master.Write([]byte("typed-elsewhere\n")); err != nil {
+		t.Fatal(err)
+	}
+	p, project, _, _, _ := fixture(t)
+	p.PTY = true
+	if out, ok := sh(t, p, project, "head -n 1 < "+name); ok || strings.Contains(out, "typed-elsewhere") {
+		t.Errorf("read another terminal's input: %v %s", ok, out)
+	}
+	if out, ok := sh(t, p, project, "echo drawn > "+name+" && echo WROTE"); ok || strings.Contains(out, "WROTE") {
+		t.Errorf("wrote to another terminal: %v %s", ok, out)
+	}
+	if out, _ := sh(t, p, project, "ls /dev/pts"); out != "ptmx" {
+		t.Errorf("/dev/pts should start empty but for ptmx, got: %s", out)
+	}
+	out, _ := sh(t, p, project, "grep -E '^Cap(Inh|Prm|Eff|Amb)' /proc/self/status")
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasSuffix(line, "0000000000000000") {
+			t.Errorf("the command kept a capability: %s", line)
+		}
+	}
+	if out, ok := sh(t, p, project, "mkdir m && mount -t tmpfs none m"); ok {
+		t.Errorf("the command could mount: %s", out)
+	}
+	// The rest of the sandbox is as it was.
+	if out, ok := sh(t, p, project, "echo x > inside && cat inside"); !ok || out != "x" {
+		t.Errorf("could not write in the project: %s", out)
+	}
+	if out, ok := sh(t, projectOnly(p, project), project, "echo x > ../outside/y"); ok {
+		t.Errorf("wrote outside the project: %s", out)
+	}
+}
+
+func TestWeaknessOnlyMentionsPTYWhenAsked(t *testing.T) {
+	if got := Weakness(Policy{Enabled: true}); strings.Contains(got, "pty") {
+		t.Errorf("Weakness without the setting = %q", got)
 	}
 }

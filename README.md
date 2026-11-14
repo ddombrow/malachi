@@ -504,8 +504,16 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   terminal a command makes for itself is the same kind of device as your
   other windows, and macOS cannot tell them apart, so `"pty": true` opens
   both: pseudo-terminals work, and a command can read and write every
-  terminal you have open. The setting changes nothing on Linux, where
-  commands get no pseudo-terminals.
+  terminal you have open. On Linux commands get no pseudo-terminals either
+  by default, but there `"pty": true` costs nothing in privacy: commands
+  get a set of pseudo-terminals of their own, in which your other windows
+  do not exist. The price is different. To be allowed to make that set, a
+  command runs in a user namespace, where every file not owned by you
+  appears to belong to `nobody`. Access is unchanged, but programs that
+  check who owns a file notice: `ssh`, for one, refuses its system
+  configuration. It also needs a system that lets unprivileged processes
+  make user namespaces; where it does not, malachi says at startup that
+  the setting has no effect.
 - **API keys** that malachi loaded from its `.env`, or that a provider's
   `apiKeyEnv` names, are removed from commands' environment. This holds even
   with the sandbox off. On Linux, malachi also marks its own process

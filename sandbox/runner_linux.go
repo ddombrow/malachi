@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"slices"
+	"strings"
 	"sync"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -41,9 +45,18 @@ func Available() error { return availability() }
 // counts as writing it.
 const truncateABI = 3
 
-// Weakness says what the sandbox cannot enforce on this system though it
-// runs, or "" when it enforces everything it promises.
-func Weakness() string { return abiWeakness(landlockABI()) }
+// Weakness says what the sandbox cannot do for p on this system though it
+// runs, or "" when it does everything it promises.
+func Weakness(p Policy) string {
+	notes := []string{abiWeakness(landlockABI())}
+	if p.PTY {
+		if err := privatePTYAvailable(); err != nil {
+			notes = append(notes, fmt.Sprintf("the pty setting has no effect, so commands get no pseudo-terminals: "+
+				"this system does not let malachi make a private set of them (%v); it takes unprivileged user namespaces", err))
+		}
+	}
+	return strings.Join(slices.DeleteFunc(notes, func(n string) bool { return n == "" }), "; ")
+}
 
 func abiWeakness(abi int) string {
 	if abi < 1 || abi >= truncateABI {
@@ -55,9 +68,54 @@ func abiWeakness(abi int) string {
 }
 
 func command(ctx context.Context, p Policy, name string, args ...string) (*exec.Cmd, error) {
-	raw, err := json.Marshal(spec{Policy: p, Name: name, Args: args})
+	ptys := p.PTY && privatePTYAvailable() == nil
+	raw, err := json.Marshal(spec{Policy: p, Name: name, Args: args, PrivatePTY: ptys})
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: %w", err)
 	}
-	return exec.CommandContext(ctx, selfExe, helperArg, string(raw)), nil
+	cmd := exec.CommandContext(ctx, selfExe, helperArg, string(raw))
+	if ptys {
+		cmd.SysProcAttr = privatePTYAttr()
+	}
+	return cmd, nil
 }
+
+// privatePTYAttr starts the helper where it may mount a private /dev/pts: in
+// a mount namespace of its own, inside a user namespace of its own, which
+// is what lets an unprivileged process mount at all. The user and group
+// keep their ids there. Every other id has none, so files owned by anyone
+// else, root included, appear to belong to "nobody"; access to them is
+// unchanged.
+//
+// The capability to mount is passed to the helper as an ambient one, since
+// a process that is not root loses the rest when it execs. The helper drops
+// it before running the command.
+//
+// Callers that set attributes of their own (a new session) must add to
+// these, not replace them.
+func privatePTYAttr() *syscall.SysProcAttr {
+	uid, gid := os.Getuid(), os.Getgid()
+	return &syscall.SysProcAttr{
+		Cloneflags:  syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS,
+		UidMappings: []syscall.SysProcIDMap{{ContainerID: uid, HostID: uid, Size: 1}},
+		GidMappings: []syscall.SysProcIDMap{{ContainerID: gid, HostID: gid, Size: 1}},
+		AmbientCaps: []uintptr{unix.CAP_SYS_ADMIN},
+	}
+}
+
+// privatePTYAvailable reports why commands cannot be given a private set of
+// pseudo-terminals here, or nil. It is found out by trying, once: whether
+// an unprivileged process may make a user namespace is decided by sysctls
+// and security modules that differ between distributions.
+var privatePTYAvailable = sync.OnceValue(func() error {
+	cmd := exec.Command(selfExe, probeArg)
+	cmd.SysProcAttr = privatePTYAttr()
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if msg := strings.TrimSpace(string(out)); msg != "" {
+		return errors.New(strings.TrimPrefix(msg, "malachi sandbox: "))
+	}
+	return err
+})

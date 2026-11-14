@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"syscall"
 
 	"github.com/landlock-lsm/go-landlock/landlock"
 	ll "github.com/landlock-lsm/go-landlock/landlock/syscall"
+	"golang.org/x/sys/unix"
 )
 
 // devices commands write to as a matter of course.
@@ -28,12 +30,23 @@ func runHelper(raw string) error {
 	if err != nil {
 		return err
 	}
+	if s.PrivatePTY {
+		// Capabilities belong to a thread: the one that holds them here must
+		// be the one that drops them and then execs.
+		runtime.LockOSThread()
+		if err := privatePTY(); err != nil {
+			return fmt.Errorf("pseudo-terminals: %w", err)
+		}
+		if err := dropCapabilities(); err != nil {
+			return fmt.Errorf("dropping capabilities: %w", err)
+		}
+	}
 	// Whether Landlock can tell a command's own Unix sockets from the
 	// user's daemons is decided once, since the file rules and the socket
 	// filter must agree: the filter may let Unix sockets be made only if
 	// Landlock is keeping them in.
 	own := ownUnixSockets(s.Policy, landlockABI())
-	if err := restrictFS(s.Policy, own); err != nil {
+	if err := restrictFS(s.Policy, own, s.PrivatePTY); err != nil {
 		return fmt.Errorf("landlock: %w", err)
 	}
 	filtered := s.Policy
@@ -57,7 +70,11 @@ func runHelper(raw string) error {
 // inside this sandbox, and so is connecting to an abstract one. No path is
 // granted the right, so the user's daemons stay out of reach wherever their
 // sockets are.
-func restrictFS(p Policy, own bool) error {
+//
+// With ptys set, /dev/pts is a set of pseudo-terminals of the command's own
+// (see privatePTY) and is opened to it, device controls included: a terminal
+// is driven by them.
+func restrictFS(p Policy, own, ptys bool) error {
 	readable, listable := readGrants(p)
 	roDirs, roFiles := partition(readable)
 	var writable []string
@@ -77,6 +94,11 @@ func restrictFS(p Policy, own bool) error {
 		landlock.RWDirs(rwDirs...).WithRefer().IgnoreIfMissing(),
 		landlock.RWFiles(rwFiles...).IgnoreIfMissing(),
 		landlock.RWFiles(devices...).IgnoreIfMissing(),
+	}
+	if ptys {
+		rules = append(rules,
+			landlock.RWDirs("/dev/pts").WithIoctlDev(),
+			landlock.RWFiles("/dev/ptmx").WithIoctlDev())
 	}
 	if own {
 		// Not best effort: the socket filter is about to allow Unix
@@ -105,4 +127,37 @@ const unixSocketABI = 9
 // servers, test runners and headless browsers talking to their children.
 func ownUnixSockets(p Policy, abi int) bool {
 	return !p.UnixSockets && abi >= unixSocketABI
+}
+
+// privatePTY replaces /dev/pts, in this process's own mount namespace, with
+// a new and empty set of pseudo-terminals. A terminal the command makes is
+// then the only kind there is to open: the user's other terminal windows,
+// which are the same kind of device and which no file rule could tell apart
+// from the command's own, are simply not there. /dev/ptmx hands out
+// terminals from the set mounted beside it, so it needs nothing done.
+//
+// It needs to be allowed to mount, which the caller arranges by starting
+// this process in a user namespace (see privatePTYAttr).
+func privatePTY() error {
+	// Nothing mounted here may spread to the namespace this one was copied
+	// from.
+	if err := unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, ""); err != nil {
+		return fmt.Errorf("making mounts private: %w", err)
+	}
+	if err := unix.Mount("devpts", "/dev/pts", "devpts", unix.MS_NOSUID|unix.MS_NOEXEC, "newinstance,ptmxmode=0666,mode=0620"); err != nil {
+		return fmt.Errorf("mounting /dev/pts: %w", err)
+	}
+	return nil
+}
+
+// dropCapabilities gives up, on this thread, every capability the user
+// namespace came with, so that none is left for the command: the right to
+// mount was wanted for privatePTY and for nothing after it.
+func dropCapabilities() error {
+	if err := unix.Prctl(unix.PR_CAP_AMBIENT, unix.PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0); err != nil {
+		return err
+	}
+	header := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
+	var none [2]unix.CapUserData
+	return unix.Capset(&header, &none[0])
 }

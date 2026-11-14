@@ -17,8 +17,14 @@ import (
 //
 // A session leader leads a process group too, so the group can still be
 // signalled by the command's pid.
+//
+// The sandbox may have set attributes of its own on cmd (namespaces, on
+// Linux), so the session is added to those.
 func newSession(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setsid = true
 }
 
 // configureProcessGroup starts the shell in its own session and process

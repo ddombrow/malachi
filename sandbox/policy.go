@@ -44,7 +44,9 @@ type Policy struct {
 	// debugger's inferior). macOS cannot tell a terminal a command made
 	// from the user's other terminal windows, so this also lets commands
 	// read what is typed in those and write to them. Off, no terminal
-	// device opens. macOS only.
+	// device opens. On Linux commands get a set of pseudo-terminals of
+	// their own, which holds no one else's, by running in a user namespace
+	// (see privatePTYAttr for what that changes).
 	PTY bool
 	// Services are system services commands may reach beyond the built-in
 	// list, by exact name, for a tool that needs one. A service acts

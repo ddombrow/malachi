@@ -46,3 +46,6 @@ func holdOpen(t *testing.T, name string) string {
 
 // ownUnixSocketsHere is Linux's question; see pty_linux_test.go.
 func ownUnixSocketsHere() bool { return false }
+
+// requirePTYBackend is Linux's question: Seatbelt always can.
+func requirePTYBackend(*testing.T) {}

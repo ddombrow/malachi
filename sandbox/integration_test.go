@@ -640,10 +640,8 @@ for name in sys.argv[1:]:
 // On macOS a command can open a pseudo-terminal and run a child on it, as
 // script, tmux and expect do.
 func TestSandboxedPseudoTerminal(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("Seatbelt only")
-	}
 	requireBackend(t)
+	requirePTYBackend(t)
 	py, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("no python3")

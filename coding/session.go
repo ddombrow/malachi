@@ -933,7 +933,7 @@ func stateOf(p sandbox.Policy) SandboxState {
 	st := SandboxState{Policy: p}
 	if st.Enabled {
 		if st.Unavailable = sandbox.Available(); st.Unavailable == nil {
-			st.Weakness = sandbox.Weakness()
+			st.Weakness = sandbox.Weakness(p)
 		}
 	}
 	return st
