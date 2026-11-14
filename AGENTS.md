@@ -25,6 +25,7 @@ mcp/       MCP client over stdio: protocol negotiation (2026-07-28 with a
 coding/    coding tools, system prompt, config, coding.Session. Imports agent, ai, sandbox and codemode.
 tui/       Bubble Tea frontend. Consumes coding.Session events and state.
 rpc/       headless JSONL protocol (tau/Pi RPC mode). Consumes coding.Session events and state.
+acp/       Agent Client Protocol v1 for editors (Zed). Consumes coding.Session events and state.
 cmd/       entrypoints.
 ```
 
@@ -33,7 +34,7 @@ cmd/       entrypoints.
 Rules about when work may start (one run at a time, holding a prompt through
 a compaction, refusing a session swap mid-run) belong to `coding.Session`
 (`Submit`, `Compact`, `State`), never to a frontend: a rule in `tui/` is one
-that `rpc/` silently bypasses. Frontends send input through the session and
+that `rpc/` and `acp/` silently bypass. Frontends send input through the session and
 react to its events (`Session.Subscribe`).
 
 The sandbox policy is decided by the user, never by the model: settings

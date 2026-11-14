@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ddombrow/malachi/acp"
 	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/coding"
 	"github.com/ddombrow/malachi/rpc"
@@ -59,7 +60,7 @@ func run() int {
 		cont       = flag.Bool("c", false, "continue the most recent session in this directory")
 		resume     = flag.String("resume", "", "resume a session by file path or name prefix")
 		noSession  = flag.Bool("no-session", false, "do not save the session to disk")
-		mode       = flag.String("mode", "text", `"text" or "json" (one Pi-compatible event per line) for -p output, or "rpc" to run headless: JSON commands on stdin, responses and events on stdout`)
+		mode       = flag.String("mode", "text", `"text" or "json" (one Pi-compatible event per line) for -p output, "rpc" to run headless: JSON commands on stdin, responses and events on stdout, or "acp" to serve an editor such as Zed over the Agent Client Protocol`)
 		cwd        = flag.String("cwd", "", "working directory (default: current directory)")
 		listModels = flag.Bool("list-models", false, "list the models the provider currently serves and exit")
 		version    = flag.Bool("version", false, "print the version and exit")
@@ -78,9 +79,9 @@ func run() int {
 		return 0
 	}
 	switch *mode {
-	case "text", "json", "rpc":
+	case "text", "json", "rpc", "acp":
 	default:
-		fmt.Fprintf(os.Stderr, "malachi: unknown -mode %q (want text, json or rpc)\n", *mode)
+		fmt.Fprintf(os.Stderr, "malachi: unknown -mode %q (want text, json, rpc or acp)\n", *mode)
 		return 2
 	}
 
@@ -88,6 +89,22 @@ func run() int {
 	if err := coding.LoadDotEnv(filepath.Join(coding.Home(), ".env")); err != nil {
 		fmt.Fprintln(os.Stderr, "malachi:", err)
 		return 1
+	}
+
+	if *mode == "acp" {
+		// The editor opens sessions, each in its own directory; nothing is
+		// opened here, and stdout carries only the protocol.
+		if *printMode || *cont || *resume != "" || *noSession || len(positional) > 0 {
+			fmt.Fprintln(os.Stderr, "malachi: -mode acp takes no prompt, -p, -c, -resume or -no-session: the editor opens and resumes sessions")
+			return 2
+		}
+		return acpRun(coding.Options{
+			Model:         *model,
+			ThinkingLevel: *thinking,
+			Trust:         *trustFlag,
+			Sandbox:       *sandboxSet,
+			Network:       *networkSet,
+		})
 	}
 
 	s, err := coding.Open(coding.Options{
@@ -236,6 +253,15 @@ func rpcRun(s *coding.Session) int {
 		last.Close()
 	}
 	if err != nil {
+		fmt.Fprintln(os.Stderr, "malachi:", err)
+		return 1
+	}
+	return 0
+}
+
+func acpRun(opts coding.Options) int {
+	sv := acp.New(acp.Options{Session: opts}, os.Stdin, os.Stdout)
+	if err := sv.Run(context.Background()); err != nil {
 		fmt.Fprintln(os.Stderr, "malachi:", err)
 		return 1
 	}

@@ -31,6 +31,7 @@ events, and sessions, and reads tau session files.
 cmd/malachi   CLI: interactive TUI or print mode (-p)
 tui/          full-screen Bubble Tea frontend
 rpc/          headless JSONL protocol (-mode rpc)
+acp/          Agent Client Protocol for editors such as Zed (-mode acp)
 coding/       tools (read, write, edit, bash, fetch, script), MCP servers, system prompt, config, sessions
 codemode/     scripts that call tools: QuickJS-ng (WebAssembly) under wazero
 mcp/          MCP client over stdio (2026-07-28, falling back to the 2025 handshake)
@@ -70,6 +71,7 @@ bin/malachi --model glm-5.2 --thinking high
 bin/malachi -p "..." -mode json  # Pi event stream, one JSON object per line
 bin/malachi -list-models         # models the provider serves right now
 bin/malachi -mode rpc            # headless: JSON commands in, events out (see RPC mode)
+bin/malachi -mode acp            # serve an editor over ACP (see Editors)
 ```
 
 The TUI is full-screen: a scrollable transcript above a pinned input and status
@@ -163,6 +165,43 @@ long compaction). `set_trust` and `projectTrust` are malachi's: instruction
 files are withheld until a client decides, as in `-p`. Malformed or oversized
 records (over 16 MiB) are answered with `"command":"parse"` and reading
 continues.
+
+## Editors (ACP)
+
+`malachi -mode acp` serves an editor over the
+[Agent Client Protocol](https://agentclientprotocol.com), version 1: JSON-RPC
+on stdin and stdout, one message per line. Zed speaks it natively; in VS Code,
+use an ACP client extension. In Zed, add malachi to `settings.json`:
+
+```json
+"agent_servers": {
+  "malachi": { "type": "custom", "command": "/path/to/bin/malachi", "args": ["-mode", "acp"] }
+}
+```
+
+then start a new malachi thread from the agent panel. `-model`, `-thinking`,
+`-trust`, `-sandbox` and `-network` in `args` apply to every session the
+editor opens; each session is opened in the project the editor names, and
+saved and resumed like any other.
+
+- **What works.** Streamed replies and thinking, a card per tool call (its
+  file, output, and an edit's diff), Stop, a model and a thinking-level
+  picker, the context meter, and reopening past threads (`session/list`,
+  `session/load`, which replays the conversation).
+- **The sandbox is the boundary.** malachi asks no per-tool permission, and
+  uses neither the editor's file system nor its terminal: commands and file
+  tools run in malachi's own sandbox, as in the TUI.
+- **Project trust.** When a project's instruction files are undecided, the
+  first prompt brings up the editor's permission dialog: trust for this
+  session, always, not now, or never. Dismissing it sends nothing.
+- **MCP servers from the editor** are ignored unless `settings.json` says
+  `"acp": {"editorMcpServers": true}`; then they run under the same rules as
+  `mcp.json`'s (installed commands, sandboxed, a minimal environment), and
+  `mcp.json` wins a name clash. Only stdio servers are accepted.
+- **Not yet.** Slash commands, images in prompts, and ACP v2.
+
+Zed's `dev: open acp logs` shows the traffic; malachi's own notes go to
+stderr, which Zed keeps in its log.
 
 ## Configuration
 
