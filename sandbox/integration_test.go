@@ -242,7 +242,8 @@ func TestSandboxedUnixSockets(t *testing.T) {
 		t.Fatalf("connected to an outside Unix socket: %s", out)
 	}
 	// On macOS a socket under a writable root (one the command could have
-	// made) works; on Linux commands cannot create Unix sockets at all.
+	// made) works. On Linux where it is does not matter: this one was made
+	// outside the sandbox.
 	inside := p
 	inside.Writable = append(slices.Clone(p.Writable), Canonical(dir))
 	if out, ok := sh(t, inside, project, connect); ok != (runtime.GOOS == "darwin") {
@@ -349,10 +350,15 @@ except OSError as e:
     print('netlink', e)
 "`
 		out, _ := sh(t, p, project, script)
-		for _, fam := range []string{"inet", "inet6", "packet", "can", "bluetooth", "alg", "vsock", "unix"} {
+		for _, fam := range []string{"inet", "inet6", "packet", "can", "bluetooth", "alg", "vsock"} {
 			if !strings.Contains(out, fam+" EPERM") {
 				t.Errorf("%s not refused by the filter:\n%s", fam, out)
 			}
+		}
+		// A Unix socket can be made only where the kernel keeps it from
+		// reaching one outside the sandbox (TestSandboxedUnixSockets).
+		if want := map[bool]string{true: "unix open", false: "unix EPERM"}[ownUnixSocketsHere()]; !strings.Contains(out, want) {
+			t.Errorf("want %q:\n%s", want, out)
 		}
 		if !strings.Contains(out, "netlink open") {
 			t.Errorf("netlink refused:\n%s", out)

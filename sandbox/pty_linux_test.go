@@ -10,6 +10,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// ownUnixSocketsHere reports whether this kernel lets commands have Unix
+// sockets of their own.
+func ownUnixSocketsHere() bool { return landlockABI() >= unixSocketABI }
+
 // openTestPTY makes a pseudo-terminal in the test process, outside any
 // sandbox, to stand in for one of the user's other terminal windows. It
 // returns the controlling end and the device a command would open.
@@ -74,5 +78,50 @@ func TestSandboxedRuntimeDirAndJournal(t *testing.T) {
 	}
 	if out, ok := sh(t, p, project, "ls /run >/dev/null && ls /var/log >/dev/null"); !ok {
 		t.Errorf("/run and /var/log should still list: %s", out)
+	}
+}
+
+// A command may make Unix sockets and use them among its own processes,
+// where the kernel can keep them from reaching anyone else's.
+func TestSandboxedOwnUnixSockets(t *testing.T) {
+	requireBackend(t)
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("no python3")
+	}
+	p, project, _, _, _ := fixture(t)
+	own := `python3 -c "
+import os, socket
+server = socket.socket(socket.AF_UNIX)
+server.bind('s.sock')
+server.listen()
+if os.fork() == 0:
+    client = socket.socket(socket.AF_UNIX)
+    client.connect('s.sock')
+    client.send(b'hello')
+    os._exit(0)
+conn, _ = server.accept()
+print(conn.recv(5).decode())
+"`
+	out, ok := sh(t, p, project, own)
+	if want := landlockABI() >= unixSocketABI; ok != want {
+		t.Fatalf("own Unix socket: worked=%v, want %v on Landlock ABI %d: %s", ok, want, landlockABI(), out)
+	}
+	if ok && out != "hello" {
+		t.Fatalf("own Unix socket carried %q", out)
+	}
+}
+
+func TestOwnUnixSocketsNeedsANewKernel(t *testing.T) {
+	for _, c := range []struct {
+		allowAll bool
+		abi      int
+		want     bool
+	}{
+		{false, 5, false}, {false, 8, false}, {false, 9, true}, {false, 11, true},
+		{true, 11, false}, // every Unix socket is allowed: nothing to keep in
+	} {
+		if got := ownUnixSockets(Policy{Enabled: true, UnixSockets: c.allowAll}, c.abi); got != c.want {
+			t.Errorf("ownUnixSockets(unixSockets=%v, abi %d) = %v, want %v", c.allowAll, c.abi, got, c.want)
+		}
 	}
 }

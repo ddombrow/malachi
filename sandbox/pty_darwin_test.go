@@ -43,3 +43,6 @@ func holdOpen(t *testing.T, name string) string {
 	t.Cleanup(func() { unix.Close(fd) })
 	return name
 }
+
+// ownUnixSocketsHere is Linux's question; see pty_linux_test.go.
+func ownUnixSocketsHere() bool { return false }

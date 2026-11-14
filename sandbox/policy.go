@@ -32,7 +32,8 @@ type Policy struct {
 	// reach local daemons such as Docker or ssh-agent, which would let them
 	// act outside the sandbox (a container mounting the home directory, a
 	// push with loaded keys). On macOS sockets under writable roots still
-	// work; on Linux no Unix sockets can be created.
+	// work. On Linux, sockets the command made itself work (on a kernel whose
+	// Landlock can tell them apart, ABI 9; on older ones none can be made).
 	UnixSockets bool
 	// GPU lets commands use the graphics processor, for rendering and
 	// compute off screen. It opens the GPU's drivers, a large kernel

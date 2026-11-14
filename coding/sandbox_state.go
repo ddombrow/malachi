@@ -56,7 +56,7 @@ func (st SandboxState) Describe() string {
 	if !st.Network {
 		network = "off"
 	}
-	sockets := "only under writable directories (macOS); none (Linux)"
+	sockets := "only under writable directories (macOS); only the command's own, or none where the kernel's Landlock is older than ABI 9 (Linux)"
 	if st.UnixSockets {
 		sockets = "any (local daemons such as Docker are reachable)"
 	}

@@ -484,9 +484,12 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   such as Docker's or ssh-agent's. Through those a command could act outside
   the sandbox: start a container with your home directory mounted, or push
   with your loaded keys. On macOS, sockets under writable directories, name
-  resolution and logging still work. On Linux, commands cannot create Unix
-  sockets at all. `"unixSockets": true` lifts this, along with that
-  protection.
+  resolution and logging still work. On Linux, a command can make Unix
+  sockets and use them among its own processes (process pools, language
+  servers and browsers talking to their children need that), but not reach
+  one made outside the sandbox; that takes a recent kernel (Landlock ABI 9),
+  and on an older one commands cannot create Unix sockets at all.
+  `"unixSockets": true` lifts this, along with that protection.
 - **Devices are out of reach on macOS**, the GPU included, so a command
   that renders or computes on it finds no device. `"gpu": true` opens the
   graphics drivers by name, for rendering and compute off screen, and
