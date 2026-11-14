@@ -38,6 +38,7 @@ type client struct {
 	msgs chan map[string]any
 	done chan error
 	next int
+	sv   *Server
 	// onRequest answers the agent's requests; nil answers with an error.
 	onRequest func(method string, params map[string]any) any
 }
@@ -69,7 +70,7 @@ func start(t *testing.T, home string, settings *coding.Settings, ps ...agent.Pro
 		Open:    p.open,
 		Log:     io.Discard,
 	}, inR, outW)
-	c := &client{t: t, in: inW, msgs: make(chan map[string]any, 1024), done: make(chan error, 1)}
+	c := &client{t: t, in: inW, sv: sv, msgs: make(chan map[string]any, 1024), done: make(chan error, 1)}
 	go func() {
 		err := sv.Run(context.Background())
 		outW.Close()
@@ -377,6 +378,59 @@ func TestConfigOptionsSetThinkingAndModel(t *testing.T) {
 	if resp["error"] == nil {
 		t.Fatal("unlisted model accepted")
 	}
+}
+
+func TestNetworkIsAConfigOptionWhileSandboxed(t *testing.T) {
+	c := start(t, t.TempDir(), testSettings())
+	c.initialize()
+	id, r := c.newSession(t.TempDir())
+	if o := option(r, "network"); o == nil || o["currentValue"] != "off" || o["category"] != "_sandbox" {
+		t.Fatalf("no network option, off by default: %s", mustJSON(r["configOptions"]))
+	}
+	as, _ := c.sv.session(id)
+	resp, us := c.await(c.call("session/set_config_option", map[string]any{"sessionId": id, "configId": "network", "value": "on"}))
+	if o := option(result(t, resp), "network"); o == nil || o["currentValue"] != "on" {
+		t.Fatalf("after set: %v", resp)
+	}
+	if sb := as.s.Sandbox(); !sb.Enabled || !sb.Network {
+		t.Fatalf("policy not changed: %+v", sb.Policy)
+	}
+	if len(us) == 0 || us[len(us)-1]["sessionUpdate"] != "config_option_update" {
+		t.Fatalf("no config_option_update: %v", us)
+	}
+	resp, _ = c.await(c.call("session/set_config_option", map[string]any{"sessionId": id, "configId": "network", "value": "maybe"}))
+	if resp["error"] == nil {
+		t.Fatal("unlisted value accepted")
+	}
+
+	// With the sandbox off, commands have the network anyway: no option.
+	inR, inW := io.Pipe()
+	off := New(Options{
+		Session: coding.Options{Home: t.TempDir(), Settings: testSettings(), Sandbox: "off"},
+		Open:    (&providers{}).open, Log: io.Discard,
+	}, inR, io.Discard)
+	defer inW.Close()
+	res, err := off.request(context.Background(), "session/new", json.RawMessage(mustJSON(map[string]any{"cwd": t.TempDir()})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(mustJSON(res), `"network"`) {
+		t.Fatalf("network offered with the sandbox off: %s", mustJSON(res))
+	}
+	for _, as := range off.sessions {
+		as.close()
+	}
+}
+
+// option finds a config option by id in a result carrying configOptions.
+func option(r map[string]any, id string) map[string]any {
+	opts, _ := r["configOptions"].([]any)
+	for _, o := range opts {
+		if o := o.(map[string]any); o["id"] == id {
+			return o
+		}
+	}
+	return nil
 }
 
 func mustJSON(v any) string {

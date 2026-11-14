@@ -186,7 +186,8 @@ saved and resumed like any other.
 
 - **What works.** Streamed replies and thinking, a card per tool call (its
   file, output, and an edit's diff), Stop, a model and a thinking-level
-  picker, the context meter, and reopening past threads (`session/list`,
+  picker, a network on/off picker while the sandbox is on (like `/sandbox`
+  in the TUI: it changes only that session), the context meter, and reopening past threads (`session/list`,
   `session/load`, which replays the conversation).
 - **The sandbox is the boundary.** malachi asks no per-tool permission, and
   uses neither the editor's file system nor its terminal: commands and file

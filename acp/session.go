@@ -259,9 +259,13 @@ func (as *acpSession) settleTrust(ctx context.Context) (bool, error) {
 const (
 	configModel    = "model"
 	configThinking = "thought_level"
+	configNetwork  = "network"
 )
 
-// configOptions are the session's model and thinking level.
+// configOptions are the session's model, thinking level, and whether
+// sandboxed commands reach the network. The network is the user's to
+// switch, as /sandbox is in the TUI; it is offered only while the sandbox
+// is on, since commands otherwise have the network anyway.
 func (as *acpSession) configOptions() []configOption {
 	pc := as.s.Provider()
 	current := pc.Name + "/" + as.s.Model()
@@ -319,6 +323,21 @@ func (as *acpSession) configOptions() []configOption {
 			CurrentValue: as.s.ThinkingLevel(), Options: lv,
 		})
 	}
+	if sb := as.s.Sandbox(); sb.Enabled {
+		current := "off"
+		if sb.Network {
+			current = "on"
+		}
+		opts = append(opts, configOption{
+			ID: configNetwork, Name: "Network", Category: "_sandbox", Type: "select",
+			Description:  "Whether commands in the sandbox can reach the network",
+			CurrentValue: current,
+			Options: []configValue{
+				{Value: "off", Name: "Network off", Description: "Commands cannot reach the network"},
+				{Value: "on", Name: "Network on", Description: "Commands can reach the network; files stay confined"},
+			},
+		})
+	}
 	return opts
 }
 
@@ -340,8 +359,10 @@ func (as *acpSession) setConfig(id, value string) error {
 			err = as.s.SetModel(value)
 		case configThinking:
 			err = as.s.SetThinkingLevel(value)
+		case configNetwork:
+			err = as.s.SetNetwork(value == "on")
 		}
-		as.s.Flush() // a thinking_level change is reported before the reply
+		as.s.Flush() // the change's config_option_update comes before the reply
 		return err
 	}
 	return invalidParams(fmt.Errorf("unknown config option %q", id))
