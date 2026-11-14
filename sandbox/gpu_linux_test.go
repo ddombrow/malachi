@@ -57,6 +57,39 @@ for path in sorted(glob.glob('/dev/dri/renderD*'))[:1] + sorted(glob.glob('/dev/
 	}
 }
 
+// AMD's compute device, which ROCm drives, follows the same setting.
+func TestSandboxedGPUComputeDevice(t *testing.T) {
+	requireBackend(t)
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("no python3")
+	}
+	if f, err := os.OpenFile("/dev/kfd", os.O_RDWR, 0); err != nil {
+		t.Skipf("no AMD compute device to open here: %v", err)
+	} else {
+		f.Close()
+	}
+	// AMDKFD_IOC_GET_VERSION: the interface's version, as two integers.
+	probe := py + ` -c "
+import fcntl, os, struct
+try:
+    fd = os.open('/dev/kfd', os.O_RDWR)
+    version = bytearray(8)
+    fcntl.ioctl(fd, 0x80084B01, version)
+    print('answered' if struct.unpack('II', version)[0] >= 1 else 'no answer')
+except OSError as e:
+    print('refused:', e.strerror)
+"`
+	p, project, _, _, _ := fixture(t)
+	if out, _ := sh(t, p, project, probe); !strings.Contains(out, "refused") {
+		t.Errorf("the compute device opened without the setting: %s", out)
+	}
+	p.GPU = true
+	if out, _ := sh(t, p, project, probe); out != "answered" {
+		t.Errorf("the compute device is not usable with the GPU allowed: %s", out)
+	}
+}
+
 func TestGPUDevicesLeaveOutDisplays(t *testing.T) {
 	for _, pattern := range gpuDevicePatterns {
 		for _, display := range []string{"/dev/dri/card0", "/dev/nvidia-modeset", "/dev/fb0", "/dev/tty0"} {

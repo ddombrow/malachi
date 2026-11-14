@@ -27,11 +27,14 @@ var devices = []string{"/dev/null", "/dev/zero", "/dev/full", "/dev/random", "/d
 // beside them, which set modes and are what a display server holds, stay
 // closed. Rendering on an AMD GPU through its render node is tested here.
 //
-// The rest are the vendors' own, as their documentation lists them, and are
-// untested here: NVIDIA's proprietary driver (the control device, one device
-// per GPU, unified memory for CUDA, and its capability files; not
-// nvidia-modeset, which is the display's), AMD's compute interface (ROCm),
-// and the GPU of the Windows Subsystem for Linux.
+// /dev/kfd is AMD's compute interface, which ROCm drives. It is tested as
+// far as the kernel: it opens and answers. ROCm itself is untested.
+//
+// The rest are listed from the vendors' documentation and are untested
+// here: NVIDIA's proprietary driver (the control device, one device per
+// GPU, unified memory for CUDA, and its capability files; not
+// nvidia-modeset, which is the display's) and the GPU of the Windows
+// Subsystem for Linux.
 var gpuDevicePatterns = []string{
 	"/dev/dri/renderD*",
 	"/dev/nvidiactl", "/dev/nvidia[0-9]*", "/dev/nvidia-uvm", "/dev/nvidia-uvm-tools", "/dev/nvidia-caps/*",
