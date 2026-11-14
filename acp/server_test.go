@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -367,8 +368,8 @@ func TestConfigOptionsSetThinkingAndModel(t *testing.T) {
 	if !strings.Contains(mustJSON(result(t, resp)), `"currentValue":"high"`) {
 		t.Fatalf("after set: %v", resp)
 	}
-	if len(us) == 0 || us[0]["sessionUpdate"] != "config_option_update" {
-		t.Fatalf("no config_option_update: %v", us)
+	if !slices.Contains(kinds(us), "config_option_update") {
+		t.Fatalf("no config_option_update: %v", kinds(us))
 	}
 	resp, _ = c.await(c.call("session/set_config_option", map[string]any{"sessionId": id, "configId": "model", "value": "test/model-b"}))
 	if !strings.Contains(mustJSON(result(t, resp)), `"currentValue":"test/model-b"`) {
@@ -395,8 +396,8 @@ func TestNetworkIsAConfigOptionWhileSandboxed(t *testing.T) {
 	if sb := as.s.Sandbox(); !sb.Enabled || !sb.Network {
 		t.Fatalf("policy not changed: %+v", sb.Policy)
 	}
-	if len(us) == 0 || us[len(us)-1]["sessionUpdate"] != "config_option_update" {
-		t.Fatalf("no config_option_update: %v", us)
+	if !slices.Contains(kinds(us), "config_option_update") {
+		t.Fatalf("no config_option_update: %v", kinds(us))
 	}
 	resp, _ = c.await(c.call("session/set_config_option", map[string]any{"sessionId": id, "configId": "network", "value": "maybe"}))
 	if resp["error"] == nil {
@@ -530,5 +531,50 @@ func TestEditorMCPServersAreOptIn(t *testing.T) {
 		}
 		inW.Close()
 		<-done
+	}
+}
+
+func TestAllowCommandsWidenTheSandboxWithoutTheModel(t *testing.T) {
+	dir, err := os.MkdirTemp(os.Getenv("HOME"), "malachi-acp-allow-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	p := fake.New(fake.Text("a path, not a command"))
+	c := start(t, t.TempDir(), testSettings(), p)
+	c.initialize()
+	id, _ := c.newSession(t.TempDir())
+	ad := c.until("available_commands_update", func(u map[string]any) bool { return u["sessionUpdate"] == "available_commands_update" })
+	if s := mustJSON(ad["availableCommands"]); !strings.Contains(s, `"allow-read"`) || !strings.Contains(s, `"allow-write"`) {
+		t.Fatalf("commands: %s", s)
+	}
+	as, _ := c.sv.session(id)
+
+	stop, us := c.prompt(id, "/allow-read "+dir)
+	if stop != "end_turn" || !strings.Contains(text(us, "agent_message_chunk"), "Added readable root") {
+		t.Fatalf("allow-read: %q %q", stop, text(us, "agent_message_chunk"))
+	}
+	if err := as.s.Sandbox().CheckRead(filepath.Join(dir, "f")); err != nil {
+		t.Fatalf("not readable after /allow-read: %v", err)
+	}
+	if _, us = c.prompt(id, "/allow-write "+dir); !strings.Contains(text(us, "agent_message_chunk"), "Added writable root") {
+		t.Fatalf("allow-write: %q", text(us, "agent_message_chunk"))
+	}
+	if err := as.s.Sandbox().CheckWrite(filepath.Join(dir, "f")); err != nil {
+		t.Fatalf("not writable after /allow-write: %v", err)
+	}
+	if _, us = c.prompt(id, "/allow-write"); !strings.Contains(text(us, "agent_message_chunk"), "Usage: /allow-write") {
+		t.Fatalf("no usage: %q", text(us, "agent_message_chunk"))
+	}
+	if _, us = c.prompt(id, "/allow-write "+os.Getenv("HOME")); !strings.Contains(text(us, "agent_message_chunk"), "Not added") {
+		t.Fatalf("whole home accepted: %q", text(us, "agent_message_chunk"))
+	}
+	if p.Calls() != 0 {
+		t.Fatalf("a command reached the model (%d calls)", p.Calls())
+	}
+
+	// A prompt that merely starts with a slash is the model's.
+	if _, us = c.prompt(id, "/usr/bin has what?"); text(us, "agent_message_chunk") != "a path, not a command" || p.Calls() != 1 {
+		t.Fatalf("path prompt: %q, %d calls", text(us, "agent_message_chunk"), p.Calls())
 	}
 }

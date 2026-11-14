@@ -129,7 +129,7 @@ func (sv *Server) request(ctx context.Context, method string, params json.RawMes
 		if err != nil {
 			return nil, err
 		}
-		return newSessionResult{SessionID: as.id, ConfigOptions: as.configOptions()}, nil
+		return followed{newSessionResult{SessionID: as.id, ConfigOptions: as.configOptions()}, as.advertise}, nil
 	case "session/load":
 		var p loadSessionParams
 		if err := decode(params, &p); err != nil {
@@ -143,7 +143,7 @@ func (sv *Server) request(ctx context.Context, method string, params json.RawMes
 			return nil, err
 		}
 		as.replay()
-		return loadSessionResult{ConfigOptions: as.configOptions()}, nil
+		return followed{loadSessionResult{ConfigOptions: as.configOptions()}, as.advertise}, nil
 	case "session/list":
 		var p listSessionsParams
 		if err := decode(params, &p); err != nil {
@@ -158,6 +158,10 @@ func (sv *Server) request(ctx context.Context, method string, params json.RawMes
 		as, err := sv.session(p.SessionID)
 		if err != nil {
 			return nil, err
+		}
+		if name, arg, ok := slashCommand(p.Prompt); ok {
+			as.command(name, arg)
+			return promptResult{StopReason: stopEndTurn}, nil
 		}
 		reason, err := as.prompt(ctx, promptText(p.Prompt))
 		if err != nil {

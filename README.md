@@ -199,7 +199,11 @@ saved and resumed like any other.
   `"acp": {"editorMcpServers": true}`; then they run under the same rules as
   `mcp.json`'s (installed commands, sandboxed, a minimal environment), and
   `mcp.json` wins a name clash. Only stdio servers are accepted.
-- **Not yet.** Slash commands, images in prompts, and ACP v2.
+- **Slash commands.** `/allow-read <dir>` and `/allow-write <dir>` widen
+  the sandbox for that session, with the same limits as in the TUI (not
+  your whole home, nothing hidden). malachi handles them itself; they never
+  reach the model.
+- **Not yet.** Other slash commands, images in prompts, and ACP v2.
 
 Zed's `dev: open acp logs` shows the traffic; malachi's own notes go to
 stderr, which Zed keeps in its log.

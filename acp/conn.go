@@ -62,6 +62,13 @@ type handler interface {
 	notify(method string, params json.RawMessage)
 }
 
+// followed is a result with work to do once it has been sent, such as
+// notifications about a session the client learns of from the reply.
+type followed struct {
+	result any
+	then   func()
+}
+
 type reply struct {
 	result json.RawMessage
 	err    error
@@ -187,6 +194,11 @@ func (c *conn) dispatch(ctx context.Context, h handler, line []byte) {
 					rpcErr = &Error{Code: codeInternalError, Message: err.Error()}
 				}
 				c.fail(m.ID, rpcErr)
+				return
+			}
+			if f, ok := result.(followed); ok {
+				c.ok(m.ID, f.result)
+				f.then()
 				return
 			}
 			c.ok(m.ID, result)

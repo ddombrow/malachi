@@ -223,6 +223,21 @@ type configOptionUpdate struct {
 	ConfigOptions []configOption `json:"configOptions"`
 }
 
+type availableCommandsUpdate struct {
+	SessionUpdate     string    `json:"sessionUpdate"` // available_commands_update
+	AvailableCommands []command `json:"availableCommands"`
+}
+
+type command struct {
+	Name        string        `json:"name"`
+	Description string        `json:"description"`
+	Input       *commandInput `json:"input,omitempty"`
+}
+
+type commandInput struct {
+	Hint string `json:"hint"`
+}
+
 type usageUpdate struct {
 	SessionUpdate string `json:"sessionUpdate"` // usage_update
 	Used          int64  `json:"used"`
