@@ -34,6 +34,8 @@ func (st SandboxState) Marker() string {
 		return "sandbox unavailable"
 	case st.Network:
 		return "network on"
+	case st.Loopback:
+		return "loopback only"
 	}
 	return ""
 }
@@ -56,6 +58,9 @@ func (st SandboxState) Describe() string {
 	network := "on"
 	if !st.Network {
 		network = "off"
+	}
+	if st.Loopback {
+		network = "loopback only (each command's own)"
 	}
 	sockets := "only under writable directories (macOS); only the command's own, or none where the kernel's Landlock is older than ABI 9 (Linux)"
 	if st.UnixSockets {

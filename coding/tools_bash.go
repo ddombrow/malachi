@@ -511,7 +511,11 @@ func serviceHint(tool string) string {
 func sandboxHint(p sandbox.Policy) string {
 	network := ""
 	if !p.Network {
-		network = " The network is off."
+		if sandbox.LoopbackInForce(p) {
+			network = " The network is off but for a loopback of the command's own: it can serve and connect to itself, nothing else, not even the host's localhost."
+		} else {
+			network = " The network is off."
+		}
 	}
 	reads := "cannot read credentials or malachi's own files"
 	if len(p.Private) > 0 {

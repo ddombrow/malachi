@@ -54,19 +54,20 @@ func recoverAndRun(fn func() int) (code int) {
 
 func run() int {
 	var (
-		printMode  = flag.Bool("p", false, "print mode: run the prompt non-interactively and exit")
-		model      = flag.String("model", "", `model as "provider/model" or "model" (default from settings, else opencode-go/kimi-k2.7-code)`)
-		thinking   = flag.String("thinking", "", "thinking level: off, minimal, low, medium, high, xhigh")
-		cont       = flag.Bool("c", false, "continue the most recent session in this directory")
-		resume     = flag.String("resume", "", "resume a session by file path or name prefix")
-		noSession  = flag.Bool("no-session", false, "do not save the session to disk")
-		mode       = flag.String("mode", "text", `"text" or "json" (one Pi-compatible event per line) for -p output, "rpc" to run headless: JSON commands on stdin, responses and events on stdout, or "acp" to serve an editor such as Zed over the Agent Client Protocol`)
-		cwd        = flag.String("cwd", "", "working directory (default: current directory)")
-		listModels = flag.Bool("list-models", false, "list the models the provider currently serves and exit")
-		version    = flag.Bool("version", false, "print the version and exit")
-		trustFlag  = flag.String("trust", "", `project trust for this run: "yes" to load this directory's instruction files, "no" to withhold them`)
-		networkSet = flag.String("network", "", `"on" or "off": commands' network access in the sandbox for this run (default from settings: off)`)
-		sandboxSet = flag.String("sandbox", "", `"on" or "off" for this run (default from settings: on). Off lets commands and file tools reach everything you can`)
+		printMode   = flag.Bool("p", false, "print mode: run the prompt non-interactively and exit")
+		model       = flag.String("model", "", `model as "provider/model" or "model" (default from settings, else opencode-go/kimi-k2.7-code)`)
+		thinking    = flag.String("thinking", "", "thinking level: off, minimal, low, medium, high, xhigh")
+		cont        = flag.Bool("c", false, "continue the most recent session in this directory")
+		resume      = flag.String("resume", "", "resume a session by file path or name prefix")
+		noSession   = flag.Bool("no-session", false, "do not save the session to disk")
+		mode        = flag.String("mode", "text", `"text" or "json" (one Pi-compatible event per line) for -p output, "rpc" to run headless: JSON commands on stdin, responses and events on stdout, or "acp" to serve an editor such as Zed over the Agent Client Protocol`)
+		cwd         = flag.String("cwd", "", "working directory (default: current directory)")
+		listModels  = flag.Bool("list-models", false, "list the models the provider currently serves and exit")
+		version     = flag.Bool("version", false, "print the version and exit")
+		trustFlag   = flag.String("trust", "", `project trust for this run: "yes" to load this directory's instruction files, "no" to withhold them`)
+		networkSet  = flag.String("network", "", `"on" or "off": commands' network access in the sandbox for this run (default from settings: off)`)
+		loopbackSet = flag.String("loopback", "", `"on" or "off": isolated loopback access for sandboxed commands (default from settings: off; Linux only)`)
+		sandboxSet  = flag.String("sandbox", "", `"on" or "off" for this run (default from settings: on). Off lets commands and file tools reach everything you can`)
 	)
 	flag.BoolVar(cont, "continue", false, "same as -c")
 	flag.Usage = func() {
@@ -104,6 +105,7 @@ func run() int {
 			Trust:         *trustFlag,
 			Sandbox:       *sandboxSet,
 			Network:       *networkSet,
+			Loopback:      *loopbackSet,
 		})
 	}
 
@@ -117,6 +119,7 @@ func run() int {
 		Trust:         *trustFlag,
 		Sandbox:       *sandboxSet,
 		Network:       *networkSet,
+		Loopback:      *loopbackSet,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "malachi:", err)

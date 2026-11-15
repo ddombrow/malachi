@@ -3,6 +3,7 @@ package sandbox
 import (
 	"fmt"
 	"os"
+	"runtime"
 )
 
 // helperArg is the hidden first argument that turns the malachi binary (or a
@@ -15,23 +16,34 @@ type spec struct {
 	Policy Policy   `json:"policy"`
 	Name   string   `json:"name"`
 	Args   []string `json:"args"`
-	// PrivatePTY says the helper was started in namespaces of its own and is
-	// to give the command a private set of pseudo-terminals (Linux).
+	// PrivatePTY says the helper was started in a mount namespace of its own
+	// and is to give the command private pseudo-terminals (Linux).
 	PrivatePTY bool `json:"privatePty,omitempty"`
+	// PrivateLoopback says the helper was started in a private network
+	// namespace and must bring its isolated loopback interface up (Linux).
+	PrivateLoopback bool `json:"privateLoopback,omitempty"`
 }
 
 // probeArg makes the binary try, and report by its exit status, what a
 // helper with PrivatePTY would do, so the question is asked once at startup
 // and not answered by every command failing.
 const probeArg = "__sandbox-probe-pty"
+const probeLoopbackArg = "__sandbox-probe-loopback"
 
 // MaybeRunHelper runs the sandbox helper and never returns if this process
 // was started as one; otherwise it returns at once. Call it first thing in
 // main, and in TestMain of packages that run sandboxed commands, before
 // anything else touches the process.
 func MaybeRunHelper() {
-	if len(os.Args) == 2 && os.Args[1] == probeArg {
-		if err := privatePTY(); err != nil {
+	if len(os.Args) == 2 && (os.Args[1] == probeArg || os.Args[1] == probeLoopbackArg) {
+		runtime.LockOSThread()
+		var err error
+		if os.Args[1] == probeArg {
+			err = privatePTY()
+		} else {
+			err = privateLoopback()
+		}
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "malachi sandbox: %v\n", err)
 			os.Exit(HelperFailed)
 		}

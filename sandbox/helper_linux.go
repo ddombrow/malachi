@@ -66,12 +66,19 @@ func runHelper(raw string) error {
 	if err != nil {
 		return err
 	}
-	if s.PrivatePTY {
+	if s.PrivatePTY || s.PrivateLoopback {
 		// Capabilities belong to a thread: the one that holds them here must
-		// be the one that drops them and then execs.
+		// be the one that uses them and drops them before exec.
 		runtime.LockOSThread()
-		if err := privatePTY(); err != nil {
-			return fmt.Errorf("pseudo-terminals: %w", err)
+		if s.PrivatePTY {
+			if err := privatePTY(); err != nil {
+				return fmt.Errorf("pseudo-terminals: %w", err)
+			}
+		}
+		if s.PrivateLoopback {
+			if err := privateLoopback(); err != nil {
+				return fmt.Errorf("loopback networking: %w", err)
+			}
 		}
 		if err := dropCapabilities(); err != nil {
 			return fmt.Errorf("dropping capabilities: %w", err)
@@ -87,6 +94,9 @@ func runHelper(raw string) error {
 	}
 	filtered := s.Policy
 	filtered.UnixSockets = filtered.UnixSockets || own
+	// IP sockets with the network off are safe only in a namespace with
+	// nothing but loopback in it.
+	filtered.Loopback = filtered.Loopback && s.PrivateLoopback
 	if err := denySockets(filtered); err != nil {
 		return fmt.Errorf("seccomp: %w", err)
 	}
@@ -189,9 +199,33 @@ func privatePTY() error {
 	return nil
 }
 
-// dropCapabilities gives up, on this thread, every capability the user
+// privateLoopback brings up only the loopback interface in the private network
+// namespace established by privateLoopbackAttr. That namespace has no external
+// interfaces or routes, so enabling lo cannot reach or expose host services.
+func privateLoopback() error {
+	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("opening interface control socket: %w", err)
+	}
+	defer unix.Close(fd)
+
+	ifr, err := unix.NewIfreq("lo")
+	if err != nil {
+		return err
+	}
+	if err := unix.IoctlIfreq(fd, unix.SIOCGIFFLAGS, ifr); err != nil {
+		return fmt.Errorf("reading loopback flags: %w", err)
+	}
+	ifr.SetUint16(ifr.Uint16() | unix.IFF_UP)
+	if err := unix.IoctlIfreq(fd, unix.SIOCSIFFLAGS, ifr); err != nil {
+		return fmt.Errorf("bringing loopback up: %w", err)
+	}
+	return nil
+}
+
 // namespace came with, so that none is left for the command: the right to
-// mount was wanted for privatePTY and for nothing after it.
+// mount was wanted for privatePTY, and to configure loopback networking for
+// nothing after it.
 func dropCapabilities() error {
 	if err := unix.Prctl(unix.PR_CAP_AMBIENT, unix.PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0); err != nil {
 		return err

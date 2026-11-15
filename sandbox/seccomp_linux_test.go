@@ -87,19 +87,25 @@ func TestSocketFilter(t *testing.T) {
 	// The verdicts for each policy, in the order of calls.
 	allow, deny, nosys, kill := uint32(retAllow), uint32(retEPERM), uint32(retNoSys), uint32(retKill)
 	for _, c := range []struct {
-		network, unixSockets bool
-		want                 []uint32
+		network, unixSockets, loopback bool
+		want                           []uint32
 	}{
-		{false, false, []uint32{deny, deny, deny, deny, deny, allow, deny, deny, deny, allow, nosys, deny, deny, deny, allow, kill}},
-		{false, true, []uint32{deny, deny, deny, allow, allow, allow, deny, deny, deny, allow, nosys, deny, deny, deny, allow, kill}},
-		{true, false, []uint32{allow, allow, allow, deny, deny, allow, deny, deny, deny, allow, nosys, deny, deny, deny, allow, kill}},
-		{true, true, []uint32{allow, allow, allow, allow, allow, allow, deny, deny, allow, allow, nosys, deny, deny, allow, allow, kill}},
+		{false, false, false, []uint32{deny, deny, deny, deny, deny, allow, deny, deny, deny, allow, nosys, deny, deny, deny, allow, kill}},
+		{false, true, false, []uint32{deny, deny, deny, allow, allow, allow, deny, deny, deny, allow, nosys, deny, deny, deny, allow, kill}},
+		{true, false, false, []uint32{allow, allow, allow, deny, deny, allow, deny, deny, deny, allow, nosys, deny, deny, deny, allow, kill}},
+		{true, true, false, []uint32{allow, allow, allow, allow, allow, allow, deny, deny, allow, allow, nosys, deny, deny, allow, allow, kill}},
+		// IP, and no other family, in the command's own network namespace.
+		// io_uring stays closed, as do the foreign tables' sockets.
+		{false, false, true, []uint32{allow, allow, deny, deny, deny, allow, deny, deny, deny, allow, nosys, deny, deny, deny, allow, kill}},
+		{false, true, true, []uint32{allow, allow, deny, allow, allow, allow, deny, deny, deny, allow, nosys, deny, deny, deny, allow, kill}},
+		// With the network on, loopback changes nothing.
+		{true, false, true, []uint32{allow, allow, allow, deny, deny, allow, deny, deny, deny, allow, nosys, deny, deny, deny, allow, kill}},
 	} {
-		f := socketFilter(Policy{Enabled: true, Network: c.network, UnixSockets: c.unixSockets}, amd64)
+		f := socketFilter(Policy{Enabled: true, Network: c.network, UnixSockets: c.unixSockets, Loopback: c.loopback}, amd64)
 		for i, call := range calls {
 			if got := runFilter(t, f, call.arch, call.nr, call.args...); got != c.want[i] {
-				t.Errorf("network=%v unixSockets=%v: %s: verdict %s, want %s",
-					c.network, c.unixSockets, call.name, verdict(got), verdict(c.want[i]))
+				t.Errorf("network=%v unixSockets=%v loopback=%v: %s: verdict %s, want %s",
+					c.network, c.unixSockets, c.loopback, call.name, verdict(got), verdict(c.want[i]))
 			}
 		}
 	}

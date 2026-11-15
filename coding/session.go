@@ -45,6 +45,9 @@ type Options struct {
 	// Network overrides the sandbox's network setting: "on" or "off".
 	// Empty uses settings (off by default).
 	Network string
+	// Loopback overrides private loopback access: "on" or "off".
+	// Empty uses settings (off by default).
+	Loopback string
 
 	// ExtraMCPServers are servers added to mcp.json's for this session, such
 	// as the ones an ACP client passes. They get mcp.json's rules; on a name
@@ -64,16 +67,17 @@ type Options struct {
 type Session struct {
 	Harness *agent.Harness
 
-	mu         sync.Mutex
-	cwd        string
-	home       string
-	settings   *Settings
-	provider   ProviderConfig
-	model      string
-	thinking   string
-	file       *session.File // nil when NoSession
-	sandboxSet string        // Options.Sandbox, carried across Reopen
-	networkSet string        // Options.Network or the last SetNetwork, likewise
+	mu          sync.Mutex
+	cwd         string
+	home        string
+	settings    *Settings
+	provider    ProviderConfig
+	model       string
+	thinking    string
+	file        *session.File // nil when NoSession
+	sandboxSet  string        // Options.Sandbox, carried across Reopen
+	networkSet  string        // Options.Network or the last SetNetwork, likewise
+	loopbackSet string        // Options.Loopback, carried across Reopen
 
 	// sbMu guards the sandbox policy, which tools read as they run; it is
 	// separate from mu so a tool never waits on session bookkeeping.
@@ -323,7 +327,16 @@ func Open(opts Options) (*Session, error) {
 	default:
 		return nil, fmt.Errorf("network must be \"on\" or \"off\", not %q", opts.Network)
 	}
-	s.sandboxSet, s.networkSet, s.sandbox = opts.Sandbox, opts.Network, sandbox.Build(sbCfg)
+	switch opts.Loopback {
+	case "":
+	case "on":
+		sbCfg.Loopback = true
+	case "off":
+		sbCfg.Loopback = false
+	default:
+		return nil, fmt.Errorf("loopback must be \"on\" or \"off\", not %q", opts.Loopback)
+	}
+	s.sandboxSet, s.networkSet, s.loopbackSet, s.sandbox = opts.Sandbox, opts.Network, opts.Loopback, sandbox.Build(sbCfg)
 	toolOpts := opts.Settings.ToolOptions()
 	toolOpts.SpillDir = s.spillDir
 	toolOpts.Sandbox = s.sandboxPolicy
@@ -886,6 +899,7 @@ func (s *Session) Reopen(resume string) (*Session, error) {
 	opts.Sandbox = s.sandboxSet
 	s.sbMu.Lock()
 	opts.Network = s.networkSet
+	opts.Loopback = s.loopbackSet
 	s.sbMu.Unlock()
 	if resume == "" {
 		opts.Model = s.Provider().Name + "/" + s.Model()
@@ -936,6 +950,8 @@ func stateOf(p sandbox.Policy) SandboxState {
 			st.Weakness = sandbox.Weakness(p)
 		}
 	}
+	// What is in force, not what was asked for; Weakness says when they differ.
+	st.Loopback = sandbox.LoopbackInForce(p)
 	return st
 }
 

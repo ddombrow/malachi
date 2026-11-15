@@ -164,18 +164,23 @@ func TestNetworkOffRefusesListening(t *testing.T) {
 	p, project, _, _, _ := fixture(t)
 	p.Readable = append(p.Readable, filepath.Dir(self))
 	specs := []string{"tcp4 0.0.0.0:0", "tcp4 127.0.0.1:0", "udp4 0.0.0.0:0", "udp4 127.0.0.1:0", "tcp6 [::]:0", "tcp6 [::1]:0", "udp6 [::]:0"}
-	for _, network := range []bool{true, false} {
-		p.Network = network
+	for _, c := range []struct{ network, loopback bool }{{true, false}, {false, false}, {false, true}} {
+		p.Network, p.Loopback = c.network, c.loopback
+		// In a private namespace every address is safe to bind: nothing but
+		// the command's own loopback can reach it. Elsewhere (macOS, or no
+		// namespace to be had) the setting has no effect.
+		want := c.network || LoopbackInForce(p)
 		for _, spec := range specs {
 			out, ok := sh(t, p, project, listenEnv+"='"+spec+"' "+self)
-			if strings.Contains(spec, "6") && network && !ok {
+			if strings.Contains(spec, "6") && want && !ok {
 				continue // no IPv6 on this machine
 			}
-			if ok != network {
-				t.Errorf("network=%v: listen %s succeeded=%v: %s", network, spec, ok, out)
+			if ok != want {
+				t.Errorf("network=%v loopback=%v: listen %s succeeded=%v: %s", c.network, c.loopback, spec, ok, out)
 			}
 		}
 	}
+	p.Loopback = false
 	// Linux cannot tell one unix socket from another, so it has them only
 	// with the setting on.
 	p.Network, p.UnixSockets = false, true

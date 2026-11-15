@@ -154,6 +154,12 @@ func socketFilter(p Policy, arch uint32) []unix.SockFilter {
 	switch {
 	case !p.Network:
 		f = append(f, ifNot(unix.AF_NETLINK, 1), ret(retAllow))
+		if p.Loopback {
+			f = append(f,
+				ifNot(unix.AF_INET, 1), ret(retAllow),
+				ifNot(unix.AF_INET6, 1), ret(retAllow),
+			)
+		}
 		if p.UnixSockets {
 			f = append(f, ifNot(unix.AF_UNIX, 1), ret(retAllow))
 		}

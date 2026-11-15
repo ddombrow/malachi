@@ -166,6 +166,39 @@ func TestSandboxOffReachesEverything(t *testing.T) {
 	}
 }
 
+func TestLoopbackOptionOverridesSettings(t *testing.T) {
+	settings := &Settings{Sandbox: SandboxSettings{Loopback: true}}
+	open := func(loopback string) *Session {
+		t.Helper()
+		s, err := Open(Options{
+			Cwd: t.TempDir(), Home: t.TempDir(), Settings: settings,
+			Provider: fake.New(), NoSession: true, Loopback: loopback,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(s.Close)
+		return s
+	}
+	// The policy, not the state: whether the setting takes effect depends on
+	// the system (see sandbox.LoopbackInForce).
+	if p := open("").sandboxPolicy(); !p.Loopback || p.Network {
+		t.Fatalf("settings did not enable loopback only: %+v", p)
+	}
+	if p := open("off").sandboxPolicy(); p.Loopback {
+		t.Fatalf("-loopback off did not override settings: %+v", p)
+	}
+	if p := open("on").sandboxPolicy(); !p.Loopback || p.Network {
+		t.Fatalf("-loopback on enabled the wrong policy: %+v", p)
+	}
+}
+
+func TestLoopbackOptionIsValidated(t *testing.T) {
+	if _, err := Open(Options{Cwd: t.TempDir(), Home: t.TempDir(), Settings: &Settings{}, Provider: fake.New(), NoSession: true, Loopback: "maybe"}); err == nil {
+		t.Fatal("accepted -loopback maybe")
+	}
+}
+
 func TestSandboxOptionIsValidated(t *testing.T) {
 	if _, err := Open(Options{Cwd: t.TempDir(), Home: t.TempDir(), Settings: &Settings{}, Provider: fake.New(), NoSession: true, Sandbox: "maybe"}); err == nil {
 		t.Fatal("accepted -sandbox maybe")

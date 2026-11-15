@@ -52,10 +52,27 @@ func Weakness(p Policy) string {
 	if p.PTY {
 		if err := privatePTYAvailable(); err != nil {
 			notes = append(notes, fmt.Sprintf("the pty setting has no effect, so commands get no pseudo-terminals: "+
-				"this system does not let malachi make a private set of them (%v); it takes unprivileged user namespaces", err))
+				"this system does not let malachi make a private set of them (%v); it takes unprivileged user namespaces%s", err, userNSHint()))
+		}
+	}
+	if p.Loopback && !p.Network {
+		if err := privateLoopbackAvailable(); err != nil {
+			notes = append(notes, fmt.Sprintf("the loopback setting has no effect, so commands have no network at all: "+
+				"this system does not let malachi give them a private network namespace (%v); it takes unprivileged user namespaces%s", err, userNSHint()))
 		}
 	}
 	return strings.Join(slices.DeleteFunc(notes, func(n string) bool { return n == "" }), "; ")
+}
+
+// userNSHint names the usual reason unprivileged user namespaces are
+// useless here, Ubuntu's AppArmor restriction (23.10 and later), which lets
+// one be made but takes away its capabilities, or "".
+func userNSHint() string {
+	b, err := os.ReadFile("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
+	if err != nil || strings.TrimSpace(string(b)) != "1" {
+		return ""
+	}
+	return ", which AppArmor restricts here (kernel.apparmor_restrict_unprivileged_userns=1)"
 }
 
 func abiWeakness(abi int) string {
@@ -68,14 +85,19 @@ func abiWeakness(abi int) string {
 }
 
 func command(ctx context.Context, p Policy, name string, args ...string) (*exec.Cmd, error) {
+	// Without a private namespace the setting is dropped, not failed on:
+	// the command then has no IP networking at all, which confines it more
+	// than was asked. Weakness says so.
+	loopback := LoopbackInForce(p)
+	p.Loopback = loopback
 	ptys := p.PTY && privatePTYAvailable() == nil
-	raw, err := json.Marshal(spec{Policy: p, Name: name, Args: args, PrivatePTY: ptys})
+	raw, err := json.Marshal(spec{Policy: p, Name: name, Args: args, PrivatePTY: ptys, PrivateLoopback: loopback})
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: %w", err)
 	}
 	cmd := exec.CommandContext(ctx, selfExe, helperArg, string(raw))
-	if ptys {
-		cmd.SysProcAttr = privatePTYAttr()
+	if ptys || loopback {
+		cmd.SysProcAttr = privateAttr(ptys, loopback)
 	}
 	return cmd, nil
 }
@@ -93,13 +115,31 @@ func command(ctx context.Context, p Policy, name string, args ...string) (*exec.
 //
 // Callers that set attributes of their own (a new session) must add to
 // these, not replace them.
-func privatePTYAttr() *syscall.SysProcAttr {
+func privatePTYAttr() *syscall.SysProcAttr { return privateAttr(true, false) }
+
+// privateLoopbackAttr starts the helper in a user and network namespace. The
+// namespace has no external interfaces or routes; the helper brings only lo up.
+func privateLoopbackAttr() *syscall.SysProcAttr { return privateAttr(false, true) }
+
+// privateAttr combines the user namespace needed for capabilities with the
+// requested private namespaces. The helper drops all capabilities before exec.
+func privateAttr(pty, loopback bool) *syscall.SysProcAttr {
+	flags := uintptr(syscall.CLONE_NEWUSER)
+	var caps []uintptr
+	if pty {
+		flags |= syscall.CLONE_NEWNS
+		caps = append(caps, unix.CAP_SYS_ADMIN)
+	}
+	if loopback {
+		flags |= syscall.CLONE_NEWNET
+		caps = append(caps, unix.CAP_NET_ADMIN)
+	}
 	uid, gid := os.Getuid(), os.Getgid()
 	return &syscall.SysProcAttr{
-		Cloneflags:  syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS,
+		Cloneflags:  flags,
 		UidMappings: []syscall.SysProcIDMap{{ContainerID: uid, HostID: uid, Size: 1}},
 		GidMappings: []syscall.SysProcIDMap{{ContainerID: gid, HostID: gid, Size: 1}},
-		AmbientCaps: []uintptr{unix.CAP_SYS_ADMIN},
+		AmbientCaps: caps,
 	}
 }
 
@@ -119,3 +159,27 @@ var privatePTYAvailable = sync.OnceValue(func() error {
 	}
 	return err
 })
+
+// privateLoopbackAvailable reports why commands cannot be given a private
+// network namespace with its loopback up, or nil. Found out by trying, once,
+// like privatePTYAvailable. Without one, the loopback setting falls back to
+// no network, never to the host's.
+var privateLoopbackAvailable = sync.OnceValue(func() error {
+	cmd := exec.Command(selfExe, probeLoopbackArg)
+	cmd.SysProcAttr = privateLoopbackAttr()
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if msg := strings.TrimSpace(string(out)); msg != "" {
+		return errors.New(strings.TrimPrefix(msg, "malachi sandbox: "))
+	}
+	return err
+})
+
+// LoopbackInForce reports whether commands run under p get a private
+// loopback: the setting is on, the network is off, and this system can make
+// them a network namespace of their own.
+func LoopbackInForce(p Policy) bool {
+	return p.Enabled && p.Loopback && !p.Network && privateLoopbackAvailable() == nil
+}

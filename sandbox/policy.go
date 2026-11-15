@@ -28,6 +28,14 @@ import (
 type Policy struct {
 	Enabled bool
 	Network bool // outbound IP networking
+	// Loopback gives commands, with the network off, IP networking on a
+	// loopback interface of their own: they can serve and connect to
+	// themselves (a test suite's servers) but reach nothing else, the host's
+	// own localhost services included. Linux only, in a network namespace
+	// per command; where none can be made, and on macOS, whose loopback is
+	// shared with the host, the setting has no effect and the network stays
+	// off (see Weakness).
+	Loopback bool
 	// UnixSockets allows connecting to any Unix socket. Off, commands cannot
 	// reach local daemons such as Docker or ssh-agent, which would let them
 	// act outside the sandbox (a container mounting the home directory, a
@@ -69,6 +77,8 @@ type Config struct {
 	Cwd      string // the project; writable
 	Home     string // malachi's home (sessions, .env, settings); hidden
 	NoNet    bool
+	// Loopback gives commands a private loopback; see Policy.
+	Loopback bool
 	// UnixSockets allows connecting to any Unix socket; see Policy.
 	UnixSockets bool
 	// GPU lets commands use the graphics processor; see Policy.
@@ -110,7 +120,7 @@ func privateHomeContainers(userHome, cwd string) []string {
 // Build turns c into a Policy with the default writable roots and hidden
 // paths for this user and platform.
 func Build(c Config) Policy {
-	p := Policy{Enabled: !c.Disabled, Network: !c.NoNet, UnixSockets: c.UnixSockets, GPU: c.GPU, PTY: c.PTY}
+	p := Policy{Enabled: !c.Disabled, Network: !c.NoNet, Loopback: c.Loopback, UnixSockets: c.UnixSockets, GPU: c.GPU, PTY: c.PTY}
 	userHome, _ := os.UserHomeDir()
 	inHome := func(rel string) string {
 		if userHome == "" {

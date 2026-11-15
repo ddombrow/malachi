@@ -201,6 +201,7 @@ type sandboxWire struct {
 	Reason        string   `json:"reason,omitempty"`
 	Weakness      string   `json:"weakness,omitempty"`
 	Network       bool     `json:"network"`
+	Loopback      bool     `json:"loopback"`
 	UnixSockets   bool     `json:"unixSockets"`
 	GPU           bool     `json:"gpu"`
 	PTY           bool     `json:"pty"`
@@ -215,7 +216,7 @@ type sandboxWire struct {
 
 func sandboxOf(st coding.SandboxState) sandboxWire {
 	w := sandboxWire{
-		Enabled: st.Enabled, Available: st.Unavailable == nil, Network: st.Network, UnixSockets: st.UnixSockets, GPU: st.GPU, PTY: st.PTY, Services: st.Services,
+		Enabled: st.Enabled, Available: st.Unavailable == nil, Network: st.Network, Loopback: st.Loopback, UnixSockets: st.UnixSockets, GPU: st.GPU, PTY: st.PTY, Services: st.Services,
 		WritableRoots: st.Writable, PrivatePaths: st.Private, ReadableRoots: st.Readable, HiddenPaths: st.Hidden,
 	}
 	if st.Unavailable != nil {
@@ -226,7 +227,7 @@ func sandboxOf(st coding.SandboxState) sandboxWire {
 	}
 	if !st.Enabled {
 		// Off, nothing is confined: the lists would only mislead.
-		w.Network, w.UnixSockets, w.GPU, w.PTY = true, true, true, true
+		w.Network, w.Loopback, w.UnixSockets, w.GPU, w.PTY = true, false, true, true, true
 		w.WritableRoots, w.PrivatePaths, w.ReadableRoots, w.HiddenPaths, w.Services = nil, nil, nil, nil, nil
 	}
 	for _, list := range []*[]string{&w.WritableRoots, &w.PrivatePaths, &w.ReadableRoots, &w.HiddenPaths, &w.Services} {

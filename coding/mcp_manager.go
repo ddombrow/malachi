@@ -78,6 +78,8 @@ func staleReason(started, now sandbox.Policy) string {
 		return "the sandbox was turned " + onOff(now.Enabled) + " after it started"
 	case started.Network != now.Network:
 		return "the network was turned " + onOff(now.Network) + " after it started"
+	case started.Loopback && !started.Network != (now.Loopback && !now.Network):
+		return "loopback-only access changed after it started"
 	case !slices.Equal(started.Writable, now.Writable):
 		return "a writable directory was added after it started"
 	case !slices.Equal(started.Readable, now.Readable):

@@ -241,6 +241,10 @@ type SandboxSettings struct {
 	// of running in a user namespace, where files that are not yours appear
 	// owned by nobody; that is why it is off by default there.
 	PTY bool `json:"pty,omitempty"`
+	// Loopback gives commands, with the network off, a loopback interface of
+	// their own, for test suites that start local servers (Linux; no effect
+	// on macOS). See sandbox.Policy.
+	Loopback bool `json:"loopback,omitempty"`
 	// Services are system services commands may reach beyond the built-in
 	// ones, by exact name (macOS; nothing on Linux). Each acts outside
 	// the sandbox for a command, so list only what a tool you use needs.
@@ -284,6 +288,7 @@ func (s *Settings) SandboxConfig(cwd, home string) sandbox.Config {
 	return sandbox.Config{
 		Disabled:     sb.Enabled != nil && !*sb.Enabled,
 		NoNet:        sb.Network == nil || !*sb.Network, // off unless asked for
+		Loopback:     sb.Loopback,
 		UnixSockets:  sb.UnixSockets,
 		GPU:          sb.GPU,
 		PTY:          sb.PTY,

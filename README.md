@@ -477,9 +477,17 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   (which would carry hostnames out as DNS queries), and on Linux cannot
   create sockets of any family but Unix and netlink. Downloads
   (`go mod download`, `npm install`, `git fetch`) fail until you turn it on
-  with `/network on`, `-network on`, or `"network": true`. This is about
-  commands only: malachi itself still sends the conversation, tool output
-  included, to your model provider.
+  with `/network on`, `-network on`, or `"network": true`. Test suites that
+  start servers on localhost can have `"loopback": true` (or `-loopback on`)
+  instead: on Linux each command gets a network namespace of its own with
+  nothing but a loopback interface, so it can serve and connect to itself but
+  reach neither the network nor services on your own localhost. It takes
+  unprivileged user namespaces, which Ubuntu 23.10 and later restrict
+  (`kernel.apparmor_restrict_unprivileged_userns`). Where there are none, and
+  on macOS, whose loopback is shared with everything you run, the setting has
+  no effect and the network stays off; `/sandbox` says so.
+  This is about commands only: malachi itself still sends the conversation,
+  tool output included, to your model provider.
 - **Local daemons are out of reach.** Commands cannot connect to Unix sockets
   such as Docker's or ssh-agent's. Through those a command could act outside
   the sandbox: start a container with your home directory mounted, or push
@@ -533,6 +541,7 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   "sandbox": {
     "enabled": true,
     "network": false,
+    "loopback": false,
     "unixSockets": false,
     "gpu": false,
     "pty": false,
@@ -556,7 +565,8 @@ widen its own sandbox. `-sandbox off` turns the sandbox off for one run, and
 `-sandbox on` turns it on over a setting. `/network on` and `/network off`
 switch commands' network access for the rest of the session, from the next
 command; `-network on` does it for one run, and RPC clients send
-`set_network` with `{"enabled": true}`.
+`set_network` with `{"enabled": true}`. `-loopback on` and `-loopback off`
+override the loopback setting for one run.
 `/sandbox` shows what is in force.
 `/allow-read <dir>` lets the model read one existing directory in your home
 for this session only, the same way; hidden paths stay unreadable.
@@ -579,9 +589,10 @@ code mode section counts the session's scripts, their calls and failures.
 Its MCP section, shown when servers are configured, lists each server's
 status; click one for its details.
 malachi's version sits at the top of the sidebar, beside its `×`.
-The status bar says `unsandboxed`, `sandbox unavailable` or `network on` when
-those apply. When a command fails in a way that looks like the sandbox, its
-result tells the model to ask you rather than work around it.
+The status bar says `unsandboxed`, `sandbox unavailable`, `network on` or
+`loopback only` when those apply. When a command fails in a way that looks
+like the sandbox, its result tells the model to ask you rather than work
+around it.
 
 How it works:
 
