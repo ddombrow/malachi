@@ -167,39 +167,32 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any, structured b
 		// count, as the output mode lists them.
 		results []map[string]any
 	)
-	// Any match starts with the pattern's literal prefix, when it has one, so
-	// a file without it is skipped without running the regexp over its lines.
-	var literal []byte
-	if prefix, _ := re.LiteralPrefix(); prefix != "" {
-		literal = []byte(prefix)
+	scanner := &grepScanner{re: re, lit: requiredLiteral(expr), pol: pol, root: root}
+	switch mode {
+	case grepFiles:
+		scanner.cap = 1 // one match is enough to list the file
+	case grepLines:
+		// The match after the last one wanted is what ends a result's
+		// trailing context, so one more than the limit.
+		scanner.cap = limit + 1
 	}
-	// One buffer serves every file: a search reads thousands of them.
-	var buf []byte
-	scan := func(rel string, d fs.DirEntry) error {
+	// consume turns one file's matches into results. Files come in the
+	// order the walk found them.
+	consume := func(file *grepFile) error {
 		if hitLimit {
 			return errStopWalk // the last result's trailing context ended with its file
 		}
-		if info, err := d.Info(); err == nil && info.Size() > MaxGrepFileBytes {
+		switch file.skip {
+		case grepTooBig:
 			skippedBig++
 			return nil
-		}
-		f, err := pol.OpenRead(filepath.Join(root, rel))
-		if err != nil {
-			return nil // gone, unreadable, or swapped for a link to a hidden file
-		}
-		data, err := readInto(&buf, f, MaxGrepFileBytes+1)
-		f.Close()
-		if err != nil {
-			return nil
-		}
-		if len(data) > MaxGrepFileBytes { // grew since it was listed
-			skippedBig++
-			return nil
-		}
-		if bytes.IndexByte(data[:min(len(data), binarySniffBytes)], 0) >= 0 {
+		case grepBinary:
 			skippedBin++
 			return nil
+		case grepUnreadable:
+			return nil
 		}
+		rel, data, matching := file.rel, file.data, file.matches
 		searched++
 		found := 0
 		// Context state for this file: the lines held back in case a match
@@ -215,13 +208,10 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any, structured b
 			lines = append(lines, fmt.Sprintf("%s%c%d%c %s", rel, sep, n, sep, clipLine(text, MaxGrepLineWidth)))
 			printed = n
 		}
-		if len(literal) > 0 && !bytes.Contains(data, literal) {
-			data = nil
-		}
 		for n := 1; len(data) > 0; n++ {
 			var line []byte
 			line, data = nextLine(data)
-			if !re.Match(line) {
+			if len(matching) == 0 || matching[0] != n {
 				switch {
 				case after > 0:
 					emit(n, '-', string(line))
@@ -235,6 +225,7 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any, structured b
 				}
 				continue
 			}
+			matching = matching[1:]
 			text := string(line)
 			if hitLimit {
 				// A match inside the trailing context of the last result
@@ -298,7 +289,14 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any, structured b
 		return nil
 	}
 
-	stats, err := searchEach(root, single, filter, pol, scan)
+	var stats walkStats
+	err = scanner.each(func(visit func(string, fs.DirEntry) error) (err error) {
+		stats, err = searchEach(root, single, filter, pol, visit)
+		return err
+	}, consume)
+	if errors.Is(err, errStopWalk) {
+		err = nil // stopped at the limit while finishing files already scanned
+	}
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
