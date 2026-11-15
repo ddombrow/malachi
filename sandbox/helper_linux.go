@@ -2,11 +2,13 @@ package sandbox
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"syscall"
 
 	"github.com/landlock-lsm/go-landlock/landlock"
@@ -122,13 +124,14 @@ func runHelper(raw string) error {
 // is driven by them.
 func restrictFS(p Policy, own, ptys bool) error {
 	readable, listable := readGrants(p)
-	roDirs, roFiles := partition(readable)
+	roDirs, roFiles := pin(readable)
+	listable, _ = pin(listable)
 	var writable []string
 	for _, w := range p.Writable {
 		g, _ := carve(w, p.Hidden)
 		writable = append(writable, g...)
 	}
-	rwDirs, rwFiles := partition(writable)
+	rwDirs, rwFiles := pin(writable)
 
 	// Paths can vanish between listing them and Landlock opening them (temp
 	// directories churn constantly), so a missing one is skipped: it can no
@@ -160,6 +163,66 @@ func restrictFS(p Policy, own, ptys bool) error {
 	// Best effort over the ABIs this kernel lacks, never over Landlock
 	// itself: runHelper has already required ABI 1 or later.
 	return landlock.V5.BestEffort().RestrictPaths(rules...)
+}
+
+// pin opens each path as the policy named it, following no symlink anywhere
+// along it, and returns names for what it opened (through /proc/self/fd) for
+// Landlock to put its rules on, directories apart from the rest. A path
+// that has a symlink in it, or is gone, or is a pipe or socket (which
+// Landlock takes no rule for, and does not confine), is left out.
+//
+// A rule lands on whatever a path leads to when Landlock opens it, and the
+// policy's paths were resolved when the session started. A command can
+// change what one leads to afterwards if it lies inside a directory the
+// command may write: the project's .git is such a root, and moving it aside
+// and leaving a link to ~/.ssh in its place got the next command a rule on
+// ~/.ssh, hidden or not. Nothing in a policy's path is a link when the
+// policy is built, so one that is a link now is not the place that was
+// meant, and gets no rule. Opening here and handing Landlock the opened
+// file also leaves no moment between the check and the rule.
+//
+// The files stay open until exec closes them.
+func pin(paths []string) (dirs, files []string) {
+	for _, path := range paths {
+		fd, err := openNoSymlinks(path)
+		if err != nil {
+			continue
+		}
+		var st unix.Stat_t
+		if err := unix.Fstat(fd, &st); err != nil {
+			unix.Close(fd)
+			continue
+		}
+		name := "/proc/self/fd/" + strconv.Itoa(fd)
+		switch st.Mode & unix.S_IFMT {
+		case unix.S_IFDIR:
+			dirs = append(dirs, name)
+		case unix.S_IFIFO, unix.S_IFSOCK, unix.S_IFLNK:
+			unix.Close(fd)
+		default:
+			files = append(files, name)
+		}
+	}
+	return dirs, files
+}
+
+// openNoSymlinks opens path for reference only (O_PATH), refusing a symlink
+// in any part of it.
+func openNoSymlinks(path string) (int, error) {
+	fd, err := unix.Openat2(unix.AT_FDCWD, path, &unix.OpenHow{
+		Flags:   unix.O_PATH | unix.O_CLOEXEC,
+		Resolve: unix.RESOLVE_NO_SYMLINKS,
+	})
+	if !errors.Is(err, unix.ENOSYS) {
+		return fd, err
+	}
+	// openat2 is filtered out in some containers. Without it, the last part
+	// is still refused if it is a link, and the rest is compared with what
+	// the path resolves to now.
+	if Canonical(path) != path {
+		return -1, unix.ELOOP
+	}
+	return unix.Open(path, unix.O_PATH|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 }
 
 // unixSocketABI is the Landlock ABI from which connecting to a Unix socket

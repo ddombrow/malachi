@@ -725,3 +725,39 @@ func TestSandboxedSymlinkBesideHidden(t *testing.T) {
 		}
 	}
 }
+
+// A root inside a directory the command may write can be moved aside and a
+// link left in its place: the project's .git is one. The policy still names
+// the old path, and the rule for it must not follow the link to wherever it
+// now leads.
+func TestSandboxedRootSwappedForALink(t *testing.T) {
+	requireBackend(t)
+	p, project, _, _, secret := fixture(t)
+	key := filepath.Join(secret, "key")
+	if err := os.WriteFile(key, []byte("hunter2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git := filepath.Join(project, ".git")
+	if err := os.Mkdir(git, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p.Writable = append(slices.Clone(p.Writable), git)
+	p.Readable = append(slices.Clone(p.Readable), git)
+
+	if out, ok := sh(t, p, project, "mv .git .git-real && ln -s "+secret+" .git"); !ok {
+		t.Fatalf("could not swap the root from inside the sandbox: %s", out)
+	}
+	if out, ok := sh(t, p, project, "cat "+key); ok {
+		t.Errorf("read a hidden file after swapping a root for a link to it: %s", out)
+	}
+	if _, ok := sh(t, p, project, "echo x >> "+key); ok {
+		t.Error("wrote a hidden file after swapping a root for a link to it")
+	}
+	if out, ok := sh(t, p, project, "cat .git/key"); ok {
+		t.Errorf("read a hidden file through the link: %s", out)
+	}
+	// The project is still the command's own.
+	if out, ok := sh(t, p, project, "echo x > .git-real/f && cat .git-real/f"); !ok || out != "x" {
+		t.Errorf("the project stopped being writable: %s", out)
+	}
+}

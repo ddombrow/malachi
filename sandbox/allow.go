@@ -58,28 +58,6 @@ func carve(root string, hidden []string) (grant, split []string) {
 	return grant, split
 }
 
-// partition splits paths into directories and everything else, dropping
-// paths that do not exist and those that lead to a pipe or socket. Landlock
-// takes no rule for those and needs none: it does not confine them. They
-// turn up when /dev is split, where /dev/stderr is whatever the command's
-// error stream is.
-func partition(paths []string) (dirs, files []string) {
-	for _, p := range paths {
-		st, err := os.Stat(p)
-		switch {
-		case err != nil:
-		case st.IsDir():
-			dirs = append(dirs, p)
-		case st.Mode()&(os.ModeNamedPipe|os.ModeSocket) != 0:
-		default:
-			files = append(files, p)
-		}
-	}
-	slices.Sort(dirs)
-	slices.Sort(files)
-	return dirs, files
-}
-
 // readGrants returns the paths Landlock grants read access to under p, and
 // the directories that may still be listed: everything outside hidden and
 // private directories, plus each readable root that lies in (or holds) a
