@@ -511,7 +511,8 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   command in a user namespace, where files that are not yours appear owned
   by `nobody` (access is unchanged), and it takes a system that allows
   unprivileged user namespaces, which Ubuntu 23.10 and later restrict
-  (`kernel.apparmor_restrict_unprivileged_userns`). Where there are none,
+  (`kernel.apparmor_restrict_unprivileged_userns`; how to allow them is under
+  "How it works" below). Where there are none,
   commands have no network at all, and malachi says so at startup if you set
   `"loopback": true` yourself, and in any command the sandbox then refuses.
   On macOS the loopback is shared with everything you run, so it is off
@@ -690,6 +691,45 @@ How it works:
   command truncating a file, so a command can empty any file you can write,
   though not read a hidden one or write contents outside the writable
   directories. The sandbox still runs there, and malachi says so at startup.
+- **User namespaces, for the loopback and pty settings on Linux.** Both start
+  each command's helper in a user namespace of its own, which takes a system
+  that lets an unprivileged process make one and keep its capabilities
+  there. Ubuntu 23.10 and later (and Lima's Ubuntu images) let one be made
+  but take its capabilities away. `/sandbox` shows whether the loopback is in
+  force, and `sysctl kernel.apparmor_restrict_unprivileged_userns` prints 1
+  where Ubuntu restricts them. To allow them for every program:
+
+  ```sh
+  echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/60-userns.conf
+  sudo sysctl --system
+  ```
+
+  or for malachi alone, with an AppArmor profile naming its binary (the
+  helper is the same binary):
+
+  ```sh
+  sudo tee /etc/apparmor.d/malachi <<'EOF'
+  abi <abi/4.0>,
+  include <tunables/global>
+  profile malachi /home/you/.local/bin/malachi flags=(unconfined) {
+    userns,
+  }
+  EOF
+  sudo apparmor_parser -r /etc/apparmor.d/malachi
+  ```
+
+  The profile does not cover `go test`, whose test binaries are built at
+  temporary paths. In a Lima VM, the sysctl can go in the instance's
+  `lima.yaml`, which runs it at every boot (restart malachi after it has
+  run, since malachi asks once at startup):
+
+  ```yaml
+  provision:
+  - mode: system
+    script: |
+      #!/bin/sh
+      sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+  ```
 
 What it does not stop:
 
