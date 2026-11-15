@@ -9,7 +9,7 @@ import "github.com/ddombrow/malachi/agent"
 // write tools rooted at cwd. grep and glob come before bash so the system prompt
 // steers the model toward structured search over shelling out.
 func CodingTools(cwd string, opts ToolOptions) []*agent.Tool {
-	return []*agent.Tool{
+	tools := []*agent.Tool{
 		NewReadTool(cwd, opts),
 		NewGrepTool(cwd, opts),
 		NewGlobTool(cwd, opts),
@@ -18,4 +18,8 @@ func CodingTools(cwd string, opts ToolOptions) []*agent.Tool {
 		NewEditTool(cwd, opts),
 		NewWriteTool(cwd, opts),
 	}
+	if opts.jobs != nil {
+		tools = append(tools, NewJobsTool(opts.jobs))
+	}
+	return tools
 }

@@ -335,6 +335,24 @@ It reads at most 10 MiB of a response; text past the display limit goes to a
 spill file. Scripts call it as `tools.fetch({url})`, several at once with
 `Promise.all`. Whatever it fetches is untrusted input to the model.
 
+### Background jobs
+
+A command that does not exit, such as a dev server or a file watcher, can be
+started as a background job: `bash` with `background: true` returns at once
+with the job's id and whatever it printed in its first half second. The
+`jobs` tool lists the session's jobs, reads what a job has printed since it
+was last read (waiting up to 30 seconds for more, if asked), and stops one,
+asking it to exit and killing it three seconds later if it has not.
+
+Jobs run under the same sandbox as any command. At most eight run at once.
+They carry over across `/new` and resume, like MCP servers, and end with the
+session: a command left running with `&` is no one's and outlives malachi,
+so prefer a job. A job's output is kept in memory up to 1 MiB, and all of it
+(up to 64 MiB) in a log file the job's output names.
+
+On Linux with the network off, each command has a loopback of its own, so a
+server started as a job cannot yet be reached from a later command.
+
 ### MCP servers
 
 malachi runs local [MCP](https://modelcontextprotocol.io) servers you

@@ -47,7 +47,16 @@ func SummarizeToolCall(name string, args map[string]any) string {
 		if i := strings.IndexByte(cmd, '\n'); i >= 0 {
 			cmd = cmd[:i] + " …"
 		}
+		if args["background"] == true {
+			return "$ " + cmd + " (background job)"
+		}
 		return "$ " + cmd
+	case "jobs":
+		s := "jobs " + str("action")
+		if id, ok := args["id"]; ok {
+			s += fmt.Sprintf(" %v", id)
+		}
+		return s
 	case "edit":
 		n := 0
 		if list, ok := args["edits"].([]any); ok {

@@ -57,6 +57,9 @@ type Options struct {
 	// mcp is a running MCP manager handed over by the session this one
 	// replaces (Reopen).
 	mcp *MCPManager
+	// jobs are the background jobs of the session this one replaces, which
+	// carry on under the new one.
+	jobs *jobManager
 }
 
 // Session is the coding-agent environment around a Harness: tools rooted at
@@ -86,6 +89,7 @@ type Session struct {
 	spillDir   string // full output of truncated commands; removed on Close
 	codeMode   codeModeCounter
 	mcp        *MCPManager
+	jobs       *jobManager // background jobs; nil once handed to a reopened session
 	header     []*session.Entry
 	persistErr error
 	diag       *Diagnostics
@@ -340,6 +344,13 @@ func Open(opts Options) (*Session, error) {
 	toolOpts := opts.Settings.ToolOptions()
 	toolOpts.SpillDir = s.spillDir
 	toolOpts.Sandbox = s.sandboxPolicy
+	// Background jobs carry over from the session this one replaces, as MCP
+	// servers do: a /new should not stop the dev server.
+	s.jobs = opts.jobs
+	if s.jobs == nil {
+		s.jobs = newJobManager(filepath.Join(spillRoot(), "jobs-"+session.NewID()[:8]))
+	}
+	toolOpts.jobs = s.jobs
 	tools := CodingTools(cwd, toolOpts)
 	// MCP servers carry over from the session this one replaces, so a /new
 	// or resume does not restart them; otherwise they start once the
@@ -880,6 +891,9 @@ func (s *Session) Close() {
 	if s.mcp != nil {
 		s.mcp.Close()
 	}
+	if s.jobs != nil {
+		s.jobs.Close()
+	}
 	s.bus.close()
 	_ = os.RemoveAll(s.spillDir)
 }
@@ -905,13 +919,13 @@ func (s *Session) Reopen(resume string) (*Session, error) {
 		opts.Model = s.Provider().Name + "/" + s.Model()
 		opts.ThinkingLevel = s.ThinkingLevel()
 	}
-	opts.mcp = s.mcp
+	opts.mcp, opts.jobs = s.mcp, s.jobs
 	next, err := Open(opts)
 	if err != nil {
 		s.mcp.bind(s.sandboxPolicy, s.mcpChanged, s.CodeMode().Enabled)
 		return nil, err
 	}
-	s.mcp = nil // handed over
+	s.mcp, s.jobs = nil, nil // handed over
 	s.Close()
 	return next, nil
 }

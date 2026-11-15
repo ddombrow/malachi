@@ -54,6 +54,10 @@ type ToolOptions struct {
 	// Sandbox returns the policy in force; it is a function so the user can
 	// change the policy mid-session. Nil means no sandbox.
 	Sandbox func() sandbox.Policy
+
+	// jobs keeps the background jobs bash starts; nil, bash runs commands
+	// in the foreground only and there is no jobs tool.
+	jobs *jobManager
 }
 
 // policy returns the sandbox policy in force.
@@ -231,28 +235,35 @@ func shellPath() string {
 
 // NewBashTool returns the bash tool running commands in cwd.
 func NewBashTool(cwd string, opts ToolOptions) *agent.Tool {
+	description := fmt.Sprintf("Execute a bash command in the current working directory. Returns stdout and stderr. "+
+		"Output is truncated to last %d lines or %dKB (whichever is hit first). If truncated, "+
+		"full output is saved to a temp file. Optionally provide a timeout in seconds.",
+		MaxOutputLines, MaxOutputBytes/1024)
+	properties := map[string]any{
+		"command": map[string]any{"type": "string", "description": "Bash command to execute"},
+		"description": map[string]any{
+			"type":        "string",
+			"description": "Brief present-participle summary of the command's purpose, such as 'Running tests' or 'Validating and committing changes'",
+		},
+		"timeout": map[string]any{"type": "number", "description": "Timeout in seconds (optional; long-running commands are stopped after a default limit otherwise)"},
+	}
+	if opts.jobs != nil {
+		description += " Set background to start a command that does not exit, such as a server or a watcher, as a job: " +
+			"bash returns at once with the job's id, and the jobs tool reads its output and stops it."
+		properties["background"] = map[string]any{"type": "boolean", "description": "Run as a background job and return at once (for servers and watchers)"}
+	}
 	return &agent.Tool{
-		Name:  "bash",
-		Label: "Bash",
-		Description: fmt.Sprintf("Execute a bash command in the current working directory. Returns stdout and stderr. "+
-			"Output is truncated to last %d lines or %dKB (whichever is hit first). If truncated, "+
-			"full output is saved to a temp file. Optionally provide a timeout in seconds.",
-			MaxOutputLines, MaxOutputBytes/1024),
+		Name:          "bash",
+		Label:         "Bash",
+		Description:   description,
 		PromptSnippet: "Execute bash commands (ls, grep, find, etc.)",
 		PromptGuidelines: []string{
 			"When using bash, include a brief present-participle description of the command's purpose (for example, 'Running tests').",
 		},
 		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"command": map[string]any{"type": "string", "description": "Bash command to execute"},
-				"description": map[string]any{
-					"type":        "string",
-					"description": "Brief present-participle summary of the command's purpose, such as 'Running tests' or 'Validating and committing changes'",
-				},
-				"timeout": map[string]any{"type": "number", "description": "Timeout in seconds (optional; long-running commands are stopped after a default limit otherwise)"},
-			},
-			"required": []string{"command", "description"},
+			"type":       "object",
+			"properties": properties,
+			"required":   []string{"command", "description"},
 		},
 		Execute: func(ctx context.Context, _ string, args map[string]any, onUpdate func(agent.ToolResult)) (agent.ToolResult, error) {
 			return executeBash(ctx, cwd, opts, args, onUpdate)
@@ -271,6 +282,13 @@ func executeBash(ctx context.Context, cwd string, opts ToolOptions, args map[str
 	}
 	if hasTimeout && timeout <= 0 {
 		return agent.ToolResult{}, fmt.Errorf("timeout must be greater than 0")
+	}
+	background, _, err := optBool(args, "background")
+	if err != nil {
+		return agent.ToolResult{}, err
+	}
+	if background {
+		return startJob(ctx, cwd, opts, command, args)
 	}
 	if ctx.Err() != nil {
 		return agent.ToolResult{}, fmt.Errorf("Command cancelled")
@@ -524,3 +542,33 @@ func sandboxHint(p sandbox.Policy) string {
 	return "[This may be the sandbox: commands can write only in the project, temp and build-cache directories, and " + reads + "." +
 		network + " If the task needs more access, ask the user; do not try to work around the sandbox.]"
 }
+
+// startJob starts command as a background job and returns its id, with
+// whatever it printed in its first moment.
+func startJob(ctx context.Context, cwd string, opts ToolOptions, command string, args map[string]any) (agent.ToolResult, error) {
+	if opts.jobs == nil {
+		return agent.ToolResult{}, errors.New("background jobs are not available here")
+	}
+	if ctx.Err() != nil {
+		return agent.ToolResult{}, fmt.Errorf("Command cancelled")
+	}
+	description, _, _ := optStr(args, "description")
+	j, err := opts.jobs.start(cwd, opts, opts.policy(), command, description)
+	if err != nil {
+		return agent.ToolResult{}, err
+	}
+	// A command that fails at once (a typo, a port in use) says so in its
+	// first moment, and is better reported now than found later.
+	out, dropped := j.read(ctx, jobStartWait)
+	if !j.running() {
+		r := jobResult(j, out, dropped)
+		r.Content = []agent.Content{&agent.TextContent{Text: fmt.Sprintf("Job %d ended at once (%s).\n\n%s", j.id, j.status(), r.Text())}}
+		return r, nil
+	}
+	r := jobResult(j, out, dropped)
+	r.Content = []agent.Content{&agent.TextContent{Text: fmt.Sprintf("Started job %d. Read its output with jobs action=output id=%d, and stop it with action=stop.\n\n%s", j.id, j.id, r.Text())}}
+	return r, nil
+}
+
+// jobStartWait is how long starting a job waits for its first output.
+const jobStartWait = 500 * time.Millisecond
