@@ -277,8 +277,7 @@ func (c *conn) call(ctx context.Context, method string, params, result any) erro
 		c.forget(key)
 		return err
 	}
-	select {
-	case r := <-ch:
+	answered := func(r reply) error {
 		if r.err != nil {
 			return r.err
 		}
@@ -286,7 +285,21 @@ func (c *conn) call(ctx context.Context, method string, params, result any) erro
 			return nil
 		}
 		return json.Unmarshal(r.result, result)
+	}
+	select {
+	case r := <-ch:
+		return answered(r)
 	case <-ctx.Done():
+		// The connection's end fails this call and then cancels ctx. Both
+		// may be waiting by the time this runs, and a select picks between
+		// ready cases at random, so the answer is looked for first: the
+		// caller is told the connection closed, every time, and not now and
+		// then that its context was cancelled.
+		select {
+		case r := <-ch:
+			return answered(r)
+		default:
+		}
 		c.forget(key)
 		return ctx.Err()
 	}
