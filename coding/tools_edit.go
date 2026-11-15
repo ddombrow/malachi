@@ -123,10 +123,18 @@ func detectLineEnding(s string) string {
 // typography differences (see looseIndex); that match is used only if it is
 // unique. notes says which edits matched that way, so the model knows its
 // copy of the file was off.
-func ApplyEdits(content string, edits []edit, path string) (out string, notes []string, err error) {
+//
+// Edits that would leave the file as it is are skipped, with a note, rather
+// than failing the call: a repeat of an earlier edit in the same call, an
+// edit whose oldText equals its newText, and one already applied (its
+// oldText is gone and its newText is in the file, see alreadyApplied). A
+// model resending an edit it is unsure landed wants the file in that state,
+// and it is. applied counts the edits that changed something.
+func ApplyEdits(content string, edits []edit, path string) (out string, applied int, notes []string, err error) {
 	type span struct {
 		start, end int
 		newText    string
+		edit       int
 	}
 	multi := len(edits) > 1
 	name := func(i int) string {
@@ -136,16 +144,34 @@ func ApplyEdits(content string, edits []edit, path string) (out string, notes []
 		return "the text"
 	}
 	spans := make([]span, 0, len(edits))
+	seen := make(map[edit]int, len(edits))
 	for i, e := range edits {
 		old := normalizeLF(e.oldText)
 		newText := normalizeLF(e.newText)
 		if old == "" {
 			if multi {
-				return "", nil, fmt.Errorf("edits[%d].oldText must not be empty in %s.", i, path)
+				return "", 0, nil, fmt.Errorf("edits[%d].oldText must not be empty in %s.", i, path)
 			}
-			return "", nil, fmt.Errorf("oldText must not be empty in %s.", path)
+			return "", 0, nil, fmt.Errorf("oldText must not be empty in %s.", path)
 		}
+		key := edit{old, newText, e.replaceAll}
+		if j, ok := seen[key]; ok {
+			notes = append(notes, fmt.Sprintf("edits[%d] repeats edits[%d] and was applied once", i, j))
+			continue
+		}
+		seen[key] = i
 		n := strings.Count(content, old)
+		if old == newText {
+			if n > 0 {
+				notes = append(notes, fmt.Sprintf("%s has the same oldText and newText, so it changed nothing", name(i)))
+				continue
+			}
+			if _, _, count := looseIndex(content, old); count > 0 {
+				notes = append(notes, fmt.Sprintf("%s has the same oldText and newText, so it changed nothing", name(i)))
+				continue
+			}
+		}
+		applied++
 		switch {
 		case n > 0 && e.replaceAll:
 			for at := 0; ; {
@@ -153,37 +179,45 @@ func ApplyEdits(content string, edits []edit, path string) (out string, notes []
 				if k < 0 {
 					break
 				}
-				spans = append(spans, span{at + k, at + k + len(old), newText})
+				spans = append(spans, span{at + k, at + k + len(old), newText, i})
 				at += k + len(old)
 			}
 			continue
 		case n == 1:
 			start := strings.Index(content, old)
-			spans = append(spans, span{start, start + len(old), newText})
+			spans = append(spans, span{start, start + len(old), newText, i})
 			continue
 		case n > 1:
-			return "", nil, fmt.Errorf("Found %d occurrences of %s in %s. Each oldText must be unique: add surrounding context, or set replaceAll to change every occurrence.", n, name(i), path)
+			return "", 0, nil, fmt.Errorf("Found %d occurrences of %s in %s. Each oldText must be unique: add surrounding context, or set replaceAll to change every occurrence.", n, name(i), path)
 		}
 		if start, end, count := looseIndex(content, old); count == 1 {
-			spans = append(spans, span{start, end, newText})
+			spans = append(spans, span{start, end, newText, i})
 			notes = append(notes, fmt.Sprintf("%s matched only after ignoring whitespace differences", name(i)))
 			continue
 		} else if count > 1 {
-			return "", nil, fmt.Errorf("Could not find %s exactly in %s, and ignoring whitespace it matches %d places. Copy oldText exactly from the file.", name(i), path, count)
+			return "", 0, nil, fmt.Errorf("Could not find %s exactly in %s, and ignoring whitespace it matches %d places. Copy oldText exactly from the file.", name(i), path, count)
+		}
+		at, sure := alreadyApplied(content, newText)
+		if sure {
+			applied--
+			notes = append(notes, fmt.Sprintf("%s was already applied (its newText is at line %d and its oldText is not in the file)", name(i), lineOf(content, at)))
+			continue
 		}
 		msg := fmt.Sprintf("Could not find %s in %s. The oldText must match exactly including all whitespace and newlines.", name(i), path)
 		if !multi {
 			msg = fmt.Sprintf("Could not find the exact text in %s. The old text must match exactly including all whitespace and newlines.", path)
 		}
-		if near := nearestText(content, old); near != "" {
+		if at >= 0 {
+			msg += fmt.Sprintf("\nIts newText is already in the file at line %d, so it may have been applied already. Read the file to check.", lineOf(content, at))
+		} else if near := nearestText(content, old); near != "" {
 			msg += "\nThe closest text in the file is:\n" + near + "\nIf the file changed since you read it, read it again."
 		}
-		return "", nil, errors.New(msg)
+		return "", 0, nil, errors.New(msg)
 	}
 	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
 	for i := 1; i < len(spans); i++ {
-		if spans[i].start < spans[i-1].end {
-			return "", nil, fmt.Errorf("Edits must not overlap")
+		if a, b := spans[i-1], spans[i]; b.start < a.end {
+			return "", 0, nil, fmt.Errorf("%s and %s overlap at line %d of %s. Edits must not overlap: merge them into one edit.", name(a.edit), name(b.edit), lineOf(content, b.start), path)
 		}
 	}
 	var b strings.Builder
@@ -195,13 +229,40 @@ func ApplyEdits(content string, edits []edit, path string) (out string, notes []
 	}
 	b.WriteString(content[prev:])
 	out = b.String()
-	if out == content {
+	if out == content && applied > 0 {
 		if multi {
-			return "", nil, fmt.Errorf("No changes made to %s. The replacements produced identical content.", path)
+			return "", 0, nil, fmt.Errorf("No changes made to %s. The replacements produced identical content.", path)
 		}
-		return "", nil, fmt.Errorf("No changes made to %s. The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected.", path)
+		return "", 0, nil, fmt.Errorf("No changes made to %s. The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected.", path)
 	}
-	return out, notes, nil
+	return out, applied, notes, nil
+}
+
+// minAppliedText is how much non-blank text a newText must have before its
+// presence is taken as proof that an edit was applied. A short one ("}",
+// "return nil") turns up by chance, and skipping a real failure on that
+// coincidence would tell the model a change landed that did not.
+const minAppliedText = 20
+
+// alreadyApplied reports where newText occurs in content (-1 if nowhere), and
+// whether that is enough to treat an edit whose oldText is missing as
+// already applied: newText occurs exactly once and is long enough not to
+// occur by chance.
+func alreadyApplied(content, newText string) (at int, sure bool) {
+	if strings.TrimSpace(newText) == "" {
+		return -1, false
+	}
+	at = strings.Index(content, newText)
+	if at < 0 {
+		return -1, false
+	}
+	sure = len(strings.TrimSpace(newText)) >= minAppliedText && strings.Count(content, newText) == 1
+	return at, sure
+}
+
+// lineOf is the 1-based line of byte offset at in content.
+func lineOf(content string, at int) int {
+	return strings.Count(content[:at], "\n") + 1
 }
 
 func executeEdit(cwd string, opts ToolOptions, args map[string]any) (agent.ToolResult, error) {
@@ -243,9 +304,14 @@ func executeEdit(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 	}
 	ending := detectLineEnding(content)
 	base := normalizeLF(content)
-	updated, notes, err := ApplyEdits(base, edits, path)
+	updated, applied, notes, err := ApplyEdits(base, edits, path)
 	if err != nil {
 		return agent.ToolResult{}, err
+	}
+	if applied == 0 {
+		r := agent.TextResult(fmt.Sprintf("No changes needed in %s: %s.", path, strings.Join(notes, "; ")))
+		r.Details = map[string]any{"path": path, "edits": 0, "patch": "", "first_changed_line": 0}
+		return r, nil
 	}
 	final := updated
 	if ending == "\r\n" {
@@ -261,11 +327,11 @@ func executeEdit(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 		return agent.ToolResult{}, err
 	}
 	patch, first := UnifiedDiff(path, base, updated)
-	text := fmt.Sprintf("Successfully replaced %d block(s) in %s.", len(edits), path)
+	text := fmt.Sprintf("Successfully replaced %d block(s) in %s.", applied, path)
 	if len(notes) > 0 {
 		text += " Note: " + strings.Join(notes, "; ") + "."
 	}
 	r := agent.TextResult(text)
-	r.Details = map[string]any{"path": path, "edits": len(edits), "patch": patch, "first_changed_line": first}
+	r.Details = map[string]any{"path": path, "edits": applied, "patch": patch, "first_changed_line": first}
 	return r, nil
 }

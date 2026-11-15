@@ -217,9 +217,21 @@ func TestEdit(t *testing.T) {
 		},
 		{
 			name:    "no change",
-			content: "same",
-			args:    map[string]any{"edits": []any{map[string]any{"oldText": "same", "newText": "same"}}},
+			content: "a b",
+			args:    map[string]any{"edits": []any{map[string]any{"oldText": "a  b", "newText": "a b"}}},
 			errSub:  "No changes made",
+		},
+		{
+			name:    "overlap names the edits",
+			content: "abcdef",
+			args:    map[string]any{"edits": []any{map[string]any{"oldText": "abc", "newText": "x"}, map[string]any{"oldText": "cde", "newText": "y"}}},
+			errSub:  "edits[0] and edits[1] overlap at line 1",
+		},
+		{
+			name:    "missing oldText points at a short newText already present",
+			content: "a\n}\n",
+			args:    map[string]any{"edits": []any{map[string]any{"oldText": "zzz\n", "newText": "}\n"}}},
+			errSub:  "newText is already in the file at line 2",
 		},
 	}
 	for _, tc := range cases {
@@ -571,6 +583,61 @@ func TestEditMissShowsTheClosestText(t *testing.T) {
 		"edits": []any{map[string]any{"oldText": "completely unrelated text here", "newText": "x"}}})
 	if err == nil || strings.Contains(err.Error(), "closest") {
 		t.Fatalf("err %v", err)
+	}
+}
+
+// Edits that leave the file as it is succeed with a note instead of failing
+// the call, so a model resending a change it is unsure landed is not told
+// something went wrong. Each case is a failure seen in a real session.
+func TestEditSkipsEditsThatChangeNothing(t *testing.T) {
+	const field = "\tPrivateLoopback bool\n\tLoopbackSession bool\n}\n"
+	cases := []struct {
+		name, content, want, note string
+		edits                     []any
+	}{
+		{
+			name:    "oldText equals newText",
+			content: "if a || b {\n",
+			want:    "if a || b {\n",
+			note:    "same oldText and newText",
+			edits:   []any{map[string]any{"oldText": "if a || b {\n", "newText": "if a || b {\n"}},
+		},
+		{
+			name:    "already applied, alongside a real edit",
+			content: "type spec struct {\n" + field + "\nconst x = 1\n",
+			want:    "type spec struct {\n" + field + "\nconst x = 2\n",
+			note:    "edits[0] was already applied (its newText is at line 2",
+			edits: []any{
+				map[string]any{"oldText": "\tPrivateLoopback bool\n}\n", "newText": field},
+				map[string]any{"oldText": "x = 1", "newText": "x = 2"},
+			},
+		},
+		{
+			name:    "repeated replaceAll edit",
+			content: "wait(jobStopGrace)\nwait(jobStopGrace)\n",
+			want:    "wait(grace)\nwait(grace)\n",
+			note:    "edits[1] repeats edits[0]",
+			edits: []any{
+				map[string]any{"oldText": "jobStopGrace", "newText": "grace", "replaceAll": true},
+				map[string]any{"oldText": "jobStopGrace", "newText": "grace", "replaceAll": true},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := write(t, dir, "f.go", tc.content)
+			r, err := run(t, NewEditTool(dir, ToolOptions{}), map[string]any{"path": "f.go", "edits": tc.edits})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := os.ReadFile(p); string(got) != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+			if text := r.Text(); !strings.Contains(text, tc.note) {
+				t.Fatalf("result %q lacks %q", text, tc.note)
+			}
+		})
 	}
 }
 
