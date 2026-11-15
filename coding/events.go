@@ -78,6 +78,13 @@ type MCPChangedEvent struct {
 	State MCPState `json:"-"`
 }
 
+// JobsChangedEvent reports that a background job started or ended. It is a
+// malachi addition; State is every job of the session now, which RPC
+// encodes as get_state does.
+type JobsChangedEvent struct {
+	State []JobState `json:"-"`
+}
+
 func (e CompactionStartEvent) MarshalJSON() ([]byte, error) {
 	type a CompactionStartEvent
 	return withType("compaction_start", a(e))

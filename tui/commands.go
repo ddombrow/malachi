@@ -440,6 +440,7 @@ func (m *model) reopen(resume string) tea.Cmd {
 	m.toolArgs = map[string]map[string]any{}
 	m.syncSandbox(next.Sandbox())
 	m.syncMCP(next.MCPState())
+	m.syncJobs(next.Jobs())
 
 	m.showSession(next)
 	m.vp.GotoBottom()

@@ -47,6 +47,31 @@ type jobManager struct {
 	// life ends every job when the manager is closed.
 	life   context.Context
 	cancel context.CancelFunc
+	// changed hears of every job starting and ending. The session that has
+	// the manager binds it; a reopened session binds its own.
+	changed func()
+	// notifyMu makes each report wait for the one before it, so reports
+	// arrive in the order the state they carry was read.
+	notifyMu sync.Mutex
+}
+
+// bind sets who hears of jobs changing.
+func (m *jobManager) bind(changed func()) {
+	m.mu.Lock()
+	m.changed = changed
+	m.mu.Unlock()
+}
+
+// notify tells whoever is bound that a job changed.
+func (m *jobManager) notify() {
+	m.mu.Lock()
+	changed := m.changed
+	m.mu.Unlock()
+	if changed != nil {
+		m.notifyMu.Lock()
+		defer m.notifyMu.Unlock()
+		changed()
+	}
 }
 
 func newJobManager(dir string) *jobManager {
@@ -110,7 +135,11 @@ func (m *jobManager) start(cwd string, opts ToolOptions, pol sandbox.Policy, com
 	}
 	j := &job{id: id, command: command, description: description, started: time.Now(), cmd: cmd, log: log, cancel: cancel, done: make(chan struct{})}
 	m.jobs[id] = j
-	go j.wait()
+	go func() {
+		j.wait()
+		m.notify()
+	}()
+	go m.notify() // m.mu is held here
 	return j, nil
 }
 
@@ -455,4 +484,47 @@ func jobCommandLine(s string) string {
 		return s[:i] + " …"
 	}
 	return s
+}
+
+// JobState is one background job as frontends show it.
+type JobState struct {
+	ID          int
+	Command     string
+	Description string
+	// Status is running, exited or stopped.
+	Status   string
+	ExitCode int // once exited
+	Started  time.Time
+	// Log is the file holding the job's whole output.
+	Log string
+}
+
+// Job statuses.
+const (
+	JobRunning = "running"
+	JobExited  = "exited"
+	JobStopped = "stopped"
+)
+
+func (j *job) state() JobState {
+	st := JobState{ID: j.id, Command: j.command, Description: j.description, Started: j.started, Log: j.log.path, Status: JobRunning}
+	if !j.running() {
+		j.mu.Lock()
+		stopped := j.stopped
+		j.mu.Unlock()
+		st.Status, st.ExitCode = JobExited, j.exitCode
+		if stopped {
+			st.Status = JobStopped
+		}
+	}
+	return st
+}
+
+// states returns every job's state, in the order they were started.
+func (m *jobManager) states() []JobState {
+	var out []JobState
+	for _, j := range m.list() {
+		out = append(out, j.state())
+	}
+	return out
 }

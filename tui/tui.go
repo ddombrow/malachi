@@ -215,6 +215,7 @@ func newModel(s *coding.Session, initialPrompt string) *model {
 	}
 	m.syncSandbox(s.Sandbox())
 	m.syncMCP(s.MCPState())
+	m.syncJobs(s.Jobs())
 	m.r = newRenderer(m.contentWidth(), m.isDark, m.s.Settings().Icons, m.s.Cwd())
 	m.applyInputStyles()
 	m.showSession(s)
@@ -579,6 +580,8 @@ func (m *model) handleEvent(e any) tea.Cmd {
 		m.syncSandbox(ev.State)
 	case coding.MCPChangedEvent:
 		m.syncMCP(ev.State)
+	case coding.JobsChangedEvent:
+		m.syncJobs(ev.State)
 	case coding.CompactionStartEvent:
 		m.phaseReason, m.phaseStart = ev.Reason, time.Now()
 		m.phase = compactionHead(ev.Reason)

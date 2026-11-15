@@ -188,3 +188,34 @@ func TestSessionJobsCarryOverAndEndWithIt(t *testing.T) {
 		t.Fatal("started a job after the session closed")
 	}
 }
+
+// A job starting and ending is reported to frontends, with every job's state.
+func TestJobChangesAreReported(t *testing.T) {
+	s, _, _, _ := sandboxedSession(t, "off")
+	events := make(chan JobsChangedEvent, 16)
+	s.Subscribe(func(e any) {
+		if jc, ok := e.(JobsChangedEvent); ok {
+			events <- jc
+		}
+	})
+	if _, err := s.jobs.start(s.Cwd(), ToolOptions{}, s.sandboxPolicy(), "exit 4", "Failing"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case jc := <-events:
+			if len(jc.State) == 1 && jc.State[0].Status == JobExited {
+				if st := jc.State[0]; st.ExitCode != 4 || st.Description != "Failing" || st.Log == "" {
+					t.Fatalf("ended job: %+v", st)
+				}
+				if got := s.Jobs(); len(got) != 1 || got[0].Status != JobExited {
+					t.Fatalf("Jobs() = %+v", got)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("no report of the job ending")
+		}
+	}
+}

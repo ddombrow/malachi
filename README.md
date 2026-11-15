@@ -132,7 +132,7 @@ which follows Pi's, so clients written for those should work here.
 | --- | --- |
 | `prompt` (`message`, `streamingBehavior?`), `steer`, `follow_up` | — |
 | `abort` | — |
-| `get_state` | model, thinking level, `isStreaming`, `isCompacting`, session file and id, queue size, `projectTrust`, `sandbox`, `codeMode` (whether the script tool is offered; scripts, calls and failures this session), `mcp` (each configured server: status, error, tools, roots, whether deferred, `stale` and `staleReason`) |
+| `get_state` | model, thinking level, `isStreaming`, `isCompacting`, session file and id, queue size, `projectTrust`, `sandbox`, `codeMode` (whether the script tool is offered; scripts, calls and failures this session), `mcp` (each configured server: status, error, tools, roots, whether deferred, `stale` and `staleReason`), `jobs` (each background job: id, command, status, exit code, start time, log file) |
 | `get_messages`, `get_last_assistant_text` | the transcript; the last reply's text |
 | `get_available_models`, `set_model` (`provider?`, `modelId`) | model descriptions |
 | `get_available_thinking_levels`, `set_thinking_level` (`level`) | `levels` |
@@ -155,8 +155,9 @@ A `prompt` while the agent is working must say what to do with it:
 prompt is held and sent when it finishes. Besides the agent's events, the
 session reports `compaction_start`/`_progress`/`_end`, `queue_update`,
 `thinking_level_changed`, `mcp_changed` (a server started, failed, restarted,
-changed its tools or went stale; carries `mcp` as `get_state` does) and
-`agent_settled` (all work for a prompt is done).
+changed its tools or went stale; carries `mcp` as `get_state` does),
+`jobs_changed` (a background job started or ended; carries `jobs` as
+`get_state` does) and `agent_settled` (all work for a prompt is done).
 
 Differences from tau, checked by `rpc/golden_test.go`: `compact` and
 `get_available_models` are answered from a goroutine, so their responses can
@@ -344,6 +345,7 @@ with the job's id and whatever it printed in its first half second. The
 was last read (waiting up to 30 seconds for more, if asked), and stops one,
 asking it to exit and killing it three seconds later if it has not.
 
+The TUI's sidebar lists them, and RPC's `get_state` reports them as `jobs`.
 Jobs run under the same sandbox as any command. At most eight run at once.
 They carry over across `/new` and resume, like MCP servers, and end with the
 session: a command left running with `&` is no one's and outlives malachi,

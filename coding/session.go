@@ -351,6 +351,7 @@ func Open(opts Options) (*Session, error) {
 		s.jobs = newJobManager(filepath.Join(spillRoot(), "jobs-"+session.NewID()[:8]))
 	}
 	toolOpts.jobs = s.jobs
+	s.jobs.bind(nil) // until the session can report events
 	tools := CodingTools(cwd, toolOpts)
 	// MCP servers carry over from the session this one replaces, so a /new
 	// or resume does not restart them; otherwise they start once the
@@ -437,6 +438,7 @@ func Open(opts Options) (*Session, error) {
 	})
 	s.life, s.lifeCancel = context.WithCancel(context.Background())
 	s.mcp.bind(s.sandboxPolicy, s.mcpChanged, codeMode)
+	s.jobs.bind(func() { s.emit(JobsChangedEvent{State: s.Jobs()}) })
 	if freshMCP {
 		s.mcp.startAll()
 	}
@@ -923,6 +925,7 @@ func (s *Session) Reopen(resume string) (*Session, error) {
 	next, err := Open(opts)
 	if err != nil {
 		s.mcp.bind(s.sandboxPolicy, s.mcpChanged, s.CodeMode().Enabled)
+		s.jobs.bind(func() { s.emit(JobsChangedEvent{State: s.Jobs()}) })
 		return nil, err
 	}
 	s.mcp, s.jobs = nil, nil // handed over
@@ -934,6 +937,14 @@ func (s *Session) sandboxPolicy() sandbox.Policy {
 	s.sbMu.Lock()
 	defer s.sbMu.Unlock()
 	return s.sandbox
+}
+
+// Jobs reports the session's background jobs, in the order they started.
+func (s *Session) Jobs() []JobState {
+	if s.jobs == nil {
+		return nil // handed to the session that replaced this one
+	}
+	return s.jobs.states()
 }
 
 // MCP is the session's MCP servers.

@@ -107,7 +107,7 @@ func trustOf(t coding.TrustState) trustWire {
 }
 
 // stateWire is get_state: tau's twelve keys plus projectTrust, sandbox,
-// codeMode and mcp.
+// codeMode, mcp and jobs.
 type stateWire struct {
 	Model                 modelWire    `json:"model"`
 	ThinkingLevel         string       `json:"thinkingLevel"`
@@ -125,6 +125,34 @@ type stateWire struct {
 	Sandbox               sandboxWire  `json:"sandbox"`
 	CodeMode              codeModeWire `json:"codeMode"`
 	MCP                   mcpWire      `json:"mcp"`
+	Jobs                  []jobWire    `json:"jobs"`
+}
+
+// jobWire is a malachi extension to get_state and the jobs_changed event:
+// one background job.
+type jobWire struct {
+	ID          int    `json:"id"`
+	Command     string `json:"command"`
+	Description string `json:"description,omitempty"`
+	// Status is running, exited or stopped.
+	Status string `json:"status"`
+	// ExitCode is set once the job has exited; -1 for a signal.
+	ExitCode *int   `json:"exitCode,omitempty"`
+	Started  int64  `json:"startedAt"` // Unix milliseconds
+	Log      string `json:"log"`
+}
+
+func jobsOf(jobs []coding.JobState) []jobWire {
+	out := []jobWire{}
+	for _, j := range jobs {
+		w := jobWire{ID: j.ID, Command: j.Command, Description: j.Description, Status: j.Status, Started: j.Started.UnixMilli(), Log: j.Log}
+		if j.Status == coding.JobExited {
+			code := j.ExitCode
+			w.ExitCode = &code
+		}
+		out = append(out, w)
+	}
+	return out
 }
 
 // mcpWire is a malachi extension to get_state and the mcp_changed event:
@@ -264,6 +292,7 @@ func stateOf(s *coding.Session) stateWire {
 		Sandbox:               sandboxOf(s.Sandbox()),
 		CodeMode:              codeModeOf(s.CodeMode()),
 		MCP:                   mcpOf(s.MCPState()),
+		Jobs:                  jobsOf(s.Jobs()),
 	}
 }
 
@@ -342,6 +371,9 @@ func eventJSON(e any) ([]byte, error) {
 	}
 	if mc, ok := e.(coding.MCPChangedEvent); ok {
 		return json.Marshal(map[string]any{"type": "mcp_changed", "mcp": mcpOf(mc.State)})
+	}
+	if jc, ok := e.(coding.JobsChangedEvent); ok {
+		return json.Marshal(map[string]any{"type": "jobs_changed", "jobs": jobsOf(jc.State)})
 	}
 	if _, ok := e.(*agent.AgentEndEvent); ok {
 		var fields map[string]json.RawMessage

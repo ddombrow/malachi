@@ -40,6 +40,7 @@ type sidebarState struct {
 	sandbox coding.SandboxState
 	grants  coding.SandboxGrants
 	mcp     coding.MCPState
+	jobs    []coding.JobState
 }
 
 // sideRow is one row of the sidebar. A row with click set does something
@@ -85,7 +86,7 @@ func (m *model) toggleNetwork() tea.Cmd {
 
 // sidebarSections are the sidebar's sections, top to bottom.
 func (m *model) sidebarSections() [][]sideRow {
-	return [][]sideRow{m.sandboxSection(), m.trustSection(), m.codeModeSection(), m.mcpSection()}
+	return [][]sideRow{m.sandboxSection(), m.trustSection(), m.codeModeSection(), m.mcpSection(), m.jobsSection()}
 }
 
 // sidePair puts label on the left of a row and value on the right.

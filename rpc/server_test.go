@@ -624,3 +624,28 @@ func TestGetStateReportsMCP(t *testing.T) {
 		t.Errorf("event:\n got %s\nwant %s", raw, want)
 	}
 }
+
+// get_state reports the background jobs, a malachi extension; changes arrive
+// as jobs_changed events in the same shape.
+func TestGetStateReportsJobs(t *testing.T) {
+	c := serve(t, openSession(t, fake.New()))
+	c.send(`{"id":"s","type":"get_state"}`)
+	if jobs, ok := c.response("s")["data"].(map[string]any)["jobs"].([]any); !ok || len(jobs) != 0 {
+		t.Fatalf("jobs: %v", c.response("s"))
+	}
+	c.close()
+
+	started := time.UnixMilli(1700000000000)
+	raw, err := eventJSON(coding.JobsChangedEvent{State: []coding.JobState{
+		{ID: 1, Command: "npm run dev", Description: "Serving", Status: coding.JobRunning, Started: started, Log: "/t/1.log"},
+		{ID: 2, Command: "false", Status: coding.JobExited, ExitCode: 1, Started: started, Log: "/t/2.log"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"jobs":[{"id":1,"command":"npm run dev","description":"Serving","status":"running","startedAt":1700000000000,"log":"/t/1.log"},` +
+		`{"id":2,"command":"false","status":"exited","exitCode":1,"startedAt":1700000000000,"log":"/t/2.log"}],"type":"jobs_changed"}`
+	if string(raw) != want {
+		t.Errorf("event:\n got %s\nwant %s", raw, want)
+	}
+}
