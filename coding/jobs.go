@@ -135,6 +135,7 @@ type job struct {
 	log         *jobLog
 	cancel      context.CancelFunc
 	done        chan struct{}
+	policy      sandbox.Policy // the sandbox it was started under
 
 	// Set once done is closed.
 	exitCode int
@@ -181,7 +182,7 @@ func (m *jobManager) start(cwd string, opts ToolOptions, pol sandbox.Policy, com
 		log.close()
 		return nil, err
 	}
-	j := &job{id: id, command: command, description: description, started: time.Now(), cmd: cmd, log: log, cancel: cancel, done: make(chan struct{})}
+	j := &job{id: id, command: command, description: description, started: time.Now(), cmd: cmd, log: log, cancel: cancel, done: make(chan struct{}), policy: pol}
 	m.jobs[id] = j
 	go func() {
 		j.wait()
@@ -522,7 +523,29 @@ func jobResult(j *job, out string, dropped int64) agent.ToolResult {
 	}
 	d := jobDetails(j)
 	d["output_bytes"], d["dropped_bytes"] = len(out), dropped
+	// A job that failed on its own, a server refused its port by the
+	// sandbox say, is explained as a command would be.
+	if denial, hint := j.failureHint(); hint != "" {
+		body += "\n" + hint
+		d["sandbox_denial"] = denial
+	}
 	return agent.ToolResult{Content: []agent.Content{&agent.TextContent{Text: head + "\n\n" + body}}, Details: d}
+}
+
+// failureHint explains a job that exited with an error in a way that looks
+// like the sandbox refused it, from all the output still kept.
+func (j *job) failureHint() (denial, hint string) {
+	if j.running() || j.exitCode == 0 {
+		return "", ""
+	}
+	j.mu.Lock()
+	stopped := j.stopped
+	j.mu.Unlock()
+	if stopped {
+		return "", ""
+	}
+	out, _, _ := j.log.since(0)
+	return failureHint(j.policy, j.command, string(out))
 }
 
 func jobDetails(j *job) map[string]any {

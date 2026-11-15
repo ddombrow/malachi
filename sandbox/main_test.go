@@ -18,6 +18,23 @@ const sleepEnv = "MALACHI_SANDBOX_TEST_SLEEP"
 // sandboxed command may serve.
 const listenEnv = "MALACHI_SANDBOX_TEST_LISTEN"
 
+// dialEnv set to "tcp 127.0.0.1:8080" makes the test binary try to connect
+// there and say whether it could, for tests of what a sandboxed command may
+// reach.
+const dialEnv = "MALACHI_SANDBOX_TEST_DIAL"
+
+func dialAndExit(spec string) {
+	network, addr, _ := strings.Cut(spec, " ")
+	c, err := net.DialTimeout(network, addr, 2*time.Second)
+	if err != nil {
+		fmt.Println("refused:", err)
+		os.Exit(1)
+	}
+	c.Close()
+	fmt.Println("connected")
+	os.Exit(0)
+}
+
 func listenAndExit(spec string) {
 	network, addr, _ := strings.Cut(spec, " ")
 	var err error
@@ -45,6 +62,9 @@ func TestMain(m *testing.M) {
 	MaybeRunHelper()
 	if spec := os.Getenv(listenEnv); spec != "" {
 		listenAndExit(spec)
+	}
+	if spec := os.Getenv(dialEnv); spec != "" {
+		dialAndExit(spec)
 	}
 	if os.Getenv(sleepEnv) != "" {
 		time.Sleep(time.Minute)

@@ -29,17 +29,21 @@ type Policy struct {
 	Enabled bool
 	Network bool // outbound IP networking
 	// Loopback gives commands, with the network off, IP networking on a
-	// loopback interface of their own: they can serve and connect to
-	// themselves (a test suite's servers) but reach nothing else, the host's
-	// own localhost services included. Linux only, in a private network
-	// namespace that a session's commands share (see LoopbackSession), so a
-	// server one leaves running can be reached by later ones; where none can
-	// be made, and on macOS, whose loopback is shared with the host, the
-	// setting has no effect and the network stays off.
+	// loopback interface: they can serve and connect to themselves (a test
+	// suite's servers, a dev server a job runs) but reach nothing beyond.
+	// On Linux the loopback is private, in a network namespace that a
+	// session's commands share (see LoopbackSession), so it reaches neither
+	// the network nor the host's own localhost services; where no namespace
+	// can be made the setting has no effect and the network stays off. On
+	// macOS the loopback is the host's: commands may connect to localhost,
+	// every local service included, and listen on any interface (Seatbelt
+	// cannot confine binding to loopback), so it is in force only when
+	// LoopbackAsked.
 	Loopback bool
 	// LoopbackAsked says the user asked for Loopback, where it is otherwise
-	// on by default. Asked for and not to be had, Weakness says so; had by
-	// default or not at all, there is nothing to say.
+	// on by default. Asked for and not to be had, Weakness says so, as it
+	// says what the shared loopback opens on macOS, where only asking has
+	// it; had by default or not at all, there is nothing to say.
 	LoopbackAsked bool
 	// UnixSockets allows connecting to any Unix socket. Off, commands cannot
 	// reach local daemons such as Docker or ssh-agent, which would let them
@@ -82,7 +86,7 @@ type Config struct {
 	Cwd      string // the project; writable
 	Home     string // malachi's home (sessions, .env, settings); hidden
 	NoNet    bool
-	// Loopback gives commands a private loopback, and LoopbackAsked says
+	// Loopback gives commands loopback networking, and LoopbackAsked says
 	// the user asked for it; see Policy.
 	Loopback      bool
 	LoopbackAsked bool

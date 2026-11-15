@@ -241,12 +241,13 @@ type SandboxSettings struct {
 	// of running in a user namespace, where files that are not yours appear
 	// owned by nobody; that is why it is off by default there.
 	PTY bool `json:"pty,omitempty"`
-	// Loopback gives commands, with the network off, a loopback interface of
-	// their own, for test suites that start local servers (Linux; no effect
-	// on macOS). It is on unless set to false: a test that cannot reach its
-	// own server on localhost is a surprise, and the loopback reaches
-	// nothing else. Set to true, malachi also says so where it cannot be
-	// had. See sandbox.Policy.
+	// Loopback gives commands, with the network off, a loopback interface,
+	// for test suites and dev servers. On Linux it is their own, and on
+	// unless set to false: a test that cannot reach its own server on
+	// localhost is a surprise, and the loopback reaches nothing else. On
+	// macOS it is the host's, reaching every local service, so it takes
+	// true to have it. Set to true, malachi also says where it cannot be
+	// had, or what it opens. See sandbox.Policy.
 	Loopback *bool `json:"loopback,omitempty"`
 	// Services are system services commands may reach beyond the built-in
 	// ones, by exact name (macOS; nothing on Linux). Each acts outside

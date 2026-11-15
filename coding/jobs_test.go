@@ -2,6 +2,7 @@ package coding
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -277,17 +278,18 @@ func TestCommandsRunWithoutTheSharedLoopback(t *testing.T) {
 	}
 }
 
-// What the shared loopback namespace is for: a server a job leaves running
-// is reached by a later command, and goes when the session does.
+// What the loopback is for: a server a job leaves running is reached by a
+// later command (in the shared namespace on Linux, on the host's loopback
+// on macOS), and goes when the session does.
 func TestLaterCommandsReachAJobsServer(t *testing.T) {
 	requireSandbox(t)
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("no python3")
 	}
 	cwd := t.TempDir()
-	pol := sandbox.Build(sandbox.Config{Cwd: cwd, Home: t.TempDir(), NoNet: true, Loopback: true})
+	pol := sandbox.Build(sandbox.Config{Cwd: cwd, Home: t.TempDir(), NoNet: true, Loopback: true, LoopbackAsked: true})
 	if !sandbox.LoopbackInForce(pol) {
-		t.Skip("no private loopback here")
+		t.Skip("no loopback here")
 	}
 	m := newJobManager(t.TempDir())
 	t.Cleanup(m.Close)
@@ -334,4 +336,47 @@ while True:
 	}
 	m.Close()
 	waitGone(t, pid)
+}
+
+// A job the sandbox refused, a server denied its port say, is explained as
+// a foreground command would be, when it fails at once and when it fails
+// later; a job that is stopped is not.
+func TestAJobTheSandboxRefusedIsExplained(t *testing.T) {
+	requireSandbox(t)
+	cwd := t.TempDir()
+	pol := sandbox.Build(sandbox.Config{Cwd: cwd, Home: t.TempDir(), NoNet: true})
+	m := newJobManager(t.TempDir())
+	t.Cleanup(m.Close)
+	opts := ToolOptions{jobs: m, Sandbox: func() sandbox.Policy { return pol }}
+	bash, jobs := NewBashTool(cwd, opts), NewJobsTool(m)
+	refused := "echo 'listen tcp 127.0.0.1:8080: bind: operation not permitted' >&2; exit 1"
+
+	r, err := run(t, bash, map[string]any{"command": refused, "description": "Serving", "background": true})
+	if err != nil || !strings.Contains(r.Text(), "ended at once") || !strings.Contains(r.Text(), "This may be the sandbox") {
+		t.Fatalf("at once: %v\n%s", err, r.Text())
+	}
+	if d := r.Details.(map[string]any); !strings.Contains(fmt.Sprint(d["sandbox_denial"]), "operation not permitted") {
+		t.Errorf("details: %v", d)
+	}
+
+	r, err = run(t, bash, map[string]any{"command": "sleep 1; " + refused, "description": "Serving", "background": true})
+	if err != nil || strings.Contains(r.Text(), "This may be the sandbox") {
+		t.Fatalf("still running: %v\n%s", err, r.Text())
+	}
+	r, err = run(t, jobs, map[string]any{"action": "output", "id": float64(2), "wait": float64(5)})
+	for err == nil && strings.Contains(r.Text(), "running") {
+		r, err = run(t, jobs, map[string]any{"action": "output", "id": float64(2), "wait": float64(1)})
+	}
+	if err != nil || !strings.Contains(r.Text(), "This may be the sandbox") {
+		t.Fatalf("later: %v\n%s", err, r.Text())
+	}
+
+	_, err = run(t, bash, map[string]any{"command": "echo 'operation not permitted'; sleep 300", "description": "Waiting", "background": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err = run(t, jobs, map[string]any{"action": "stop", "id": float64(3)})
+	if err != nil || strings.Contains(r.Text(), "This may be the sandbox") {
+		t.Fatalf("stopped: %v\n%s", err, r.Text())
+	}
 }

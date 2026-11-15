@@ -190,10 +190,16 @@ func Profile(p Policy) string {
 		// The rule above is matched by the far end, so it does not cover
 		// listening: a command could bind every interface and be connected
 		// to from another machine. Seatbelt cannot tell a loopback address
-		// from any other when binding (found by testing), so with the
-		// network off a command listens on no IP address at all, as on
-		// Linux. Unix sockets are not matched by (local ip).
-		b.WriteString("(deny network-bind network-inbound (local ip))\n")
+		// from any other when binding, nor filter who connects to a
+		// listener (both found by testing), so with the network off a
+		// command listens on no IP address at all, as on Linux, unless the
+		// user asked for loopback: then it connects to localhost only, and
+		// listens where it likes. Unix sockets are not matched by (local ip).
+		if p.Loopback && p.LoopbackAsked {
+			b.WriteString(`(allow network* (remote ip "localhost:*"))` + "\n")
+		} else {
+			b.WriteString("(deny network-bind network-inbound (local ip))\n")
+		}
 		if p.UnixSockets {
 			// Unix sockets are otherwise unrestricted; the resolver must
 			// still be closed (see below).

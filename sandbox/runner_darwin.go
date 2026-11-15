@@ -34,16 +34,20 @@ func Available() error { return availability() }
 // Weakness says what the sandbox cannot do for p on this system though it
 // runs, or "" when it does everything it promises.
 func Weakness(p Policy) string {
-	if p.Loopback && p.LoopbackAsked && !p.Network {
-		return "the loopback setting has no effect, so commands have no network at all: " +
-			"macOS has no loopback private to a command, and the shared one reaches every local service you run"
+	if LoopbackInForce(p) {
+		return "the loopback on macOS is shared with everything you run: commands can reach every service listening on localhost, " +
+			"and a server they start on all interfaces can be reached from other machines"
 	}
 	return ""
 }
 
-// LoopbackInForce reports whether commands run under p get a private
-// loopback. Never on macOS: Profile ignores the setting.
-func LoopbackInForce(Policy) bool { return false }
+// LoopbackInForce reports whether commands run under p get loopback
+// networking with the network off. On macOS only when the user asked for
+// it: the loopback is the host's own, so it is not had by default (see
+// Policy.Loopback).
+func LoopbackInForce(p Policy) bool {
+	return p.Enabled && p.Loopback && p.LoopbackAsked && !p.Network
+}
 
 func command(ctx context.Context, p Policy, name string, args ...string) (*exec.Cmd, error) {
 	return exec.CommandContext(ctx, sandboxExec, append([]string{"-p", Profile(p), name}, args...)...), nil

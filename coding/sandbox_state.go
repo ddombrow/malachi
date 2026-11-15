@@ -58,7 +58,10 @@ func (st SandboxState) Describe() string {
 		network = "off"
 	}
 	if st.Loopback {
-		network = "loopback only (each command's own)"
+		network = "loopback only (private to malachi's commands)"
+		if runtime.GOOS == "darwin" {
+			network = "loopback only (shared with every local service)"
+		}
 	}
 	sockets := "only under writable directories (macOS); only the command's own, or none where the kernel's Landlock is older than ABI 9 (Linux)"
 	if st.UnixSockets {

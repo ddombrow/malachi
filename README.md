@@ -352,8 +352,11 @@ session: a command left running with `&` is no one's and outlives malachi,
 so prefer a job. A job's output is kept in memory up to 1 MiB, and all of it
 (up to 64 MiB) in a log file the job's output names.
 
-On Linux with the network off, each command has a loopback of its own, so a
-server started as a job cannot yet be reached from a later command.
+With the network off, a job can serve on localhost only where commands have
+a loopback (see the network under [Sandbox](#sandbox)). On Linux they do
+by default, and a session's commands share it, so a later command reaches a
+job's server. On macOS they do only once you set `"loopback": true` or pass
+`-loopback on`; until then a server cannot listen at all, and its job says so.
 
 ### MCP servers
 
@@ -502,14 +505,23 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   server on localhost works: each command gets a network namespace with
   nothing but a loopback interface in it, where it can serve and connect to
   itself but reach neither the network nor services on your own localhost.
+  A session's commands share that namespace, so one reaches a server another
+  left running as a [background job](#background-jobs).
   `"loopback": false` (or `-loopback off`) takes that away too. It runs the
   command in a user namespace, where files that are not yours appear owned
   by `nobody` (access is unchanged), and it takes a system that allows
   unprivileged user namespaces, which Ubuntu 23.10 and later restrict
-  (`kernel.apparmor_restrict_unprivileged_userns`). Where there are none, and
-  on macOS, whose loopback is shared with everything you run, commands have
-  no network at all; `/sandbox` shows which, and malachi says so at startup
-  if you set `"loopback": true` yourself.
+  (`kernel.apparmor_restrict_unprivileged_userns`). Where there are none,
+  commands have no network at all, and malachi says so at startup if you set
+  `"loopback": true` yourself.
+  On macOS the loopback is shared with everything you run, so it is off
+  unless you set `"loopback": true` (or pass `-loopback on`). Then commands
+  may connect to localhost, and to nothing beyond it, but that reaches every
+  local service you run (databases, other dev servers), and a server they
+  start can listen on any interface, where other machines can reach it:
+  Seatbelt cannot confine listening to loopback. That is still less than
+  turning the network on, and malachi says so at startup. `/sandbox` shows
+  which loopback, if any, is in force.
   This is about commands only: malachi itself still sends the conversation,
   tool output included, to your model provider.
 - **Local daemons are out of reach.** Commands cannot connect to Unix sockets

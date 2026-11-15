@@ -425,13 +425,10 @@ wait:
 	}
 	denial := ""
 	if exitCode != 0 && !cancelled && !timedOut {
-		if denial = sandboxDenial(pol, out.snapshot()); strings.Contains(denial, nestedSandboxSign) {
-			text += "\n" + nestedSandboxHint
-		} else if denial != "" {
-			text += "\n" + sandboxHint(pol)
-		} else if tool := serviceCommand(pol, runtime.GOOS, command); tool != "" {
-			denial = tool + ": system services are closed to sandboxed commands"
-			text += "\n" + serviceHint(tool)
+		var hint string
+		denial, hint = failureHint(pol, command, out.snapshot())
+		if hint != "" {
+			text += "\n" + hint
 		}
 	}
 
@@ -531,15 +528,38 @@ func serviceHint(tool string) string {
 		" If the task needs it, ask the user to do it; do not try to work around the sandbox.]"
 }
 
+// failureHint explains a failed command whose output looks like the sandbox
+// refused it, returning the line that gave it away and the hint, or two
+// empty strings.
+func failureHint(p sandbox.Policy, command, output string) (denial, hint string) {
+	denial = sandboxDenial(p, output)
+	switch {
+	case strings.Contains(denial, nestedSandboxSign):
+		return denial, nestedSandboxHint
+	case denial != "":
+		return denial, sandboxHint(p)
+	}
+	if tool := serviceCommand(p, runtime.GOOS, command); tool != "" {
+		return tool + ": system services are closed to sandboxed commands", serviceHint(tool)
+	}
+	return "", ""
+}
+
 // sandboxHint explains a failure that looks like a sandbox denial, so the
 // model asks instead of retrying or working around it.
 func sandboxHint(p sandbox.Policy) string {
 	network := ""
 	if !p.Network {
-		if sandbox.LoopbackInForce(p) {
-			network = " The network is off but for a loopback of the command's own: it can serve and connect to itself, nothing else, not even the host's localhost."
-		} else {
-			network = " The network is off."
+		switch {
+		case sandbox.LoopbackInForce(p) && runtime.GOOS == "darwin":
+			network = " The network is off but for localhost: commands can serve on a port and connect to local services, nothing beyond."
+		case sandbox.LoopbackInForce(p):
+			network = " The network is off but for a private loopback: commands can serve on a port and connect to each other's servers, nothing else, not even the host's localhost."
+		case runtime.GOOS == "darwin":
+			network = " The network is off: commands can neither connect nor listen on a port, not even on localhost." +
+				" A server needs the user to turn on the loopback setting (-loopback on) or the network."
+		default:
+			network = " The network is off: commands can neither connect nor listen on a port, not even on localhost."
 		}
 	}
 	reads := "cannot read credentials or malachi's own files"
