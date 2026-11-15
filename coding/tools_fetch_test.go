@@ -2,6 +2,7 @@ package coding
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -189,6 +190,28 @@ func TestFetchSpillsLongText(t *testing.T) {
 	full, err := os.ReadFile(d.SpillPath)
 	if err != nil || len(full) != 5000*23 {
 		t.Errorf("spill %d bytes, %v", len(full), err)
+	}
+}
+
+func TestFetchAllowsLargerJSONResponses(t *testing.T) {
+	body := `{"data":"` + strings.Repeat("x", 60*1024) + `"}`
+	var details FetchDetails
+	text := (&fetcher{}).fit(body, &details)
+	if !json.Valid([]byte(text)) || details.SpillPath != "" {
+		t.Fatalf("large JSON was truncated or invalid: %q", text[max(0, len(text)-200):])
+	}
+}
+
+func TestFetchSpillsPastOutputByteLimit(t *testing.T) {
+	body := `{"data":"` + strings.Repeat("x", MaxFetchOutputBytes+1) + `"}`
+	var details FetchDetails
+	text := (&fetcher{opts: ToolOptions{SpillDir: t.TempDir()}}).fit(body, &details)
+	if details.SpillPath == "" || !strings.Contains(text, "Full text: "+details.SpillPath) {
+		t.Fatalf("no spill: %q", text[max(0, len(text)-200):])
+	}
+	full, err := os.ReadFile(details.SpillPath)
+	if err != nil || string(full) != body {
+		t.Errorf("spill content length %d, %v", len(full), err)
 	}
 }
 
