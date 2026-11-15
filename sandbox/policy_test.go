@@ -79,6 +79,27 @@ func TestEnvironmentDerivedWritableRootsCannotCoverFilesystemOrHome(t *testing.T
 	}
 }
 
+// go checks modules and the toolchains it switches to against its checksum
+// database cache, which sits under the first GOPATH entry whatever
+// GOMODCACHE says, and fails without it even offline.
+func TestGoChecksumDatabaseIsWritable(t *testing.T) {
+	cwd := t.TempDir()
+	gopath, other := t.TempDir(), t.TempDir()
+	sumdb := filepath.Join(gopath, "pkg", "sumdb")
+	if err := os.MkdirAll(sumdb, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOPATH", gopath+string(filepath.ListSeparator)+other)
+	t.Setenv("GOMODCACHE", filepath.Join(other, "mod"))
+	p := Build(Config{Cwd: cwd, Home: filepath.Join(cwd, "malachi")})
+	if !slices.Contains(p.Writable, Canonical(sumdb)) {
+		t.Fatalf("writable %v lacks go's checksum database %s", p.Writable, sumdb)
+	}
+	if err := p.CheckWrite(filepath.Join(sumdb, "sum.golang.org", "latest")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUnhiddenRemovesDefaults(t *testing.T) {
 	_, project, _, home, _ := fixture(t)
 	userHome, err := os.UserHomeDir()

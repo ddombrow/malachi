@@ -159,6 +159,7 @@ func Build(c Config) Policy {
 		writable = append(writable, "/dev/shm")
 	}
 	writable = append(writable, safeDerivedRoot(os.Getenv("GOCACHE"), userHome), safeDerivedRoot(goModCache(userHome), userHome),
+		safeDerivedRoot(goSumDB(userHome), userHome),
 		inHome(".npm"), inHome(".cargo/registry"), inHome(".cargo/git"), inHome(".rustup"),
 		inHome(".cache/clang"),                        // Swift's module cache
 		inHome("Library/Developer/Xcode/DerivedData")) // xcodebuild's build directory
@@ -381,6 +382,20 @@ func goModCache(userHome string) string {
 	if v := os.Getenv("GOMODCACHE"); v != "" {
 		return v
 	}
+	return goPathDir(userHome, "pkg", "mod")
+}
+
+// goSumDB is where go keeps what it last verified of the checksum database
+// (the signed tree it has seen), beside the module cache but not in it, and
+// not moved by GOMODCACHE. go reads it even offline, to check a module or a
+// toolchain it switches to against the cache, and fails without it. A
+// command can delete it, to be fetched again, but not forge it: it is a note
+// go checks the database's signature on.
+func goSumDB(userHome string) string { return goPathDir(userHome, "pkg", "sumdb") }
+
+// goPathDir is a directory under the first GOPATH entry (GOPATH may list
+// several; go's caches use the first), or "" without one.
+func goPathDir(userHome string, elem ...string) string {
 	gopath := os.Getenv("GOPATH")
 	if gopath == "" && userHome != "" {
 		gopath = filepath.Join(userHome, "go")
@@ -388,8 +403,7 @@ func goModCache(userHome string) string {
 	if gopath == "" {
 		return ""
 	}
-	// GOPATH may list several directories; the module cache uses the first.
-	return filepath.Join(filepath.SplitList(gopath)[0], "pkg", "mod")
+	return filepath.Join(append([]string{filepath.SplitList(gopath)[0]}, elem...)...)
 }
 
 // canonicalAll canonicalizes paths, dropping empty and relative ones and
