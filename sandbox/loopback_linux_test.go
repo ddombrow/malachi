@@ -90,14 +90,15 @@ func TestPrivateLoopbackWithPseudoTerminals(t *testing.T) {
 s = socket.socket()
 s.bind(("127.0.0.1", 0))
 s.listen()
+port = s.getsockname()[1]
 pid, fd = pty.fork()
 if pid == 0:
     a, _ = s.accept()
     a.sendall(b"served")
-    print("on a terminal:", os.isatty(1))
+    os.write(1, b"on a terminal: %r" % os.isatty(1))
     os._exit(0)
 s.close()
-c = socket.create_connection(("127.0.0.1", s.getsockname()[1]), 2)
+c = socket.create_connection(("127.0.0.1", port), 2)
 got = c.recv(16)
 c.close()
 child = os.read(fd, 64)
