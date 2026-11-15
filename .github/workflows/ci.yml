@@ -32,8 +32,16 @@ jobs:
           go-version-file: go.mod
       # The same tasks a contributor runs (task is pinned in go.mod).
       - run: go tool task lint
+      # Ubuntu lets an unprivileged process make a user namespace but takes
+      # away its capabilities (AppArmor, since 23.10). The pseudo-terminal
+      # and loopback settings need them, so their tests would skip here and
+      # run nowhere but a developer's machine.
+      - if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # Both runners can sandbox (macOS sandbox-exec; Ubuntu's kernel has
-      # Landlock), so the sandbox tests must run there, not skip.
+      # Landlock), so the sandbox tests must run there, not skip. With
+      # MALACHI_REQUIRE_SANDBOX a test that would skip for want of a sandbox,
+      # or of the namespaces above, fails.
       - run: go tool task test
         env:
           MALACHI_REQUIRE_SANDBOX: "1"

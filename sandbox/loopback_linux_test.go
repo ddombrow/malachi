@@ -17,9 +17,7 @@ import (
 // the host's own localhost services are out of its reach.
 func TestPrivateLoopbackIsolatedFromHost(t *testing.T) {
 	requireBackend(t)
-	if err := privateLoopbackAvailable(); err != nil {
-		t.Skipf("no private network namespace here: %v", err)
-	}
+	requireLoopbackBackend(t)
 	host, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -76,9 +74,7 @@ func TestWeaknessMentionsLoopbackOnlyWhenUnavailable(t *testing.T) {
 func TestPrivateLoopbackWithPseudoTerminals(t *testing.T) {
 	requireBackend(t)
 	requirePTYBackend(t)
-	if err := privateLoopbackAvailable(); err != nil {
-		t.Skipf("no private network namespace here: %v", err)
-	}
+	requireLoopbackBackend(t)
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("no python3")
 	}

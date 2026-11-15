@@ -133,8 +133,28 @@ func TestOwnUnixSocketsNeedsANewKernel(t *testing.T) {
 func requirePTYBackend(t *testing.T) {
 	t.Helper()
 	if err := privatePTYAvailable(); err != nil {
-		t.Skipf("no private pseudo-terminals here: %v", err)
+		skipOrFail(t, "no private pseudo-terminals here: %v", err)
 	}
+}
+
+// requireLoopbackBackend skips where commands cannot be given a network
+// namespace of their own, for the same reason.
+func requireLoopbackBackend(t *testing.T) {
+	t.Helper()
+	if err := privateLoopbackAvailable(); err != nil {
+		skipOrFail(t, "no private network namespace here: %v", err)
+	}
+}
+
+// skipOrFail skips, or with MALACHI_REQUIRE_SANDBOX set fails: CI arranges
+// for what these tests need, and one that skipped there would be a test
+// that runs nowhere.
+func skipOrFail(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv("MALACHI_REQUIRE_SANDBOX") != "" {
+		t.Fatalf("required by MALACHI_REQUIRE_SANDBOX: "+format, args...)
+	}
+	t.Skipf(format, args...)
 }
 
 // With pseudo-terminals on, a command's are a set of its own: the user's
