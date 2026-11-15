@@ -234,6 +234,19 @@ var privateLoopbackAvailable = sync.OnceValue(func() error {
 	return err
 })
 
+// LoopbackMissing reports why commands run under p get no loopback though
+// the setting gives them one, or nil: this system could not make them a
+// network namespace.
+func LoopbackMissing(p Policy) error {
+	if !p.Enabled || !p.Loopback || p.Network {
+		return nil
+	}
+	if err := privateLoopbackAvailable(); err != nil {
+		return fmt.Errorf("%v; it takes unprivileged user namespaces%s", err, userNSHint())
+	}
+	return nil
+}
+
 // LoopbackInForce reports whether commands run under p get a private
 // loopback: the setting is on, the network is off, and this system can make
 // them a network namespace of their own.

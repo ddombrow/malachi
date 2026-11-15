@@ -513,7 +513,7 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   unprivileged user namespaces, which Ubuntu 23.10 and later restrict
   (`kernel.apparmor_restrict_unprivileged_userns`). Where there are none,
   commands have no network at all, and malachi says so at startup if you set
-  `"loopback": true` yourself.
+  `"loopback": true` yourself, and in any command the sandbox then refuses.
   On macOS the loopback is shared with everything you run, so it is off
   unless you set `"loopback": true` (or pass `-loopback on`). Then commands
   may connect to localhost, and to nothing beyond it, but that reaches every

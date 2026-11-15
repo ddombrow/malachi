@@ -200,6 +200,21 @@ func TestWeaknessMentionsLoopbackOnlyWhenUnavailable(t *testing.T) {
 	}
 }
 
+// Unlike Weakness, LoopbackMissing answers for a loopback on by default too:
+// it is what a failed command's hint uses to say why it had none.
+func TestLoopbackMissingSaysWhy(t *testing.T) {
+	for _, p := range []Policy{{Enabled: true, Loopback: true}, {Enabled: true, Loopback: true, LoopbackAsked: true}} {
+		if err := LoopbackMissing(p); (err != nil) != (privateLoopbackAvailable() != nil) {
+			t.Errorf("LoopbackMissing(%+v) = %v with the namespace available: %v", p, err, privateLoopbackAvailable() == nil)
+		}
+	}
+	for _, p := range []Policy{{Enabled: true}, {Enabled: true, Network: true, Loopback: true}, {Loopback: true}} {
+		if err := LoopbackMissing(p); err != nil {
+			t.Errorf("LoopbackMissing(%+v) = %v, though no loopback was to be had", p, err)
+		}
+	}
+}
+
 // Both settings at once, for a server run on a terminal of its own (under
 // tmux, say): the command gets its own pseudo-terminals and its own
 // loopback, and no capability from either namespace survives into it.

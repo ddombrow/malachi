@@ -558,6 +558,9 @@ func sandboxHint(p sandbox.Policy) string {
 		case runtime.GOOS == "darwin":
 			network = " The network is off: commands can neither connect nor listen on a port, not even on localhost." +
 				" A server needs the user to turn on the loopback setting (-loopback on) or the network."
+		case sandbox.LoopbackMissing(p) != nil:
+			network = " The network is off, and the loopback commands would have instead cannot be set up on this system (" +
+				sandbox.LoopbackMissing(p).Error() + "), so they can neither connect nor listen on a port, not even on localhost. Tell the user."
 		default:
 			network = " The network is off: commands can neither connect nor listen on a port, not even on localhost."
 		}

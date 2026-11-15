@@ -18,6 +18,10 @@ func Available() error {
 // loopback; there are no sandboxed commands here.
 func LoopbackInForce(Policy) bool { return false }
 
+// LoopbackMissing reports why commands run under p get no loopback though
+// the setting gives them one, or nil. Commands do not run here at all.
+func LoopbackMissing(Policy) error { return nil }
+
 // Weakness says what the sandbox cannot do for p on this system though it
 // runs, or "" when it does everything it promises.
 func Weakness(Policy) string { return "" }

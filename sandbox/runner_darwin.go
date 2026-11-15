@@ -41,6 +41,11 @@ func Weakness(p Policy) string {
 	return ""
 }
 
+// LoopbackMissing reports why commands run under p get no loopback though
+// the setting gives them one, or nil. Never on macOS: the setting is had
+// whenever it is asked for, and not had by default.
+func LoopbackMissing(Policy) error { return nil }
+
 // LoopbackInForce reports whether commands run under p get loopback
 // networking with the network off. On macOS only when the user asked for
 // it: the loopback is the host's own, so it is not had by default (see
