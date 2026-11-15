@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"slices"
@@ -25,9 +26,29 @@ var availability = sync.OnceValue(func() error {
 	if v := landlockABI(); v < 1 {
 		return errors.New("the kernel has no Landlock support (needs Linux 5.13 or later with Landlock enabled)")
 	}
-	_, err := nativeArch()
-	return err
+	if _, err := nativeArch(); err != nil {
+		return err
+	}
+	return nested()
 })
+
+// nested reports that this process is already confined in a way that keeps
+// a sandbox from being built inside it, or nil.
+//
+// Granting everything but the hidden and private paths takes listing the
+// directories around them, / first of all. A malachi sandbox does not let
+// / be listed (the right would reach every directory under it, the private
+// ones included), so malachi run by a sandboxed command, as when it works
+// on itself and runs its own tests, cannot work out what to grant. It says
+// so here, and commands fail, as they do on macOS, whose sandboxes do not
+// nest either. Left to try, each command's helper granted nothing and
+// failed to start with a bare "permission denied".
+func nested() error {
+	if _, err := os.ReadDir("/"); errors.Is(err, fs.ErrPermission) {
+		return errors.New("malachi is already running inside a sandbox that does not let / be listed (its own, most likely), and a sandbox cannot be built inside it")
+	}
+	return nil
+}
 
 // landlockABI returns the kernel's Landlock ABI version, or 0 without it.
 func landlockABI() int {

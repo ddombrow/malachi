@@ -31,6 +31,17 @@ func newTestModel(t *testing.T) *model {
 	return m
 }
 
+// requireSandboxInForce skips a test that reads the status bar where the
+// sandbox is on but cannot be had, as when malachi itself runs the test:
+// the bar then leads with a warning, which pushes out the figures a test
+// looks for and stands in for the network's state.
+func requireSandboxInForce(t *testing.T, m *model) {
+	t.Helper()
+	if err := m.s.Sandbox().Unavailable; err != nil {
+		t.Skipf("no sandbox here: %v", err)
+	}
+}
+
 // shown returns the plain text of the transcript after running fn, which
 // is how tests observe what the user would see in the viewport.
 func shown(m *model, fn func() tea.Cmd) string {
@@ -468,6 +479,7 @@ func TestInputPromptMatchesUserGutter(t *testing.T) {
 // marker are the only way the user learns the model's view was trimmed.
 func TestTrimmingIsVisible(t *testing.T) {
 	m := newTestModel(t)
+	requireSandboxInForce(t, m)
 	if strings.Contains(ansi.Strip(m.statusLine()), "cmp ") {
 		t.Fatal("status bar shows cmp before anything has compacted")
 	}
@@ -577,6 +589,7 @@ func TestRenderGauge(t *testing.T) {
 // marked so it cannot be mistaken for one the provider reported.
 func TestStatusBarShowsContextGauge(t *testing.T) {
 	m := newTestModel(t)
+	requireSandboxInForce(t, m)
 	if st := ansi.Strip(m.statusLine()); !strings.Contains(st, "ctx ≈") {
 		t.Fatalf("a resumed session should be sized before the first request: %q", st)
 	}
@@ -624,6 +637,7 @@ func TestBridgeNextUnblocksOnClose(t *testing.T) {
 // clamped 100% with no explanation.
 func TestContextGaugeMarksAnOverWindowPrompt(t *testing.T) {
 	m := newTestModel(t)
+	requireSandboxInForce(t, m)
 	window := m.s.ContextWindow()
 
 	m.context = int64(window - 1)
@@ -829,6 +843,7 @@ func TestTrustCommandSavesToSessionUnlessExplicitlyAsked(t *testing.T) {
 
 func TestNetworkCommand(t *testing.T) {
 	m := newTestModel(t)
+	requireSandboxInForce(t, m)
 	if m.s.Sandbox().Network || strings.Contains(m.statusLine(), "network on") {
 		t.Fatalf("network on by default: status=%q", m.statusLine())
 	}

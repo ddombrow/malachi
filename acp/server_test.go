@@ -244,6 +244,7 @@ func TestInitializeAnswersVersionOne(t *testing.T) {
 }
 
 func TestPromptStreamsTextThinkingAndToolCalls(t *testing.T) {
+	requireSandbox(t)
 	home, cwd := t.TempDir(), t.TempDir()
 	os.WriteFile(filepath.Join(cwd, "hello.txt"), []byte("hi from file\n"), 0o644)
 	c := start(t, home, testSettings(), fake.New(
@@ -535,11 +536,8 @@ func TestEditorMCPServersAreOptIn(t *testing.T) {
 }
 
 func TestAllowCommandsWidenTheSandboxWithoutTheModel(t *testing.T) {
-	dir, err := os.MkdirTemp(os.Getenv("HOME"), "malachi-acp-allow-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	requireSandbox(t)
+	dir := homeDir(t, "malachi-acp-allow-")
 	p := fake.New(fake.Text("a path, not a command"))
 	c := start(t, t.TempDir(), testSettings(), p)
 	c.initialize()
@@ -597,6 +595,7 @@ func finals(us []map[string]any) map[string]map[string]any {
 }
 
 func TestToolCardsShowDiffsAndFailedCommands(t *testing.T) {
+	requireSandbox(t)
 	cwd := t.TempDir()
 	os.WriteFile(filepath.Join(cwd, "a.txt"), []byte("one\ntwo\n"), 0o644)
 	c := start(t, t.TempDir(), testSettings(), fake.New(
@@ -633,6 +632,7 @@ func TestToolCardsShowDiffsAndFailedCommands(t *testing.T) {
 }
 
 func TestSandboxNoticeIsGivenOnce(t *testing.T) {
+	requireSandbox(t)
 	off := testSettings()
 	disabled := false
 	off.Sandbox.Enabled = &disabled
@@ -671,11 +671,8 @@ func TestSandboxNoticeIsGivenOnce(t *testing.T) {
 }
 
 func TestAdditionalDirectoriesAreReadableOnly(t *testing.T) {
-	dir, err := os.MkdirTemp(os.Getenv("HOME"), "malachi-acp-extra-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	requireSandbox(t)
+	dir := homeDir(t, "malachi-acp-extra-")
 	c := start(t, t.TempDir(), testSettings())
 	if caps := c.initialize()["agentCapabilities"].(map[string]any)["sessionCapabilities"].(map[string]any); caps["additionalDirectories"] == nil {
 		t.Fatalf("not advertised: %v", caps)

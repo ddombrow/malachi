@@ -651,7 +651,9 @@ How it works:
   it through itself, with nothing else to install.
 - **Failing closed.** Where the sandbox cannot run (an older kernel, Windows,
   `sandbox-exec` gone), malachi says so at startup and commands fail rather
-  than run unconfined.
+  than run unconfined. That includes malachi started by a command of its
+  own: a sandbox cannot be built inside one, on either system. Its test
+  suite, run that way, skips the tests that need a sandbox.
 - **Saying what it cannot do.** On Linux before 6.2, Landlock cannot stop a
   command truncating a file, so a command can empty any file you can write,
   though not read a hidden one or write contents outside the writable

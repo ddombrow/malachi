@@ -49,6 +49,11 @@ func TestCarveIgnoresMissingHiddenPaths(t *testing.T) {
 }
 
 func TestReadGrants(t *testing.T) {
+	// The grants are found by listing directories from / down, which a
+	// sandbox this test is itself run in (malachi's own) does not allow.
+	if _, err := os.ReadDir("/"); err != nil {
+		t.Skipf("cannot list /: %v", err)
+	}
 	root := Canonical(t.TempDir())
 	home := filepath.Join(root, "home")
 	for _, d := range []string{"proj", "other", ".ssh"} {
