@@ -123,6 +123,23 @@ func command(ctx context.Context, p Policy, name string, args ...string) (*exec.
 	return cmd, nil
 }
 
+// commandInLoopbackSession is command for the session helper (see
+// LoopbackSession), which is already in the shared network namespace: the
+// helper it starts stays in that namespace rather than making one, and only
+// confines the command, giving it IP sockets as if it had made it.
+func commandInLoopbackSession(ctx context.Context, p Policy, name string, args ...string) (*exec.Cmd, error) {
+	p.Loopback = true
+	p.Network = false
+	ptys := p.PTY && privatePTYAvailable() == nil
+	raw, err := json.Marshal(spec{Policy: p, Name: name, Args: args, PrivatePTY: ptys, LoopbackSession: true})
+	if err != nil {
+		return nil, fmt.Errorf("sandbox: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, selfExe, helperArg, string(raw))
+	cmd.SysProcAttr = privateCommandAttr(ptys)
+	return cmd, nil
+}
+
 // privatePTYAttr starts the helper where it may mount a private /dev/pts: in
 // a mount namespace of its own, inside a user namespace of its own, which
 // is what lets an unprivileged process mount at all. The user and group
@@ -138,9 +155,27 @@ func command(ctx context.Context, p Policy, name string, args ...string) (*exec.
 // these, not replace them.
 func privatePTYAttr() *syscall.SysProcAttr { return privateAttr(true, false) }
 
+// privateCommandAttr is the attributes for a helper started in the session's
+// namespace: a private /dev/pts if pty, and otherwise nothing new, never
+// attributes left nil for a caller to set fields on.
+func privateCommandAttr(pty bool) *syscall.SysProcAttr {
+	if pty {
+		return privatePTYAttr()
+	}
+	return &syscall.SysProcAttr{}
+}
+
 // privateLoopbackAttr starts the helper in a user and network namespace. The
 // namespace has no external interfaces or routes; the helper brings only lo up.
 func privateLoopbackAttr() *syscall.SysProcAttr { return privateAttr(false, true) }
+
+// privateLoopbackSessionAttr also terminates the session helper if its parent
+// agent exits unexpectedly.
+func privateLoopbackSessionAttr() *syscall.SysProcAttr {
+	attr := privateLoopbackAttr()
+	attr.Pdeathsig = syscall.SIGTERM
+	return attr
+}
 
 // privateAttr combines the user namespace needed for capabilities with the
 // requested private namespaces. The helper drops all capabilities before exec.

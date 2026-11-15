@@ -44,6 +44,11 @@ type jobManager struct {
 	// dir holds the jobs' log files. It belongs to the manager, which a
 	// reopened session takes over, and goes with it.
 	dir string
+	// loopback is the private network namespace commands share, made on
+	// first use. loopbackErr is why it could not be made, which is not
+	// tried again: commands then get a namespace each (see commandLocked).
+	loopback    *sandbox.LoopbackSession
+	loopbackErr error
 	// life ends every job when the manager is closed.
 	life   context.Context
 	cancel context.CancelFunc
@@ -77,6 +82,47 @@ func (m *jobManager) notify() {
 func newJobManager(dir string) *jobManager {
 	life, cancel := context.WithCancel(context.Background())
 	return &jobManager{jobs: map[int]*job{}, dir: dir, life: life, cancel: cancel}
+}
+
+// newLoopbackSession makes the shared namespace; tests replace it.
+var newLoopbackSession = sandbox.NewLoopbackSession
+
+// commandLocked builds a command that shares the session's private loopback
+// namespace when the policy gives commands loopback. m.mu must be held.
+//
+// The shared namespace is what lets a later command reach a server a job
+// left running. Without it a command still gets loopback, in a namespace of
+// its own, so a namespace that cannot be made, or whose helper has died, is
+// fallen back from rather than failed on: commands keep running, and only
+// reaching each other's servers is lost. A dead one is dropped, so the next
+// command makes a new one.
+func (m *jobManager) commandLocked(ctx context.Context, pol sandbox.Policy, name string, args ...string) (*exec.Cmd, error) {
+	if !sandbox.LoopbackInForce(pol) {
+		return sandbox.Command(ctx, pol, name, args...)
+	}
+	if m.loopback == nil && m.loopbackErr == nil {
+		m.loopback, m.loopbackErr = newLoopbackSession(pol)
+	}
+	if m.loopback == nil {
+		return sandbox.Command(ctx, pol, name, args...)
+	}
+	cmd, err := m.loopback.Command(ctx, pol, name, args...)
+	if err != nil {
+		_ = m.loopback.Close()
+		m.loopback = nil
+		return sandbox.Command(ctx, pol, name, args...)
+	}
+	return cmd, nil
+}
+
+// command serializes lazy namespace creation with job starts and session close.
+func (m *jobManager) command(ctx context.Context, pol sandbox.Policy, name string, args ...string) (*exec.Cmd, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, errors.New("the session is closing; no command can be started")
+	}
+	return m.commandLocked(ctx, pol, name, args...)
 }
 
 // job is one background command.
@@ -116,7 +162,7 @@ func (m *jobManager) start(cwd string, opts ToolOptions, pol sandbox.Policy, com
 		return nil, fmt.Errorf("cannot keep the job's output: %w", err)
 	}
 	ctx, cancel := context.WithCancel(m.life)
-	cmd, err := sandbox.Command(ctx, pol, shellPath(), "-c", command)
+	cmd, err := m.commandLocked(ctx, pol, shellPath(), "-c", command)
 	if err != nil {
 		cancel()
 		log.close()
@@ -128,7 +174,9 @@ func (m *jobManager) start(cwd string, opts ToolOptions, pol sandbox.Policy, com
 	cmd.Env = commandEnv(opts.AllowEnv, opts.HideEnv)
 	configureProcessGroup(cmd)
 	cmd.WaitDelay = 2 * time.Second
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	sandbox.Started(cmd)
+	if err != nil {
 		cancel()
 		log.close()
 		return nil, err
@@ -253,6 +301,13 @@ func (m *jobManager) Close() {
 	}
 	wg.Wait()
 	m.cancel()
+	m.mu.Lock()
+	loopback := m.loopback
+	m.loopback = nil
+	m.mu.Unlock()
+	if loopback != nil {
+		_ = loopback.Close()
+	}
 	if m.dir != "" {
 		_ = os.RemoveAll(m.dir)
 	}

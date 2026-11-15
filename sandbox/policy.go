@@ -31,10 +31,11 @@ type Policy struct {
 	// Loopback gives commands, with the network off, IP networking on a
 	// loopback interface of their own: they can serve and connect to
 	// themselves (a test suite's servers) but reach nothing else, the host's
-	// own localhost services included. Linux only, in a network namespace
-	// per command; where none can be made, and on macOS, whose loopback is
-	// shared with the host, the setting has no effect and the network stays
-	// off.
+	// own localhost services included. Linux only, in a private network
+	// namespace that a session's commands share (see LoopbackSession), so a
+	// server one leaves running can be reached by later ones; where none can
+	// be made, and on macOS, whose loopback is shared with the host, the
+	// setting has no effect and the network stays off.
 	Loopback bool
 	// LoopbackAsked says the user asked for Loopback, where it is otherwise
 	// on by default. Asked for and not to be had, Weakness says so; had by

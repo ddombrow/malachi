@@ -309,7 +309,12 @@ func executeBash(ctx context.Context, cwd string, opts ToolOptions, args map[str
 	}
 
 	pol := opts.policy()
-	cmd, err := sandbox.Command(runCtx, pol, shellPath(), "-c", command)
+	var cmd *exec.Cmd
+	if opts.jobs != nil {
+		cmd, err = opts.jobs.command(runCtx, pol, shellPath(), "-c", command)
+	} else {
+		cmd, err = sandbox.Command(runCtx, pol, shellPath(), "-c", command)
+	}
 	if err != nil {
 		return agent.ToolResult{}, fmt.Errorf("%v. Commands cannot run until that is fixed or the user turns the sandbox off (-sandbox off)", err)
 	}
@@ -324,7 +329,9 @@ func executeBash(ctx context.Context, cwd string, opts ToolOptions, args map[str
 	cmd.WaitDelay = 2 * time.Second
 
 	start := time.Now()
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	sandbox.Started(cmd)
+	if err != nil {
 		return agent.ToolResult{}, err
 	}
 	done := make(chan error, 1)

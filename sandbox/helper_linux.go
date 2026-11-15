@@ -98,7 +98,7 @@ func runHelper(raw string) error {
 	filtered.UnixSockets = filtered.UnixSockets || own
 	// IP sockets with the network off are safe only in a namespace with
 	// nothing but loopback in it.
-	filtered.Loopback = filtered.Loopback && s.PrivateLoopback
+	filtered.Loopback = filtered.Loopback && (s.PrivateLoopback || s.LoopbackSession)
 	if err := denySockets(filtered); err != nil {
 		return fmt.Errorf("seccomp: %w", err)
 	}

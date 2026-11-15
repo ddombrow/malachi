@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // A command with the loopback setting serves and connects to itself, but
@@ -49,6 +51,136 @@ except OSError:
 	}
 	if out, err := cmd.CombinedOutput(); err != nil || string(out) != "ok\n" {
 		t.Fatalf("loopback command: %v\n%s", err, out)
+	}
+}
+
+// Commands in a session share one private loopback namespace. This is what lets
+// a background server started by one command be reached by a later command.
+func TestLoopbackSessionSharesLoopback(t *testing.T) {
+	requireBackend(t)
+	requireLoopbackBackend(t)
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("no python3")
+	}
+	project, home := t.TempDir(), t.TempDir()
+	portFile := filepath.Join(project, "port")
+	stopFile := filepath.Join(project, "stopped")
+	p := Build(Config{Cwd: project, Home: home, NoNet: true, Loopback: true})
+	session, err := NewLoopbackSession(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	server := `import signal, socket, sys
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+s.listen()
+open(sys.argv[1], "w").write(str(s.getsockname()[1]))
+signal.signal(signal.SIGTERM, lambda *_: open(sys.argv[2], "w").close())
+while True:
+    c, _ = s.accept()
+    c.sendall(b"shared")
+    c.close()
+`
+	start, err := session.Command(context.Background(), p, "sh", "-c", "python3 -c '"+server+"' "+portFile+" "+stopFile+" >/dev/null 2>&1 &")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start.Dir = project
+	if out, err := start.CombinedOutput(); err != nil {
+		t.Fatalf("start server: %v\n%s", err, out)
+	}
+	var port string
+	for i := 0; i < 100; i++ {
+		if b, err := os.ReadFile(portFile); err == nil {
+			port = string(b)
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if port == "" {
+		t.Fatal("server did not publish its port")
+	}
+	client, err := session.Command(context.Background(), p, "python3", "-c", `import socket,sys
+s=socket.create_connection(("127.0.0.1", int(sys.argv[1])), 2)
+print(s.recv(32).decode())`, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Dir = project
+	if out, err := client.CombinedOutput(); err != nil || string(out) != "shared\n" {
+		t.Fatalf("connect from later command: %v\n%s", err, out)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 200; i++ {
+		if _, err := os.Stat(stopFile); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("session close did not stop its background server")
+}
+
+// The session helper starts commands under whatever policy it is sent, so a
+// command must have no way to send it one: no socket with a path to connect
+// to, and no descriptor of the helper's inherited.
+func TestLoopbackSessionIsUnreachableFromCommands(t *testing.T) {
+	requireBackend(t)
+	requireLoopbackBackend(t)
+	project, home := t.TempDir(), t.TempDir()
+	p := Build(Config{Cwd: project, Home: home, NoNet: true, Loopback: true})
+	session, err := NewLoopbackSession(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	cmd, err := session.Command(context.Background(), p, "sh", "-c", `for f in /proc/$$/fd/*; do readlink "$f"; done; true`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Dir = project
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "socket:") {
+		t.Fatalf("a command in the session holds a socket:\n%s", out)
+	}
+}
+
+// A command in the session ends, to whoever waits on it, the way it did:
+// by its exit code, or by the signal that killed it.
+func TestLoopbackSessionPassesOnHowCommandsEnd(t *testing.T) {
+	requireBackend(t)
+	requireLoopbackBackend(t)
+	project, home := t.TempDir(), t.TempDir()
+	p := Build(Config{Cwd: project, Home: home, NoNet: true, Loopback: true})
+	session, err := NewLoopbackSession(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	end := func(script string) *os.ProcessState {
+		t.Helper()
+		cmd, err := session.Command(context.Background(), p, "sh", "-c", script)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd.Dir = project
+		_ = cmd.Run()
+		return cmd.ProcessState
+	}
+	if st := end("exit 7"); st.ExitCode() != 7 {
+		t.Fatalf("exit 7 ended as %v", st)
+	}
+	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL, syscall.SIGINT} {
+		st := end("kill -" + strconv.Itoa(int(sig)) + " $$")
+		if ws := st.Sys().(syscall.WaitStatus); !ws.Signaled() || ws.Signal() != sig {
+			t.Fatalf("killed by %v, ended as %v", sig, st)
+		}
 	}
 }
 

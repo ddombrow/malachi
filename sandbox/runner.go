@@ -17,3 +17,15 @@ func Command(ctx context.Context, p Policy, name string, args ...string) (*exec.
 	}
 	return command(ctx, p, name, args...)
 }
+
+// Started closes the descriptors cmd was made to hand its process, once it
+// has been started or will not be. Call it after cmd.Start, whatever that
+// returned, for a command from Command or LoopbackSession.Command: until
+// then the far end cannot tell the process has gone.
+func Started(cmd *exec.Cmd) {
+	for _, f := range cmd.ExtraFiles {
+		if f != nil {
+			_ = f.Close()
+		}
+	}
+}

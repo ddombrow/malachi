@@ -1,6 +1,10 @@
 package coding
 
 import (
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -8,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ddombrow/malachi/agent"
+	"github.com/ddombrow/malachi/sandbox"
 )
 
 func jobsTools(t *testing.T) (bash, jobs *agent.Tool, m *jobManager) {
@@ -218,4 +223,115 @@ func TestJobChangesAreReported(t *testing.T) {
 			t.Fatal("no report of the job ending")
 		}
 	}
+}
+
+// A shared loopback namespace that cannot be made, or whose helper is gone,
+// costs commands only reaching each other's servers: they run, each in a
+// namespace of its own, rather than failing.
+func TestCommandsRunWithoutTheSharedLoopback(t *testing.T) {
+	requireSandbox(t)
+	pol := sandbox.Build(sandbox.Config{Cwd: t.TempDir(), Home: t.TempDir(), NoNet: true, Loopback: true})
+	if !sandbox.LoopbackInForce(pol) {
+		t.Skip("no private loopback here")
+	}
+	m := newJobManager(t.TempDir())
+	t.Cleanup(m.Close)
+	bash := NewBashTool(t.TempDir(), ToolOptions{jobs: m, Sandbox: func() sandbox.Policy { return pol }})
+	ok := func(when string) {
+		t.Helper()
+		r, err := run(t, bash, map[string]any{"command": "echo ran", "description": "Echoing"})
+		if err != nil || !strings.Contains(r.Text(), "ran") {
+			t.Fatalf("%s: %v\n%s", when, err, r.Text())
+		}
+	}
+
+	// The helper is gone: the command falls back, and the next one makes a
+	// new namespace.
+	ok("first command")
+	if m.loopback == nil {
+		t.Fatal("no shared namespace made")
+	}
+	_ = m.loopback.Close()
+	ok("after the helper went")
+	if m.loopback != nil {
+		t.Fatal("kept a dead namespace")
+	}
+	ok("once more")
+	if m.loopback == nil {
+		t.Fatal("no new shared namespace made")
+	}
+
+	// It cannot be made: commands fall back, and it is not tried again.
+	_ = m.loopback.Close()
+	m.loopback = nil
+	tries := 0
+	newLoopbackSession = func(sandbox.Policy) (*sandbox.LoopbackSession, error) {
+		tries++
+		return nil, errors.New("no namespace for you")
+	}
+	t.Cleanup(func() { newLoopbackSession = sandbox.NewLoopbackSession })
+	ok("when it cannot be made")
+	ok("again")
+	if tries != 1 {
+		t.Fatalf("tried %d times to make it", tries)
+	}
+}
+
+// What the shared loopback namespace is for: a server a job leaves running
+// is reached by a later command, and goes when the session does.
+func TestLaterCommandsReachAJobsServer(t *testing.T) {
+	requireSandbox(t)
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("no python3")
+	}
+	cwd := t.TempDir()
+	pol := sandbox.Build(sandbox.Config{Cwd: cwd, Home: t.TempDir(), NoNet: true, Loopback: true})
+	if !sandbox.LoopbackInForce(pol) {
+		t.Skip("no private loopback here")
+	}
+	m := newJobManager(t.TempDir())
+	t.Cleanup(m.Close)
+	bash := NewBashTool(cwd, ToolOptions{jobs: m, Sandbox: func() sandbox.Policy { return pol }})
+
+	const server = `import os, socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+s.listen()
+open("pid", "w").write(str(os.getpid()))
+open("port.tmp", "w").write(str(s.getsockname()[1]))
+os.rename("port.tmp", "port")
+while True:
+    c, _ = s.accept()
+    c.sendall(b"hello from the job")
+    c.close()
+`
+	if err := os.WriteFile(filepath.Join(cwd, "server.py"), []byte(server), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, bash, map[string]any{"command": "python3 server.py", "description": "Serving", "background": true}); err != nil {
+		t.Fatal(err)
+	}
+	var port []byte
+	for deadline := time.Now().Add(10 * time.Second); len(port) == 0; {
+		if time.Now().After(deadline) {
+			t.Fatal("the job's server did not start")
+		}
+		port, _ = os.ReadFile(filepath.Join(cwd, "port"))
+		time.Sleep(20 * time.Millisecond)
+	}
+	r, err := run(t, bash, map[string]any{"command": `python3 -c 'import socket, sys; print(socket.create_connection(("127.0.0.1", int(sys.argv[1])), 5).recv(64).decode())' ` + string(port), "description": "Connecting"})
+	if err != nil || !strings.Contains(r.Text(), "hello from the job") {
+		t.Fatalf("later command did not reach the job's server: %v\n%s", err, r.Text())
+	}
+
+	raw, err := os.ReadFile(filepath.Join(cwd, "pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(string(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Close()
+	waitGone(t, pid)
 }

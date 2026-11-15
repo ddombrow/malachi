@@ -22,7 +22,13 @@ type spec struct {
 	// PrivateLoopback says the helper was started in a private network
 	// namespace and must bring its isolated loopback interface up (Linux).
 	PrivateLoopback bool `json:"privateLoopback,omitempty"`
+	// LoopbackSession says this command inherits its private network namespace
+	// from a long-lived session helper rather than creating one of its own.
+	LoopbackSession bool `json:"loopbackSession,omitempty"`
 }
+
+const sessionArg = "__sandbox-loopback-session"
+const sessionClientArg = "__sandbox-loopback-client"
 
 // probeArg makes the binary try, and report by its exit status, what a
 // helper with PrivatePTY would do, so the question is asked once at startup
@@ -35,6 +41,20 @@ const probeLoopbackArg = "__sandbox-probe-loopback"
 // main, and in TestMain of packages that run sandboxed commands, before
 // anything else touches the process.
 func MaybeRunHelper() {
+	if len(os.Args) == 2 && os.Args[1] == sessionArg {
+		if err := runSessionHelper(); err != nil {
+			fmt.Fprintf(os.Stderr, "malachi sandbox: %v\n", err)
+			os.Exit(HelperFailed)
+		}
+		os.Exit(0)
+	}
+	if len(os.Args) == 3 && os.Args[1] == sessionClientArg {
+		if err := runSessionClient(os.Args[2]); err != nil {
+			fmt.Fprintf(os.Stderr, "malachi sandbox: %v\n", err)
+			os.Exit(HelperFailed)
+		}
+		os.Exit(0)
+	}
 	if len(os.Args) == 2 && (os.Args[1] == probeArg || os.Args[1] == probeLoopbackArg) {
 		runtime.LockOSThread()
 		var err error
