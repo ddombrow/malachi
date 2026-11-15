@@ -124,6 +124,46 @@ print(s.recv(32).decode())`, port)
 	t.Fatal("session close did not stop its background server")
 }
 
+// The session helper is the subreaper for its commands, so a process one of
+// them left behind in a session of its own (a daemon, a job's server once
+// its shell is gone) is the helper's to reap when it ends, or it stays a
+// zombie that kill(pid, 0) still finds.
+func TestLoopbackSessionReapsOrphans(t *testing.T) {
+	requireBackend(t)
+	requireLoopbackBackend(t)
+	project, home := t.TempDir(), t.TempDir()
+	p := Build(Config{Cwd: project, Home: home, NoNet: true, Loopback: true})
+	session, err := NewLoopbackSession(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	cmd, err := session.Command(context.Background(), p, "sh", "-c", "setsid -f sh -c 'sleep 0.2 & echo $!' ; sleep 0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Dir = project
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	pid := strings.TrimSpace(string(out))
+	if pid == "" {
+		t.Fatal("no pid printed")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		stat, err := os.ReadFile("/proc/" + pid + "/stat")
+		if err != nil {
+			return // gone, reaped
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("orphan %s was never reaped: %s", pid, stat)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // The session helper starts commands under whatever policy it is sent, so a
 // command must have no way to send it one: no socket with a path to connect
 // to, and no descriptor of the helper's inherited.

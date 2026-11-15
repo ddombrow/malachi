@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
@@ -16,6 +17,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -238,6 +241,11 @@ func runSessionHelper(ids string) error {
 	var mu sync.Mutex
 	children := map[int]*exec.Cmd{}
 	groups := map[int]struct{}{}
+	// reapOrphans takes every child that is not a command's, so the only
+	// other child the helper starts, the pty probe, is run now, before it
+	// does, and is not taken from under its own Wait.
+	_ = privatePTYAvailable()
+	go reapOrphans(&mu, children)
 	var closing bool
 	var wg, groupWG sync.WaitGroup
 	signals := make(chan os.Signal, 1)
@@ -363,6 +371,70 @@ func serveLoopbackCommand(conn net.Conn, mu *sync.Mutex, children map[int]*exec.
 	// could say the command finished normally. The client answers or exits,
 	// either of which ends the read.
 	<-controlDone
+}
+
+// reapOrphans reaps the processes reparented to the session helper, its
+// commands' orphans: being their subreaper (PR_SET_CHILD_SUBREAPER), it is
+// their parent once theirs has gone, and one it does not reap stays a zombie
+// until the session ends. A process left in a session of its own (setsid, a
+// daemon, a background job's processes once its shell is gone) is not in any
+// command's group, so reapLoopbackGroup never reaches it. A command's own
+// process is left to its cmd.Wait, which reports how it ended.
+func reapOrphans(mu *sync.Mutex, children map[int]*exec.Cmd) {
+	sigchld := make(chan os.Signal, 1)
+	signal.Notify(sigchld, syscall.SIGCHLD)
+	tick := time.NewTicker(time.Second) // a SIGCHLD may be coalesced
+	defer tick.Stop()
+	self := os.Getpid()
+	for {
+		for _, pid := range zombieChildren(self) {
+			mu.Lock()
+			_, command := children[pid]
+			mu.Unlock()
+			if !command {
+				var status unix.WaitStatus
+				_, _ = unix.Wait4(pid, &status, unix.WNOHANG, nil)
+			}
+		}
+		select {
+		case <-sigchld:
+		case <-tick.C:
+		}
+	}
+}
+
+// zombieChildren lists the children of parent that have exited and not been
+// reaped, from /proc.
+func zombieChildren(parent int) []int {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil
+	}
+	var out []int
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		stat, err := os.ReadFile("/proc/" + e.Name() + "/stat")
+		if err != nil {
+			continue
+		}
+		// "pid (comm) state ppid ...": comm may hold spaces and parentheses,
+		// so the fields are read after its last ")".
+		i := bytes.LastIndexByte(stat, ')')
+		if i < 0 {
+			continue
+		}
+		fields := strings.Fields(string(stat[i+1:]))
+		if len(fields) < 2 || fields[0] != "Z" {
+			continue
+		}
+		if ppid, err := strconv.Atoi(fields[1]); err == nil && ppid == parent {
+			out = append(out, pid)
+		}
+	}
+	return out
 }
 
 func reapLoopbackGroup(pgid int, mu *sync.Mutex, groups map[int]struct{}, wg *sync.WaitGroup) {
