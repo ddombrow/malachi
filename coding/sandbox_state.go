@@ -34,8 +34,6 @@ func (st SandboxState) Marker() string {
 		return "sandbox unavailable"
 	case st.Network:
 		return "network on"
-	case st.Loopback:
-		return "loopback only"
 	}
 	return ""
 }

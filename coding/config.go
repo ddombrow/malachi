@@ -243,8 +243,11 @@ type SandboxSettings struct {
 	PTY bool `json:"pty,omitempty"`
 	// Loopback gives commands, with the network off, a loopback interface of
 	// their own, for test suites that start local servers (Linux; no effect
-	// on macOS). See sandbox.Policy.
-	Loopback bool `json:"loopback,omitempty"`
+	// on macOS). It is on unless set to false: a test that cannot reach its
+	// own server on localhost is a surprise, and the loopback reaches
+	// nothing else. Set to true, malachi also says so where it cannot be
+	// had. See sandbox.Policy.
+	Loopback *bool `json:"loopback,omitempty"`
 	// Services are system services commands may reach beyond the built-in
 	// ones, by exact name (macOS; nothing on Linux). Each acts outside
 	// the sandbox for a command, so list only what a tool you use needs.
@@ -286,20 +289,21 @@ func (s *Settings) SandboxConfig(cwd, home string) sandbox.Config {
 		hidden = append(hidden, filepath.Join(dir, "malachi"))
 	}
 	return sandbox.Config{
-		Disabled:     sb.Enabled != nil && !*sb.Enabled,
-		NoNet:        sb.Network == nil || !*sb.Network, // off unless asked for
-		Loopback:     sb.Loopback,
-		UnixSockets:  sb.UnixSockets,
-		GPU:          sb.GPU,
-		PTY:          sb.PTY,
-		Services:     sb.Services,
-		Cwd:          cwd,
-		Home:         home,
-		Writable:     expand(sb.WritableRoots),
-		Readable:     expand(sb.ReadableRoots),
-		Hidden:       hidden,
-		Unhidden:     expand(sb.UnhiddenPaths),
-		ReadAnywhere: sb.ReadAnywhere,
+		Disabled:      sb.Enabled != nil && !*sb.Enabled,
+		NoNet:         sb.Network == nil || !*sb.Network, // off unless asked for
+		Loopback:      sb.Loopback == nil || *sb.Loopback,
+		LoopbackAsked: sb.Loopback != nil && *sb.Loopback,
+		UnixSockets:   sb.UnixSockets,
+		GPU:           sb.GPU,
+		PTY:           sb.PTY,
+		Services:      sb.Services,
+		Cwd:           cwd,
+		Home:          home,
+		Writable:      expand(sb.WritableRoots),
+		Readable:      expand(sb.ReadableRoots),
+		Hidden:        hidden,
+		Unhidden:      expand(sb.UnhiddenPaths),
+		ReadAnywhere:  sb.ReadAnywhere,
 	}
 }
 

@@ -34,8 +34,12 @@ type Policy struct {
 	// own localhost services included. Linux only, in a network namespace
 	// per command; where none can be made, and on macOS, whose loopback is
 	// shared with the host, the setting has no effect and the network stays
-	// off (see Weakness).
+	// off.
 	Loopback bool
+	// LoopbackAsked says the user asked for Loopback, where it is otherwise
+	// on by default. Asked for and not to be had, Weakness says so; had by
+	// default or not at all, there is nothing to say.
+	LoopbackAsked bool
 	// UnixSockets allows connecting to any Unix socket. Off, commands cannot
 	// reach local daemons such as Docker or ssh-agent, which would let them
 	// act outside the sandbox (a container mounting the home directory, a
@@ -77,8 +81,10 @@ type Config struct {
 	Cwd      string // the project; writable
 	Home     string // malachi's home (sessions, .env, settings); hidden
 	NoNet    bool
-	// Loopback gives commands a private loopback; see Policy.
-	Loopback bool
+	// Loopback gives commands a private loopback, and LoopbackAsked says
+	// the user asked for it; see Policy.
+	Loopback      bool
+	LoopbackAsked bool
 	// UnixSockets allows connecting to any Unix socket; see Policy.
 	UnixSockets bool
 	// GPU lets commands use the graphics processor; see Policy.
@@ -120,7 +126,7 @@ func privateHomeContainers(userHome, cwd string) []string {
 // Build turns c into a Policy with the default writable roots and hidden
 // paths for this user and platform.
 func Build(c Config) Policy {
-	p := Policy{Enabled: !c.Disabled, Network: !c.NoNet, Loopback: c.Loopback, UnixSockets: c.UnixSockets, GPU: c.GPU, PTY: c.PTY}
+	p := Policy{Enabled: !c.Disabled, Network: !c.NoNet, Loopback: c.Loopback, LoopbackAsked: c.Loopback && c.LoopbackAsked, UnixSockets: c.UnixSockets, GPU: c.GPU, PTY: c.PTY}
 	userHome, _ := os.UserHomeDir()
 	inHome := func(rel string) string {
 		if userHome == "" {

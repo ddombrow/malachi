@@ -101,7 +101,7 @@ func TestSandboxSettings(t *testing.T) {
 	if want := []string{"/etc/secret", filepath.Join(cache, "malachi")}; !slices.Equal(c.Hidden, want) {
 		t.Fatalf("hidden %v, want %v", c.Hidden, want)
 	}
-	if !slices.Equal(c.Unhidden, []string{filepath.Join(userHome, ".m2", "settings.xml")}) || !c.GPU || !c.PTY || !c.Loopback || !slices.Equal(c.Services, []string{"com.apple.testmanagerd"}) {
+	if !slices.Equal(c.Unhidden, []string{filepath.Join(userHome, ".m2", "settings.xml")}) || !c.GPU || !c.PTY || !c.Loopback || !c.LoopbackAsked || !slices.Equal(c.Services, []string{"com.apple.testmanagerd"}) {
 		t.Fatalf("unhidden %v gpu %v", c.Unhidden, c.GPU)
 	}
 	if err := json.Unmarshal([]byte(`{"sandbox":{"readableRoots":["~/src/tau"],"readAnywhere":true}}`), &s); err != nil {

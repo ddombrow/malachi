@@ -66,7 +66,7 @@ func run() int {
 		version     = flag.Bool("version", false, "print the version and exit")
 		trustFlag   = flag.String("trust", "", `project trust for this run: "yes" to load this directory's instruction files, "no" to withhold them`)
 		networkSet  = flag.String("network", "", `"on" or "off": commands' network access in the sandbox for this run (default from settings: off)`)
-		loopbackSet = flag.String("loopback", "", `"on" or "off": isolated loopback access for sandboxed commands (default from settings: off; Linux only)`)
+		loopbackSet = flag.String("loopback", "", `"on" or "off": isolated loopback access for sandboxed commands (default from settings: on; Linux only)`)
 		sandboxSet  = flag.String("sandbox", "", `"on" or "off" for this run (default from settings: on). Off lets commands and file tools reach everything you can`)
 	)
 	flag.BoolVar(cont, "continue", false, "same as -c")

@@ -11,7 +11,7 @@ import (
 // nothing in the profile, and the sandbox says it has no effect.
 func TestLoopbackHasNoEffectOnMacOS(t *testing.T) {
 	off := Policy{Enabled: true}
-	on := Policy{Enabled: true, Loopback: true}
+	on := Policy{Enabled: true, Loopback: true, LoopbackAsked: true}
 	if Profile(on) != Profile(off) {
 		t.Error("the loopback setting changed the profile")
 	}
@@ -21,7 +21,11 @@ func TestLoopbackHasNoEffectOnMacOS(t *testing.T) {
 	if w := Weakness(on); !strings.Contains(w, "loopback setting has no effect") {
 		t.Errorf("Weakness = %q, want it to say loopback has no effect", w)
 	}
-	if w := Weakness(Policy{Enabled: true, Network: true, Loopback: true}); w != "" {
+	if w := Weakness(Policy{Enabled: true, Network: true, Loopback: true, LoopbackAsked: true}); w != "" {
 		t.Errorf("Weakness with the network on = %q", w)
+	}
+	// On by default and not asked for, its absence is not announced.
+	if w := Weakness(Policy{Enabled: true, Loopback: true}); w != "" {
+		t.Errorf("Weakness for a loopback nobody asked for = %q", w)
 	}
 }

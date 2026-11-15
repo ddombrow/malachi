@@ -563,8 +563,11 @@ func TestAllowCommandsWidenTheSandboxWithoutTheModel(t *testing.T) {
 	if err := as.s.Sandbox().CheckWrite(filepath.Join(dir, "f")); err != nil {
 		t.Fatalf("not writable after /allow-write: %v", err)
 	}
-	if _, us = c.prompt(id, "/sandbox"); !strings.Contains(text(us, "agent_message_chunk"), "network: off") || !strings.Contains(text(us, "agent_message_chunk"), dir) {
-		t.Fatalf("/sandbox does not show the network and the added root: %q", text(us, "agent_message_chunk"))
+	// Off, or where commands get a loopback of their own, that and no more.
+	_, us = c.prompt(id, "/sandbox")
+	shown := text(us, "agent_message_chunk")
+	if !(strings.Contains(shown, "network: off") || strings.Contains(shown, "network: loopback only")) || !strings.Contains(shown, dir) {
+		t.Fatalf("/sandbox does not show the network and the added root: %q", shown)
 	}
 	if _, us = c.prompt(id, "/allow-write"); !strings.Contains(text(us, "agent_message_chunk"), "Usage: /allow-write") {
 		t.Fatalf("no usage: %q", text(us, "agent_message_chunk"))

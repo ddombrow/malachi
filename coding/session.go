@@ -330,9 +330,9 @@ func Open(opts Options) (*Session, error) {
 	switch opts.Loopback {
 	case "":
 	case "on":
-		sbCfg.Loopback = true
+		sbCfg.Loopback, sbCfg.LoopbackAsked = true, true
 	case "off":
-		sbCfg.Loopback = false
+		sbCfg.Loopback, sbCfg.LoopbackAsked = false, false
 	default:
 		return nil, fmt.Errorf("loopback must be \"on\" or \"off\", not %q", opts.Loopback)
 	}

@@ -167,8 +167,7 @@ func TestSandboxOffReachesEverything(t *testing.T) {
 }
 
 func TestLoopbackOptionOverridesSettings(t *testing.T) {
-	settings := &Settings{Sandbox: SandboxSettings{Loopback: true}}
-	open := func(loopback string) *Session {
+	open := func(settings *Settings, loopback string) *Session {
 		t.Helper()
 		s, err := Open(Options{
 			Cwd: t.TempDir(), Home: t.TempDir(), Settings: settings,
@@ -182,13 +181,24 @@ func TestLoopbackOptionOverridesSettings(t *testing.T) {
 	}
 	// The policy, not the state: whether the setting takes effect depends on
 	// the system (see sandbox.LoopbackInForce).
-	if p := open("").sandboxPolicy(); !p.Loopback || p.Network {
-		t.Fatalf("settings did not enable loopback only: %+v", p)
+	on, off := true, false
+	asked := &Settings{Sandbox: SandboxSettings{Loopback: &on}}
+	declined := &Settings{Sandbox: SandboxSettings{Loopback: &off}}
+	// On by default, without having been asked for: nothing is said where
+	// it cannot be had.
+	if p := open(&Settings{}, "").sandboxPolicy(); !p.Loopback || p.LoopbackAsked || p.Network {
+		t.Fatalf("loopback should be on by default, unasked: %+v", p)
 	}
-	if p := open("off").sandboxPolicy(); p.Loopback {
+	if p := open(asked, "").sandboxPolicy(); !p.Loopback || !p.LoopbackAsked || p.Network {
+		t.Fatalf("settings did not ask for loopback only: %+v", p)
+	}
+	if p := open(declined, "").sandboxPolicy(); p.Loopback || p.LoopbackAsked {
+		t.Fatalf("\"loopback\": false did not turn it off: %+v", p)
+	}
+	if p := open(asked, "off").sandboxPolicy(); p.Loopback || p.LoopbackAsked {
 		t.Fatalf("-loopback off did not override settings: %+v", p)
 	}
-	if p := open("on").sandboxPolicy(); !p.Loopback || p.Network {
+	if p := open(declined, "on").sandboxPolicy(); !p.Loopback || !p.LoopbackAsked || p.Network {
 		t.Fatalf("-loopback on enabled the wrong policy: %+v", p)
 	}
 }

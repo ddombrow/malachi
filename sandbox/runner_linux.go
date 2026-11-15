@@ -55,7 +55,7 @@ func Weakness(p Policy) string {
 				"this system does not let malachi make a private set of them (%v); it takes unprivileged user namespaces%s", err, userNSHint()))
 		}
 	}
-	if p.Loopback && !p.Network {
+	if p.Loopback && p.LoopbackAsked && !p.Network {
 		if err := privateLoopbackAvailable(); err != nil {
 			notes = append(notes, fmt.Sprintf("the loopback setting has no effect, so commands have no network at all: "+
 				"this system does not let malachi give them a private network namespace (%v); it takes unprivileged user namespaces%s", err, userNSHint()))

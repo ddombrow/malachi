@@ -57,12 +57,16 @@ except OSError:
 // Where no private namespace can be made, the setting is reported as having
 // no effect, rather than commands failing.
 func TestWeaknessMentionsLoopbackOnlyWhenUnavailable(t *testing.T) {
-	got := Weakness(Policy{Enabled: true, Loopback: true})
+	got := Weakness(Policy{Enabled: true, Loopback: true, LoopbackAsked: true})
 	if mentions := strings.Contains(got, "loopback"); mentions != (privateLoopbackAvailable() != nil) {
 		t.Errorf("Weakness = %q with the namespace available: %v", got, privateLoopbackAvailable() == nil)
 	}
-	if got := Weakness(Policy{Enabled: true, Network: true, Loopback: true}); strings.Contains(got, "loopback") {
+	if got := Weakness(Policy{Enabled: true, Network: true, Loopback: true, LoopbackAsked: true}); strings.Contains(got, "loopback") {
 		t.Errorf("Weakness with the network on = %q", got)
+	}
+	// On by default and not asked for, its absence is not announced.
+	if got := Weakness(Policy{Enabled: true, Loopback: true}); strings.Contains(got, "loopback") {
+		t.Errorf("Weakness for a loopback nobody asked for = %q", got)
 	}
 }
 

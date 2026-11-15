@@ -477,15 +477,19 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   (which would carry hostnames out as DNS queries), and on Linux cannot
   create sockets of any family but Unix and netlink. Downloads
   (`go mod download`, `npm install`, `git fetch`) fail until you turn it on
-  with `/network on`, `-network on`, or `"network": true`. Test suites that
-  start servers on localhost can have `"loopback": true` (or `-loopback on`)
-  instead: on Linux each command gets a network namespace of its own with
-  nothing but a loopback interface, so it can serve and connect to itself but
-  reach neither the network nor services on your own localhost. It takes
+  with `/network on`, `-network on`, or `"network": true`. On Linux a
+  command still has a loopback of its own, so a test suite that starts a
+  server on localhost works: each command gets a network namespace with
+  nothing but a loopback interface in it, where it can serve and connect to
+  itself but reach neither the network nor services on your own localhost.
+  `"loopback": false` (or `-loopback off`) takes that away too. It runs the
+  command in a user namespace, where files that are not yours appear owned
+  by `nobody` (access is unchanged), and it takes a system that allows
   unprivileged user namespaces, which Ubuntu 23.10 and later restrict
   (`kernel.apparmor_restrict_unprivileged_userns`). Where there are none, and
-  on macOS, whose loopback is shared with everything you run, the setting has
-  no effect and the network stays off; `/sandbox` says so.
+  on macOS, whose loopback is shared with everything you run, commands have
+  no network at all; `/sandbox` shows which, and malachi says so at startup
+  if you set `"loopback": true` yourself.
   This is about commands only: malachi itself still sends the conversation,
   tool output included, to your model provider.
 - **Local daemons are out of reach.** Commands cannot connect to Unix sockets
@@ -541,7 +545,7 @@ tools (read, write, edit, grep, glob) check the same rules themselves:
   "sandbox": {
     "enabled": true,
     "network": false,
-    "loopback": false,
+    "loopback": true,
     "unixSockets": false,
     "gpu": false,
     "pty": false,
