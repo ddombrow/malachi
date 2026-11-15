@@ -30,6 +30,12 @@ type acpSession struct {
 	// still waiting for the user.
 	turn   *turn
 	asking context.CancelFunc
+	// starting is set from a prompt being accepted until its turn exists
+	// (or it gives up). Between the trust question and the turn there is a
+	// stretch with neither, in which a second prompt would otherwise be
+	// accepted too; whichever then lost the race to start left the other's
+	// turn overwritten, and that prompt was never answered.
+	starting bool
 	// models is the provider's live model list, nil until fetched.
 	models      []string
 	compactions int
@@ -100,9 +106,15 @@ var errBusy = &Error{Code: codeInvalidRequest, Message: "a prompt is already run
 // returning the stop reason.
 func (as *acpSession) prompt(ctx context.Context, text string) (string, error) {
 	as.mu.Lock()
-	if as.turn != nil || as.asking != nil {
+	if as.turn != nil || as.asking != nil || as.starting {
 		as.mu.Unlock()
 		return "", errBusy
+	}
+	as.starting = true
+	started := func() {
+		as.mu.Lock()
+		as.starting = false
+		as.mu.Unlock()
 	}
 	askCtx, cancelAsk := context.WithCancel(ctx)
 	as.asking = cancelAsk
@@ -113,9 +125,11 @@ func (as *acpSession) prompt(ctx context.Context, text string) (string, error) {
 	as.asking = nil
 	as.mu.Unlock()
 	if err != nil {
+		started()
 		return "", err
 	}
 	if !decided {
+		started()
 		return stopCancelled, nil
 	}
 
@@ -125,7 +139,7 @@ func (as *acpSession) prompt(ctx context.Context, text string) (string, error) {
 	as.warnFirstTurn()
 	t := &turn{done: make(chan struct{})}
 	as.mu.Lock()
-	as.turn = t
+	as.turn, as.starting = t, false
 	as.mu.Unlock()
 	if err := as.s.Submit(ctx, text, ""); err != nil {
 		as.mu.Lock()

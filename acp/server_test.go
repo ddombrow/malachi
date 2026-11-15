@@ -690,3 +690,36 @@ func TestAdditionalDirectoriesAreReadableOnly(t *testing.T) {
 		t.Error("relative additional directory accepted")
 	}
 }
+
+// A prompt is refused from the moment another has been accepted, not from
+// the moment that one's run starts. A session that opens with a notice says
+// it before the run, so a client can see a first chunk and send again while
+// the first prompt is still on its way in; accepted, the second took the
+// first one's place, and one of the two was never answered.
+func TestSecondPromptIsRefusedBeforeTheFirstStartsRunning(t *testing.T) {
+	off := testSettings()
+	disabled := false
+	off.Sandbox.Enabled = &disabled // so the session has something to say first
+	c := start(t, t.TempDir(), off, fake.New(func(ctx context.Context, _ agent.Request, b *ai.Builder) {
+		b.Text("working")
+		<-ctx.Done()
+	}))
+	c.initialize()
+	id, _ := c.newSession(t.TempDir())
+	prompt := func(text string) float64 {
+		return c.call("session/prompt", map[string]any{"sessionId": id, "prompt": []any{map[string]any{"type": "text", "text": text}}})
+	}
+	first := prompt("go")
+	c.until("the notice", func(u map[string]any) bool { return u["sessionUpdate"] == "agent_message_chunk" })
+	if resp, _ := c.await(prompt("again")); resp["error"] == nil {
+		t.Fatalf("a second prompt was accepted: %v", resp)
+	}
+	c.until("the run", func(u map[string]any) bool {
+		return u["sessionUpdate"] == "agent_message_chunk" && strings.Contains(mustJSON(u), "working")
+	})
+	c.notify("session/cancel", map[string]any{"sessionId": id})
+	resp, _ := c.await(first)
+	if r := result(t, resp); r["stopReason"] != "cancelled" {
+		t.Fatalf("after cancel: %v", r)
+	}
+}
