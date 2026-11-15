@@ -112,7 +112,7 @@ func command(ctx context.Context, p Policy, name string, args ...string) (*exec.
 	loopback := LoopbackInForce(p)
 	p.Loopback = loopback
 	ptys := p.PTY && privatePTYAvailable() == nil
-	raw, err := json.Marshal(spec{Policy: p, Name: name, Args: args, PrivatePTY: ptys, PrivateLoopback: loopback})
+	raw, err := json.Marshal(spec{Policy: p, Name: name, Args: args, PrivatePTY: ptys, PrivateLoopback: loopback, IDs: selfIDs()})
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: %w", err)
 	}
@@ -131,7 +131,7 @@ func commandInLoopbackSession(ctx context.Context, p Policy, name string, args .
 	p.Loopback = true
 	p.Network = false
 	ptys := p.PTY && privatePTYAvailable() == nil
-	raw, err := json.Marshal(spec{Policy: p, Name: name, Args: args, PrivatePTY: ptys, LoopbackSession: true})
+	raw, err := json.Marshal(spec{Policy: p, Name: name, Args: args, PrivatePTY: ptys, LoopbackSession: true, IDs: selfIDs()})
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: %w", err)
 	}
@@ -179,32 +179,33 @@ func privateLoopbackSessionAttr() *syscall.SysProcAttr {
 
 // privateAttr combines the user namespace needed for capabilities with the
 // requested private namespaces. The helper drops all capabilities before exec.
+//
+// The namespace's ids are not mapped here, as Go would from this process:
+// malachi is not dumpable, and the kernel refuses that write. The helper maps
+// itself (mapSelf), which takes CAP_SETUID, CAP_SETGID and, to deny
+// setgroups, CAP_SYS_ADMIN, all in the new namespace only.
 func privateAttr(pty, loopback bool) *syscall.SysProcAttr {
 	flags := uintptr(syscall.CLONE_NEWUSER)
-	var caps []uintptr
+	caps := []uintptr{unix.CAP_SETUID, unix.CAP_SETGID, unix.CAP_SYS_ADMIN}
 	if pty {
 		flags |= syscall.CLONE_NEWNS
-		caps = append(caps, unix.CAP_SYS_ADMIN)
 	}
 	if loopback {
 		flags |= syscall.CLONE_NEWNET
 		caps = append(caps, unix.CAP_NET_ADMIN)
 	}
-	uid, gid := os.Getuid(), os.Getgid()
-	return &syscall.SysProcAttr{
-		Cloneflags:  flags,
-		UidMappings: []syscall.SysProcIDMap{{ContainerID: uid, HostID: uid, Size: 1}},
-		GidMappings: []syscall.SysProcIDMap{{ContainerID: gid, HostID: gid, Size: 1}},
-		AmbientCaps: caps,
-	}
+	return &syscall.SysProcAttr{Cloneflags: flags, AmbientCaps: caps}
 }
+
+// selfIDs is this process's user and group, for a helper to map (mapSelf).
+func selfIDs() string { return fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()) }
 
 // privatePTYAvailable reports why commands cannot be given a private set of
 // pseudo-terminals here, or nil. It is found out by trying, once: whether
 // an unprivileged process may make a user namespace is decided by sysctls
 // and security modules that differ between distributions.
 var privatePTYAvailable = sync.OnceValue(func() error {
-	cmd := exec.Command(selfExe, probeArg)
+	cmd := exec.Command(selfExe, probeArg, selfIDs())
 	cmd.SysProcAttr = privatePTYAttr()
 	out, err := cmd.CombinedOutput()
 	if err == nil {
@@ -221,7 +222,7 @@ var privatePTYAvailable = sync.OnceValue(func() error {
 // like privatePTYAvailable. Without one, the loopback setting falls back to
 // no network, never to the host's.
 var privateLoopbackAvailable = sync.OnceValue(func() error {
-	cmd := exec.Command(selfExe, probeLoopbackArg)
+	cmd := exec.Command(selfExe, probeLoopbackArg, selfIDs())
 	cmd.SysProcAttr = privateLoopbackAttr()
 	out, err := cmd.CombinedOutput()
 	if err == nil {

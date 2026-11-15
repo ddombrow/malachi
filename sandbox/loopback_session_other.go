@@ -21,6 +21,6 @@ func (*LoopbackSession) Command(context.Context, Policy, string, ...string) (*ex
 
 func (*LoopbackSession) Close() error { return nil }
 
-func runSessionHelper() error { return errors.ErrUnsupported }
+func runSessionHelper(string) error { return errors.ErrUnsupported }
 
 func runSessionClient(string) error { return errors.ErrUnsupported }

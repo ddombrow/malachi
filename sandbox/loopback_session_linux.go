@@ -69,7 +69,7 @@ func NewLoopbackSession(p Policy) (*LoopbackSession, error) {
 		return nil, err
 	}
 	defer readyR.Close()
-	cmd := exec.Command(selfExe, sessionArg)
+	cmd := exec.Command(selfExe, sessionArg, selfIDs())
 	cmd.ExtraFiles = []*os.File{theirs, readyW}
 	cmd.SysProcAttr = privateLoopbackSessionAttr()
 	cmd.SysProcAttr.Setsid = true
@@ -202,8 +202,11 @@ func receiveConn(control int) (net.Conn, error) {
 	}
 }
 
-func runSessionHelper() error {
+func runSessionHelper(ids string) error {
 	runtime.LockOSThread()
+	if err := mapSelf(ids); err != nil {
+		return err
+	}
 	if err := privateLoopback(); err != nil {
 		return fmt.Errorf("loopback networking: %w", err)
 	}

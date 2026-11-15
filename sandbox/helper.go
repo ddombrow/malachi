@@ -25,6 +25,10 @@ type spec struct {
 	// LoopbackSession says this command inherits its private network namespace
 	// from a long-lived session helper rather than creating one of its own.
 	LoopbackSession bool `json:"loopbackSession,omitempty"`
+	// IDs are the user and group ("uid:gid") the helper maps into the user
+	// namespace it was started in, with PrivatePTY or PrivateLoopback (see
+	// mapSelf).
+	IDs string `json:"ids,omitempty"`
 }
 
 const sessionArg = "__sandbox-loopback-session"
@@ -41,8 +45,8 @@ const probeLoopbackArg = "__sandbox-probe-loopback"
 // main, and in TestMain of packages that run sandboxed commands, before
 // anything else touches the process.
 func MaybeRunHelper() {
-	if len(os.Args) == 2 && os.Args[1] == sessionArg {
-		if err := runSessionHelper(); err != nil {
+	if len(os.Args) == 3 && os.Args[1] == sessionArg {
+		if err := runSessionHelper(os.Args[2]); err != nil {
 			fmt.Fprintf(os.Stderr, "malachi sandbox: %v\n", err)
 			os.Exit(HelperFailed)
 		}
@@ -55,12 +59,12 @@ func MaybeRunHelper() {
 		}
 		os.Exit(0)
 	}
-	if len(os.Args) == 2 && (os.Args[1] == probeArg || os.Args[1] == probeLoopbackArg) {
+	if len(os.Args) == 3 && (os.Args[1] == probeArg || os.Args[1] == probeLoopbackArg) {
 		runtime.LockOSThread()
-		var err error
-		if os.Args[1] == probeArg {
+		err := mapSelf(os.Args[2])
+		if err == nil && os.Args[1] == probeArg {
 			err = privatePTY()
-		} else {
+		} else if err == nil {
 			err = privateLoopback()
 		}
 		if err != nil {

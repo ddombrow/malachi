@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/landlock-lsm/go-landlock/landlock"
@@ -72,6 +73,9 @@ func runHelper(raw string) error {
 		// Capabilities belong to a thread: the one that holds them here must
 		// be the one that uses them and drops them before exec.
 		runtime.LockOSThread()
+		if err := mapSelf(s.IDs); err != nil {
+			return err
+		}
 		if s.PrivatePTY {
 			if err := privatePTY(); err != nil {
 				return fmt.Errorf("pseudo-terminals: %w", err)
@@ -239,6 +243,33 @@ const unixSocketABI = 9
 // servers, test runners and headless browsers talking to their children.
 func ownUnixSockets(p Policy, abi int) bool {
 	return !p.UnixSockets && abi >= unixSocketABI
+}
+
+// mapSelf maps the user and group in ids ("uid:gid") to themselves in the
+// user namespace this process was started in (see privateAttr), which no
+// one else may do for it: malachi is not dumpable (ProtectProcess), so its
+// children's /proc files are root's until they exec, and the mapping Go
+// would write from the parent is refused. Started afresh, this process is
+// dumpable, and the capabilities it was passed let it write its own. Only
+// its own ids, and with setgroups denied, as an unprivileged mapping must.
+func mapSelf(ids string) error {
+	uid, gid, ok := strings.Cut(ids, ":")
+	if _, err := strconv.Atoi(uid); !ok || err != nil {
+		return fmt.Errorf("user namespace: bad ids %q", ids)
+	}
+	if _, err := strconv.Atoi(gid); err != nil {
+		return fmt.Errorf("user namespace: bad ids %q", ids)
+	}
+	for _, w := range []struct{ file, data string }{
+		{"/proc/self/setgroups", "deny"},
+		{"/proc/self/uid_map", uid + " " + uid + " 1"},
+		{"/proc/self/gid_map", gid + " " + gid + " 1"},
+	} {
+		if err := os.WriteFile(w.file, []byte(w.data), 0); err != nil {
+			return fmt.Errorf("user namespace: %w", err)
+		}
+	}
+	return nil
 }
 
 // privatePTY replaces /dev/pts, in this process's own mount namespace, with

@@ -57,6 +57,21 @@ func listenAndExit(spec string) {
 	os.Exit(0)
 }
 
+// protectLikeMalachi makes the test binary what malachi is when it starts
+// commands: not dumpable (ProtectProcess). That changes what it may do for
+// the namespaces a command starts in, and tests run without it once passed
+// while malachi itself gave commands no loopback. The test of ProtectProcess
+// needs a process that is not yet protected, and root is refused.
+func protectLikeMalachi() {
+	if os.Getenv("MALACHI_PROTECT_TEST_MODE") != "" || os.Geteuid() == 0 {
+		return
+	}
+	if err := ProtectProcess(); err != nil {
+		fmt.Fprintln(os.Stderr, "cannot protect the test process as malachi does:", err)
+		os.Exit(1)
+	}
+}
+
 // The test binary doubles as the sandbox helper, as malachi does.
 func TestMain(m *testing.M) {
 	MaybeRunHelper()
@@ -70,5 +85,6 @@ func TestMain(m *testing.M) {
 		time.Sleep(time.Minute)
 		os.Exit(0)
 	}
+	protectLikeMalachi()
 	os.Exit(m.Run())
 }

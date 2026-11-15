@@ -16,6 +16,13 @@ func TestMain(m *testing.M) {
 		fakeMCPServer() // this binary is also a fake MCP server
 		os.Exit(0)
 	}
+	// Run as malachi does (see cmd/malachi): not dumpable, which changes
+	// what starting a sandboxed command in a namespace takes. Root is refused.
+	if os.Geteuid() != 0 {
+		if err := sandbox.ProtectProcess(); err != nil {
+			panic(err)
+		}
+	}
 	home, err := os.MkdirTemp("", "malachi-test-home-")
 	if err != nil {
 		panic(err)

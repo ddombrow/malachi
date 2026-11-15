@@ -8,6 +8,8 @@ func privatePTY() error { return errors.ErrUnsupported }
 
 func privateLoopback() error { return errors.ErrUnsupported }
 
+func mapSelf(string) error { return errors.ErrUnsupported }
+
 func runHelper(string) error {
 	return errors.New("the sandbox helper is only used on Linux")
 }
