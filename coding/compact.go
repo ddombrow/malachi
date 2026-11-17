@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -62,6 +63,10 @@ const (
 	// The most recently changed are kept, since they are the likeliest to
 	// matter to the work in progress.
 	maxFilesChanged = 60
+	// maxCheckedIdentifiers bounds how many names a summary is checked for.
+	// A long span names hundreds; no handover could carry them all, and the
+	// survival fraction would then measure the span's length, not the loss.
+	maxCheckedIdentifiers = 60
 )
 
 // ErrNothingToSummarize is returned when the conversation is too short or too
@@ -563,37 +568,68 @@ func validateSummary(summary string, dropped []agent.Message) []string {
 	return warnings
 }
 
-// distinctiveIdentifiers collects the tokens worth checking for, capped so a
-// long conversation does not turn this into a scan of everything. They come
+// distinctiveIdentifiers collects the tokens worth checking for. They come
 // from what the summariser was shown, plus the previous handover it was asked
 // to carry forward. Tool output is not shown to it, so its identifiers are not
 // expected back: counting them made one file read fill the sample with names
 // no summary could contain, and nearly every compaction warn.
+//
+// A name counts only if it came up in more than one message, or was already
+// carried in the previous handover: a path mentioned once in passing is not
+// something a summary owes the next agent. Of those, the most often mentioned
+// are kept, the most recent first among equals, up to maxCheckedIdentifiers.
+// Taking the first names in conversation order instead filled the sample from
+// the oldest part of a long session, which is what a summary should compress,
+// and never looked at the work in progress.
 func distinctiveIdentifiers(messages []agent.Message) []string {
-	var texts []string
-	if len(messages) > 0 {
-		if c, ok := messages[0].(*agent.CompactionSummaryMessage); ok {
-			previous, _ := splitFilesChanged(c.Summary)
-			texts = append(texts, previous)
-		}
+	type mention struct {
+		count, last int // messages naming it, and the latest of them
 	}
-	for _, e := range summarizerView(messages) {
-		texts = append(texts, e.text)
-	}
-	seen := map[string]bool{}
-	var out []string
-	for _, text := range texts {
+	mentions := map[string]*mention{}
+	var order []string
+	note := func(text string, at, weight int) {
+		seen := map[string]bool{}
 		for _, match := range identifierish.FindAllString(text, -1) {
 			id := strings.Trim(match, "`")
 			if len(id) < 4 || seen[id] {
 				continue
 			}
 			seen[id] = true
-			out = append(out, id)
-			if len(out) >= 60 {
-				return out
+			m := mentions[id]
+			if m == nil {
+				m = &mention{}
+				mentions[id] = m
+				order = append(order, id)
 			}
+			m.count += weight
+			m.last = at
 		}
+	}
+	if len(messages) > 0 {
+		if c, ok := messages[0].(*agent.CompactionSummaryMessage); ok {
+			previous, _ := splitFilesChanged(c.Summary)
+			// Already judged worth carrying, so one mention is enough.
+			note(previous, 0, 2)
+		}
+	}
+	for i, e := range summarizerView(messages) {
+		note(e.text, i+1, 1)
+	}
+	var out []string
+	for _, id := range order {
+		if mentions[id].count >= 2 {
+			out = append(out, id)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := mentions[out[i]], mentions[out[j]]
+		if a.count != b.count {
+			return a.count > b.count
+		}
+		return a.last > b.last
+	})
+	if len(out) > maxCheckedIdentifiers {
+		out = out[:maxCheckedIdentifiers]
 	}
 	return out
 }
