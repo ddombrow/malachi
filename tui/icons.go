@@ -28,6 +28,9 @@ const (
 	// compaction and now reads differently to say so.
 	iconTrimmed     = "trimmed"
 	iconInterrupted = "interrupted"
+	// iconWarning marks a heuristic doubt, such as a summary that may have
+	// dropped names: worth a look, not a failure.
+	iconWarning = "warning"
 )
 
 // Icon sets, chosen with "icons" in settings.json. Emoji icons are single
@@ -56,6 +59,7 @@ var iconSets = map[string]map[string]string{
 		iconCompacted:   "📦",
 		iconTrimmed:     "🧹",
 		iconInterrupted: "🛑",
+		iconWarning:     "🚧",
 	},
 	// "dots" mimics Claude Code: one glyph, colored by status.
 	"dots": {
@@ -77,6 +81,7 @@ var iconSets = map[string]map[string]string{
 		iconCompacted:   "⏺",
 		iconTrimmed:     "⏺",
 		iconInterrupted: "⏺",
+		iconWarning:     "⏺",
 	},
 }
 
