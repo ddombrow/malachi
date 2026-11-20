@@ -2,6 +2,7 @@ package coding
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -110,6 +111,9 @@ type codingContextPreparer struct {
 	budget   int  // derived ceiling in bytes, set from measured usage
 	override int  // ceiling for one request, set by forceBudget
 	force    bool // the override is pending
+	// auto trims whenever tool output passes the ceiling. Off, only a forced
+	// pass (/trim) trims, and what it trimmed stays trimmed.
+	auto bool
 }
 
 // newCodingContextPreparer builds a bounded, deterministic view of the coding
@@ -117,8 +121,15 @@ type codingContextPreparer struct {
 // and uses copy-on-write for compacted results. It is used serially by
 // Harness.Run; the mutex also keeps it safe when request preparation is invoked
 // directly from another goroutine, as /compact does.
-func newCodingContextPreparer(log *trimLog) *codingContextPreparer {
-	return &codingContextPreparer{log: log, trimmed: map[int]bool{}}
+//
+// With auto off, which is the default (see Settings.TrimToolOutput), nothing
+// is trimmed until asked. Trimming on its own took output the model was still
+// working from, a file it had read or a failure it was fixing, and it went
+// back for it: the call it made again cost more than the bytes saved, and
+// changed the request where the provider's prompt cache could have served it.
+// Automatic compaction near the context window bounds a session without it.
+func newCodingContextPreparer(log *trimLog, auto bool) *codingContextPreparer {
+	return &codingContextPreparer{log: log, trimmed: map[int]bool{}, auto: auto}
 }
 
 func (c *codingContextPreparer) prepare(req agent.Request) agent.Request {
@@ -181,11 +192,15 @@ func (c *codingContextPreparer) visibleLocked() int {
 
 // budgetLocked returns the ceiling for the next request and the level a trim
 // goes down to once it is exceeded: a forced override trims to exactly its
-// budget, the automatic ceiling well below itself. Callers must hold c.mu.
+// budget, the automatic ceiling well below itself. With auto off there is no
+// ceiling but a forced one. Callers must hold c.mu.
 func (c *codingContextPreparer) budgetLocked() (budget, low int) {
 	if c.force {
 		c.force = false
 		return c.override, c.override
+	}
+	if !c.auto {
+		return math.MaxInt, math.MaxInt
 	}
 	budget = defaultToolResultBudget
 	if c.budget > 0 {

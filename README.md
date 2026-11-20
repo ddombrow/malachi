@@ -102,9 +102,13 @@ to cancel, and use `/help` for the full command list.
 | `/copy`, `/quit` | Copy the transcript, exit |
 
 `/compact` and `/trim` are different tools: `/compact` is a lossy,
-model-written summary of the conversation, `/trim` is the mechanical and
-lossless removal of tool output that has already served its purpose. Both
-happen automatically near the context window, which is also when they matter.
+model-written summary of the conversation, `/trim` is the mechanical
+removal of old tool output, replaced by a line saying what each call was
+and how it ended. Compaction happens automatically near the context window.
+Trimming happens only when you ask: done on its own, it took output the
+model was still working from, and it went back for it. Set
+`"trimToolOutput": true` to trim old output whenever it passes 64 kB (less
+on a small context window).
 
 ## RPC mode
 

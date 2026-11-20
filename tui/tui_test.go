@@ -19,8 +19,13 @@ import (
 
 func newTestModel(t *testing.T) *model {
 	t.Helper()
+	return newTestModelWith(t, &coding.Settings{})
+}
+
+func newTestModelWith(t *testing.T, settings *coding.Settings) *model {
+	t.Helper()
 	s, err := coding.Open(coding.Options{
-		Cwd: t.TempDir(), Home: t.TempDir(), Settings: &coding.Settings{},
+		Cwd: t.TempDir(), Home: t.TempDir(), Settings: settings,
 		Provider: fake.New(fake.Text("hi")), NoSession: true,
 	})
 	if err != nil {
@@ -478,7 +483,7 @@ func TestInputPromptMatchesUserGutter(t *testing.T) {
 // Compaction never touches the transcript, so the status bar and a transcript
 // marker are the only way the user learns the model's view was trimmed.
 func TestTrimmingIsVisible(t *testing.T) {
-	m := newTestModel(t)
+	m := newTestModelWith(t, &coding.Settings{TrimToolOutput: true})
 	requireSandboxInForce(t, m)
 	if strings.Contains(ansi.Strip(m.statusLine()), "cmp ") {
 		t.Fatal("status bar shows cmp before anything has compacted")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -39,7 +40,7 @@ func TestCodingRequestTrimsOldResultsWithoutChangingTranscript(t *testing.T) {
 	}
 	p := fake.New(fake.Text("done"))
 	h := agent.NewHarness(agent.HarnessConfig{
-		Provider: p, Model: "fake", PrepareRequest: newCodingContextPreparer(nil).prepare,
+		Provider: p, Model: "fake", PrepareRequest: newCodingContextPreparer(nil, true).prepare,
 	}, history)
 
 	if err := h.Prompt(context.Background(), agent.NewUserText("continue")); err != nil {
@@ -92,7 +93,7 @@ func TestCodingContextCacheReusesAppendOnlyPrefixAndInvalidatesReplacement(t *te
 		Details: map[string]any{"path": filepath.Join(cwd, "a.go")},
 	}
 	messages := []agent.Message{agent.NewUserText("start"), assistant, result}
-	cache := newCodingContextPreparer(nil)
+	cache := newCodingContextPreparer(nil, true)
 	request := agent.Request{Messages: messages}
 	prepared := cache.prepare(request)
 	if prepared.Messages[1] != assistant || prepared.Messages[2] != result {
@@ -143,7 +144,9 @@ func TestCompactionDoesNotRewriteSavedSession(t *testing.T) {
 			fake.Call{ID: "r2", Name: "read", Args: map[string]any{"path": "second.txt"}}),
 		fake.Text("finished"),
 	)
-	s, err := Open(testOpts(t, home, cwd, p))
+	opts := testOpts(t, home, cwd, p)
+	opts.Settings.TrimToolOutput = true
+	s, err := Open(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +232,7 @@ func TestTrimRetainsOversizedMostRecentResult(t *testing.T) {
 func TestTrimStatsAndForcedBudget(t *testing.T) {
 	cwd := t.TempDir()
 	log := &trimLog{}
-	p := newCodingContextPreparer(log)
+	p := newCodingContextPreparer(log, true)
 
 	small := agent.NewAssistantMessage("fake")
 	small.Content = []agent.Content{&agent.ToolCall{ID: "a", Name: "bash", Arguments: map[string]any{"command": "ls"}}}
@@ -293,7 +296,7 @@ func TestTrimStatsAndForcedBudget(t *testing.T) {
 // that once per request produced pairs of identical markers.
 func TestRepeatedPassesReportOnlyNewlyTrimmedResults(t *testing.T) {
 	log := &trimLog{}
-	p := newCodingContextPreparer(log)
+	p := newCodingContextPreparer(log, true)
 
 	var messages []agent.Message
 	turn := func(id string, n int) {
@@ -354,7 +357,7 @@ func TestRepeatedPassesReportOnlyNewlyTrimmedResults(t *testing.T) {
 // uncached. Once trimmed, a result stays trimmed, an automatic trim goes well
 // below the ceiling, and requests between trims only append.
 func TestTrimIsStickyAndKeepsThePrefixStable(t *testing.T) {
-	p := newCodingContextPreparer(&trimLog{})
+	p := newCodingContextPreparer(&trimLog{}, true)
 	messages := []agent.Message{agent.NewUserText("go")}
 	var prev []agent.Message
 	rewrites := 0
@@ -447,4 +450,70 @@ func toolResultsByID(messages []agent.Message) map[string]*agent.ToolResultMessa
 		}
 	}
 	return results
+}
+
+// Tool output is trimmed only when asked, unless the settings turn the
+// automatic trim on; what /trim trims stays trimmed in later requests.
+func TestToolOutputIsTrimmedOnlyWhenAsked(t *testing.T) {
+	history := []agent.Message{agent.NewUserText("look around")}
+	for i := range 4 {
+		id := fmt.Sprintf("c%d", i)
+		a := agent.NewAssistantMessage("fake")
+		a.Content = []agent.Content{&agent.ToolCall{ID: id, Name: "bash", Arguments: map[string]any{"command": "make"}}}
+		a.StopReason = agent.StopToolUse
+		history = append(history, a, &agent.ToolResultMessage{
+			ToolCallID: id, ToolName: "bash",
+			Content: []agent.Content{&agent.TextContent{Text: strings.Repeat("out ", 20_000)}},
+			Details: map[string]any{"exit_code": 0},
+		})
+	}
+	open := func(settings *Settings) (*Session, *fake.Provider) {
+		t.Helper()
+		p := fake.New(fake.Text("one"), fake.Text("two"), fake.Text("three"))
+		s, err := Open(Options{Cwd: t.TempDir(), Home: t.TempDir(), Settings: settings, Provider: p, NoSession: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(s.Close)
+		s.Harness.ReplaceMessages(slices.Clone(history))
+		return s, p
+	}
+	trimmed := func(req agent.Request) int {
+		n := 0
+		for _, m := range req.Messages {
+			if r, ok := m.(*agent.ToolResultMessage); ok && strings.HasPrefix(r.Text(), "[trimmed ") {
+				n++
+			}
+		}
+		return n
+	}
+
+	// 80 kB of output, past the ceiling: left alone by default.
+	s, p := open(&Settings{})
+	if err := s.Prompt(context.Background(), "go on"); err != nil {
+		t.Fatal(err)
+	}
+	if n := trimmed(p.Requests[0]); n != 0 || s.Trim().Seq != 0 {
+		t.Fatalf("trimmed %d results without being asked", n)
+	}
+	if !s.ForceTrim(0) {
+		t.Fatal("/trim found nothing to trim")
+	}
+	for i := range 2 {
+		if err := s.Prompt(context.Background(), "go on"); err != nil {
+			t.Fatal(err)
+		}
+		if n := trimmed(p.Requests[1+i]); n != 3 {
+			t.Fatalf("request %d after /trim: %d results trimmed, want the 3 before the newest", 2+i, n)
+		}
+	}
+
+	// Turned on, the ceiling trims on its own.
+	s, p = open(&Settings{TrimToolOutput: true})
+	if err := s.Prompt(context.Background(), "go on"); err != nil {
+		t.Fatal(err)
+	}
+	if n := trimmed(p.Requests[0]); n == 0 {
+		t.Fatal("trimToolOutput did not trim past the ceiling")
+	}
 }

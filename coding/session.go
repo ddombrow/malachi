@@ -370,7 +370,7 @@ func Open(opts Options) (*Session, error) {
 		tools = append(tools, newScriptTool(tools, toolOpts, s.diag, s.codeMode.record, s.mcp))
 	}
 	s.trims = &trimLog{}
-	s.preparer = newCodingContextPreparer(s.trims)
+	s.preparer = newCodingContextPreparer(s.trims, opts.Settings.TrimToolOutput)
 	s.runtime = provider
 	s.baseTools = tools
 	s.tools = append(slices.Clip(tools), s.mcp.AgentTools(false)...)

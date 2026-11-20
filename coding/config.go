@@ -65,10 +65,13 @@ type Settings struct {
 	BashTimeoutSeconds int    `json:"bashTimeoutSeconds,omitempty"`
 	ProjectTrust       string `json:"projectTrust,omitempty"` // "ask" (default), "always", or "never"
 	// CodeMode offers the script tool; nil means on.
-	CodeMode  *bool                     `json:"codeMode,omitempty"`
-	Sandbox   SandboxSettings           `json:"sandbox,omitzero"`
-	ACP       ACPSettings               `json:"acp,omitzero"`
-	Providers map[string]ProviderConfig `json:"providers,omitempty"`
+	CodeMode *bool `json:"codeMode,omitempty"`
+	// TrimToolOutput replaces old tool output in requests with a marker
+	// whenever it passes a ceiling. Off, it is trimmed only by /trim.
+	TrimToolOutput bool                      `json:"trimToolOutput,omitempty"`
+	Sandbox        SandboxSettings           `json:"sandbox,omitzero"`
+	ACP            ACPSettings               `json:"acp,omitzero"`
+	Providers      map[string]ProviderConfig `json:"providers,omitempty"`
 }
 
 // ACPSettings configure the ACP agent mode (-mode acp).
