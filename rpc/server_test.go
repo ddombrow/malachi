@@ -649,3 +649,32 @@ func TestGetStateReportsJobs(t *testing.T) {
 		t.Errorf("event:\n got %s\nwant %s", raw, want)
 	}
 }
+
+// set_code_mode lets a client switch code mode as ctrl+x does in the TUI,
+// and get_available_code_modes lists the modes for a picker.
+func TestSetCodeMode(t *testing.T) {
+	s := openSession(t, fake.New())
+	c := serve(t, s)
+	c.send(`{"id":1,"type":"get_available_code_modes"}`)
+	if r := c.response(1); fmt.Sprint(r["data"].(map[string]any)["modes"]) != "[off on explore]" {
+		t.Fatalf("get_available_code_modes: %v", r)
+	}
+	c.send(`{"id":2,"type":"set_code_mode","mode":"explore"}`)
+	// The event comes first, as for any command's own work.
+	if ev := c.event("code_mode_changed"); ev["codeMode"].(map[string]any)["mode"] != "explore" {
+		t.Fatalf("code_mode_changed: %v", ev)
+	}
+	r := c.response(2)
+	if r["success"] != true || r["data"].(map[string]any)["mode"] != "explore" || s.CodeMode().Mode != coding.CodeModeExplore {
+		t.Fatalf("set_code_mode: %v", r)
+	}
+	c.send(`{"id":3,"type":"set_code_mode","mode":"sideways"}`)
+	if r := c.response(3); r["success"] != false || s.CodeMode().Mode != coding.CodeModeExplore {
+		t.Fatalf("an unknown mode was accepted: %v", r)
+	}
+	c.send(`{"id":4,"type":"get_state"}`)
+	if cm := c.response(4)["data"].(map[string]any)["codeMode"].(map[string]any); cm["mode"] != "explore" {
+		t.Fatalf("get_state codeMode: %v", cm)
+	}
+	c.close()
+}

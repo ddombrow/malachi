@@ -70,6 +70,10 @@ const (
 
 var codeModes = []string{CodeModeOff, CodeModeOn, CodeModeExplore}
 
+// CodeModes lists the code modes, in the order CycleCodeMode goes through
+// them.
+func CodeModes() []string { return slices.Clone(codeModes) }
+
 // CodeModeChangedEvent reports a change of code mode.
 type CodeModeChangedEvent struct{ State CodeModeState }
 

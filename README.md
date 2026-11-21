@@ -142,6 +142,7 @@ which follows Pi's, so clients written for those should work here.
 | `get_available_thinking_levels`, `set_thinking_level` (`level`) | `levels` |
 | `add_writable_root` (`path`), `add_readable_root` (`path`) | canonical path and updated sandbox state |
 | `set_network` (`enabled`) | updated sandbox state |
+| `get_available_code_modes`, `set_code_mode` (`mode`: `off`/`on`/`explore`) | `modes`; the new `codeMode`, as `get_state` reports it |
 | `mcp_restart` (`name`) | the servers' state, once it has started or failed |
 | `compact` (`customInstructions?`), `set_auto_compaction` (`enabled`) | the summary, `firstKeptEntryId`, token estimates before and after |
 | `new_session`, `switch_session` (`sessionPath` or `sessionId`) | `cancelled` |
@@ -167,7 +168,8 @@ does) and `agent_settled` (all work for a prompt is done).
 Differences from tau, checked by `rpc/golden_test.go`: `compact` and
 `get_available_models` are answered from a goroutine, so their responses can
 come after later ones (correlate by `id`; this keeps `abort` working during a
-long compaction). `set_trust` and `projectTrust` are malachi's: instruction
+long compaction). `set_trust` and `projectTrust` are malachi's, as are `set_network`, the
+roots, `mcp_restart` and the code mode commands: instruction
 files are withheld until a client decides, as in `-p`. Malformed or oversized
 records (over 16 MiB) are answered with `"command":"parse"` and reading
 continues.
@@ -346,6 +348,10 @@ tool describes them in full, the model is told not to explore with bash
 instead, and a `view` tool shows it image files, which scripts cannot.
 Everything else, edits and commands included, stays a direct call. It is
 an experiment: compare the tokens a task takes with it on and off.
+
+The setting decides the mode a session starts in. To switch while it runs,
+press `ctrl+x` in the TUI (off → on → explore); RPC clients use
+`set_code_mode`.
 
 ### Fetch
 

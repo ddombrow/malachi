@@ -60,6 +60,23 @@ func (sv *Server) dispatch(id any, typ string, cmd map[string]any) {
 		}
 		s.Flush() // thinking_level_changed before the response
 		sv.reply(id, typ, nil, err)
+	case "get_available_code_modes":
+		// A malachi extension, like set_code_mode: the modes to offer in a
+		// picker, in the order ctrl+x cycles them.
+		sv.ok(id, typ, map[string]any{"modes": coding.CodeModes()})
+	case "set_code_mode":
+		// The user switching code mode for this session: the tools offered
+		// and the prompt's advice change from the next request.
+		mode, err := requiredString(cmd, "mode")
+		if err == nil {
+			err = s.SetCodeMode(mode)
+		}
+		s.Flush() // code_mode_changed before the response
+		if err != nil {
+			sv.fail(id, typ, err.Error())
+			return
+		}
+		sv.ok(id, typ, codeModeOf(s.CodeMode()))
 	case "compact":
 		instructions, err := optionalString(cmd, "customInstructions")
 		if err != nil {
