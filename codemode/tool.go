@@ -109,8 +109,9 @@ func NewTool(tools []*agent.Tool, opts Options) *agent.Tool {
 			"Available tools: " + strings.Join(names, ", ") + ".",
 		PromptSnippet: "Run JavaScript that calls the other tools and returns only what matters",
 		PromptGuidelines: []string{
-			"Use script to chain or fan out tool calls whose intermediate results you don't need to see: reading several files, filtering search results, or the same edit across files. Return just the lines that matter.",
-			"Use ordinary tool calls for a single step, or when you need to see a result before deciding the next one.",
+			"When you would read, grep or glob more than two things, as when exploring a codebase, do it in one script: run the calls together with Promise.all and return only the lines you need, not whole files or every match.",
+			"Use script to cut large output, such as a broad search or a long log, down to what matters before it reaches you. A script can branch on what it finds, so a next step that depends on a result does not need a turn of its own.",
+			"Make an ordinary tool call for a single step, or when deciding what to do next takes judgment that code cannot make.",
 		},
 		Parameters: map[string]any{
 			"type": "object",
