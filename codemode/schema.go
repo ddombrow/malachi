@@ -99,3 +99,59 @@ func Advertise(tools []*agent.Tool) []*agent.Tool {
 	}
 	return out
 }
+
+// toolSection is all a model needs to call t from a script when t is not
+// offered to it directly: its description and advice, its arguments, and
+// what its details hold.
+func toolSection(t *agent.Tool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "### tools.%s(args)\n%s", t.Name, strings.TrimSpace(t.Description))
+	for _, g := range t.PromptGuidelines {
+		b.WriteString("\n- " + g)
+	}
+	props, _ := t.Parameters["properties"].(map[string]any)
+	if len(props) > 0 {
+		required := map[string]bool{}
+		switch r := t.Parameters["required"].(type) {
+		case []string:
+			for _, n := range r {
+				required[n] = true
+			}
+		case []any:
+			for _, n := range r {
+				if s, ok := n.(string); ok {
+					required[s] = true
+				}
+			}
+		}
+		names := make([]string, 0, len(props))
+		for n := range props {
+			names = append(names, n)
+		}
+		sort.Slice(names, func(i, j int) bool {
+			if required[names[i]] != required[names[j]] {
+				return required[names[i]]
+			}
+			return names[i] < names[j]
+		})
+		b.WriteString("\nArguments:")
+		for _, n := range names {
+			p, _ := props[n].(map[string]any)
+			kind, _ := p["type"].(string)
+			if !required[n] {
+				kind += ", optional"
+			}
+			fmt.Fprintf(&b, "\n  %s (%s)", n, kind)
+			if enum, ok := p["enum"].([]string); ok {
+				fmt.Fprintf(&b, " one of %s", strings.Join(enum, ", "))
+			}
+			if d, _ := p["description"].(string); d != "" {
+				b.WriteString(": " + d)
+			}
+		}
+	}
+	if f := fields(t.OutputSchema, 1); f != "" {
+		b.WriteString("\nDetails: " + f)
+	}
+	return b.String()
+}

@@ -55,10 +55,13 @@ type Options struct {
 	// changes while a session runs, such as MCP servers'. It may wait, bounded
 	// by ctx, for tools that are on their way.
 	Extra func(ctx context.Context) []*agent.Tool
-	// Advertised says the tools offered to the model already say, in their
-	// own descriptions, how scripts call them (see Advertise), so the
-	// script tool's description does not list their details again.
-	Advertised bool
+	// Direct names the tools also offered to the model directly, whose own
+	// descriptions say how scripts call them (see Advertise), so the script
+	// tool's description does not repeat them. Any other tool gets a full
+	// section there, since the model learns of it nowhere else: its
+	// description, advice, arguments and details. Nil means the tools are
+	// only listed, with their details fields.
+	Direct map[string]bool
 	// NotFound, if set, explains a call to a tool no script may call, beyond
 	// listing the tools there are: why a tool the model was told of is
 	// missing. It returns "" when it has nothing to add.
@@ -109,10 +112,27 @@ func NewTool(tools []*agent.Tool, opts Options) *agent.Tool {
 		"ALL_TOOLS lists the tools, describeTool(name) gives one's parameters and details schema, searchTools(query) finds tools by keyword. " +
 		"There is no require, filesystem, network, process or timers: everything goes through tools. " +
 		"Available tools: " + strings.Join(names, ", ") + "."
-	if opts.Advertised {
-		description += " Each tool's own description says what its details hold; describeTool(name).details is the full schema."
-	} else if s := detailsSummary(tools); s != "" {
-		description += "\n\n" + s
+	switch {
+	case opts.Direct != nil:
+		var only []*agent.Tool
+		for _, t := range tools {
+			if !opts.Direct[t.Name] {
+				only = append(only, t)
+			}
+		}
+		if len(only) < len(tools) {
+			description += " The tools you can also call directly say in their own descriptions what their details hold; describeTool(name).details is the full schema."
+		}
+		if len(only) > 0 {
+			description += "\n\nThese tools can be called only from scripts:"
+			for _, t := range only {
+				description += "\n\n" + toolSection(t)
+			}
+		}
+	default:
+		if s := detailsSummary(tools); s != "" {
+			description += "\n\n" + s
+		}
 	}
 	return &agent.Tool{
 		Name:          ToolName,

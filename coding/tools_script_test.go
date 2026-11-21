@@ -1,10 +1,14 @@
 package coding
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -319,5 +323,81 @@ func TestCodeModeChangesWhatIsSent(t *testing.T) {
 	res, isError := runScriptTool(t, script, `return [describeTool("read").description.includes("In a script"), ALL_TOOLS.length > 0]`)
 	if isError || res.Text() != "[\n  false,\n  true\n]" {
 		t.Errorf("scripts must see the tools without the note: %s", res.Text())
+	}
+}
+
+// Exploring in scripts takes read, grep and glob out of what the model is
+// sent: it learns of them, arguments and all, only from the script tool,
+// and is told not to explore with bash instead. Scripts still call them,
+// and view shows it images, which scripts cannot.
+func TestExploringInScripts(t *testing.T) {
+	cwd := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cwd, "a.txt"), []byte("alpha\nbeta\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var img bytes.Buffer
+	if err := png.Encode(&img, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "dot.png"), img.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := fake.New(fake.Text("ok"))
+	s, err := Open(Options{Cwd: cwd, Home: t.TempDir(), Settings: &Settings{ExploreInScripts: true}, Provider: p, NoSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	if err := s.Prompt(context.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+	req := p.Requests[0]
+	sent := map[string]*agent.Tool{}
+	for _, tl := range req.Tools {
+		sent[tl.Name] = tl
+	}
+	for _, name := range []string{"read", "grep", "glob"} {
+		if sent[name] != nil {
+			t.Errorf("%s was offered directly", name)
+		}
+	}
+	for _, name := range []string{"bash", "edit", "write", "view", codemode.ToolName} {
+		if sent[name] == nil {
+			t.Errorf("%s was not offered", name)
+		}
+	}
+	script := sent[codemode.ToolName]
+	for _, want := range []string{
+		"### tools.read(args)", "### tools.grep(args)", "### tools.glob(args)",
+		"literal (boolean, optional): Match pattern as plain text",
+		"output (string, optional) one of lines, files, count",
+		"Details: {files, hit_limit, matches",
+		"Use grep's context option",
+		"to look at an image, call view",
+	} {
+		if !strings.Contains(script.Description, want) {
+			t.Errorf("the script tool's description lacks %q:\n%s", want, script.Description)
+		}
+	}
+	if strings.Contains(script.Description, "### tools.bash") || strings.Contains(script.Description, readSeveral) {
+		t.Errorf("the script tool describes a direct tool, or advises parallel reads:\n%s", script.Description)
+	}
+	if !strings.Contains(req.System, "Do not read or search files with bash") || strings.Contains(req.System, "call read once per file") {
+		t.Errorf("the prompt's advice does not fit exploring in scripts:\n%s", req.System)
+	}
+
+	res, isError := runScriptTool(t, script, `
+		const [a, hits] = await Promise.all([tools.read({path: "a.txt"}), tools.grep({pattern: "beta"})]);
+		return [a.text.trim().split("\n")[0], hits.details.results[0].line];`)
+	if isError || res.Text() != "[\n  \"alpha\",\n  2\n]" {
+		t.Errorf("scripts must still read and search: %s", res.Text())
+	}
+	view := sent["view"]
+	shown, err := view.Execute(context.Background(), "v", map[string]any{"path": "dot.png"}, nil)
+	if err != nil || !slices.ContainsFunc(shown.Content, func(c agent.Content) bool { _, ok := c.(*agent.ImageContent); return ok }) {
+		t.Errorf("view must show an image: %v %v", shown, err)
+	}
+	if _, err := view.Execute(context.Background(), "v", map[string]any{"path": "a.txt"}, nil); err == nil || !strings.Contains(err.Error(), "in a script") {
+		t.Errorf("view must send a text file to a script: %v", err)
 	}
 }

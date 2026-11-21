@@ -333,6 +333,19 @@ cache directory (`~/Library/Caches/malachi/codemode` on macOS,
 `~/.cache/malachi/codemode` on Linux). Set `"codeMode": false` to leave the
 tool out.
 
+Models rarely reach for scripts on their own, even when exploring a
+codebase would cost a fraction as much. To make them, set:
+
+```json
+{ "exploreInScripts": true }
+```
+
+read, grep and glob are then offered only through scripts: the script
+tool describes them in full, the model is told not to explore with bash
+instead, and a `view` tool shows it image files, which scripts cannot.
+Everything else, edits and commands included, stays a direct call. It is
+an experiment: compare the tokens a task takes with it on and off.
+
 ### Fetch
 
 The `fetch` tool GETs a URL and returns it as text: HTML reduced to readable

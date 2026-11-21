@@ -35,30 +35,101 @@ var scriptEngine = sync.OnceValues(func() (*codemode.Engine, error) {
 // spill file. diag, if set, logs each script and any sandbox refusal inside
 // one; onScript, if set, hears how each script ended.
 func NewScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScript func(codemode.Details)) *agent.Tool {
-	return newScriptTool(tools, opts, diag, onScript, nil, false)
+	return newScriptTool(tools, opts, diag, onScript, nil, nil)
 }
 
-// withScripts is tools as offered to the model with code mode on: each says
-// how a script calls it, read's advice on several files allows for
-// scripts, and the script tool comes last, calling the tools as they were.
-func withScripts(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScript func(codemode.Details), servers *MCPManager) []*agent.Tool {
-	script := newScriptTool(tools, opts, diag, onScript, servers, true)
-	offered := codemode.Advertise(tools)
-	for _, t := range offered {
-		t.PromptGuidelines = slices.Clone(t.PromptGuidelines)
-		for i, g := range t.PromptGuidelines {
+// exploreTools are the tools that, when exploring in scripts, scripts alone
+// may call.
+var exploreTools = map[string]bool{"read": true, "grep": true, "glob": true}
+
+// exploreGuidelines replace the script tool's own when exploring in scripts.
+var exploreGuidelines = []string{
+	"read, grep and glob can be called only from scripts. To look at a file or search, write a script; for one file, `return (await tools.read({path: \"go.mod\"})).text` is enough.",
+	"When you look at several files or run several searches, do them in one script and return only the parts you need, not whole files or every match.",
+	"Do not read or search files with bash (cat, head, sed, grep, rg, find, ls); do it in a script.",
+	"A script can branch on what it finds, so a step that depends on a result does not need a turn of its own.",
+}
+
+// withScripts is tools as offered to the model with code mode on, the
+// script tool last. Each other tool says how a script calls it, and read's
+// advice on several files allows for scripts. With explore, read, grep and
+// glob are left out and the model reaches them only through scripts, whose
+// tool describes them in full; view shows it images, which scripts cannot.
+func withScripts(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScript func(codemode.Details), servers *MCPManager, explore bool) []*agent.Tool {
+	direct := map[string]bool{}
+	var offered, callable []*agent.Tool
+	for _, t := range tools {
+		c := *t
+		c.PromptGuidelines = slices.Clone(t.PromptGuidelines)
+		if explore && exploreTools[t.Name] {
+			// Parallel reads are advice for direct calls; in a script the
+			// calls run together anyway.
+			c.PromptGuidelines = slices.DeleteFunc(c.PromptGuidelines, func(g string) bool { return g == readSeveral })
+			if t.Name == "read" {
+				c.Description += " A script sees text only: to look at an image, call view."
+			}
+			callable = append(callable, &c)
+			continue
+		}
+		for i, g := range c.PromptGuidelines {
 			if g == readSeveral {
-				t.PromptGuidelines[i] = readSeveralWithScripts
+				c.PromptGuidelines[i] = readSeveralWithScripts
+			}
+		}
+		direct[t.Name] = true
+		callable = append(callable, t)
+		offered = append(offered, &c)
+	}
+	script := newScriptTool(callable, opts, diag, onScript, servers, direct)
+	offered = codemode.Advertise(offered)
+	if explore {
+		script.PromptGuidelines = exploreGuidelines
+		for _, t := range tools {
+			if t.Name == "read" {
+				offered = append(offered, newViewTool(t))
 			}
 		}
 	}
 	return append(offered, script)
 }
 
+// newViewTool shows the model an image file through read, for a model whose
+// reads go through scripts, which see text only.
+func newViewTool(read *agent.Tool) *agent.Tool {
+	return &agent.Tool{
+		Name:          "view",
+		Label:         "View",
+		Description:   "Show you an image file (png, jpg, gif or webp) so you can see it. Text files and PDFs are read in a script with tools.read.",
+		PromptSnippet: "Look at an image file",
+		Parallel:      true,
+		Parameters: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"path": map[string]any{"type": "string", "description": "The image file"}},
+			"required":   []string{"path"},
+		},
+		OutputSchema: readOutputSchema,
+		Execute: func(ctx context.Context, id string, args map[string]any, onUpdate func(agent.ToolResult)) (agent.ToolResult, error) {
+			res, err := read.Execute(ctx, id, args, onUpdate)
+			if err != nil {
+				return res, err
+			}
+			for _, c := range res.Content {
+				if _, ok := c.(*agent.ImageContent); ok {
+					return res, nil
+				}
+			}
+			if d, ok := res.Details.(map[string]any); ok && imageTypes[fmt.Sprint(d["mime_type"])] {
+				return res, nil // an image too large to show says so itself
+			}
+			return agent.ToolResult{}, errors.New("not an image: read text files and PDFs in a script, `return (await tools.read({path})).text`")
+		},
+	}
+}
+
 // newScriptTool is NewScriptTool whose scripts also call the deferred MCP
 // servers' tools, when servers is set: each script starts with the tools of
 // the servers running then, waiting for any still starting.
-func newScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScript func(codemode.Details), servers *MCPManager, advertised bool) *agent.Tool {
+func newScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScript func(codemode.Details), servers *MCPManager, direct map[string]bool) *agent.Tool {
 	var extra func(context.Context) []*agent.Tool
 	var notFound func(string) string
 	if servers != nil {
@@ -69,11 +140,11 @@ func newScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onS
 		notFound = servers.missing
 	}
 	t := codemode.NewTool(tools, codemode.Options{
-		Extra:      extra,
-		Advertised: advertised,
-		NotFound:   notFound,
-		Engine:     scriptEngine,
-		Timeout:    opts.bashTimeout(),
+		Extra:    extra,
+		Direct:   direct,
+		NotFound: notFound,
+		Engine:   scriptEngine,
+		Timeout:  opts.bashTimeout(),
 		OnCall: func(call *agent.ToolCall, result agent.ToolResult, isError bool) {
 			if source, reason := sandboxDenialOf(result, isError); source != "" {
 				diag.LogSandboxDenied(codemode.ToolName+":"+call.Name, source, reason, toolTarget(call.Arguments))
