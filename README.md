@@ -445,7 +445,7 @@ it does not change the global trust store. `/trust yes --save` or
 
 | Command | Effect |
 | --- | --- |
-| `/trust` | Explain the current state and the options |
+| `/trust` | Show what is withheld and pick yes, no (both for this session) or parent |
 | `/trust yes` | Load them (this session, if you have not answered yet) |
 | `/trust yes --save` | Load them, remembered for this directory |
 | `/trust parent` | Remember trust for the parent, covering every package beneath it |

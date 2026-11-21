@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -233,5 +235,89 @@ func TestResumePickerReopensASession(t *testing.T) {
 	press(m, "earlier", "enter")
 	if m.s.Path() != oldPath {
 		t.Fatalf("resumed %q, want %q", m.s.Path(), oldPath)
+	}
+}
+
+func TestTrustPickerAnswersForThisSession(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(cwd, "AGENTS.md"), []byte("project rules"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := coding.Open(coding.Options{Cwd: cwd, Home: home, Settings: &coding.Settings{}, Provider: fake.New(), NoSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	m := newModel(s, "")
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	out := shown(m, func() tea.Cmd { return m.command("/trust") })
+	if m.picker == nil {
+		t.Fatalf("bare /trust opened no picker: %s", out)
+	}
+	if !strings.Contains(out, "AGENTS.md") {
+		t.Fatalf("the files the answer covers must be listed: %s", out)
+	}
+	press(m, "yes", "enter")
+	if st := m.s.TrustState(); !st.Trusted() || st.Source != "session" {
+		t.Fatalf("yes: %+v", st)
+	}
+	// Answering again starts on the answer in effect.
+	m.command("/trust")
+	if !strings.Contains(screen(m), "› ● yes") {
+		t.Fatalf("the picker must start on yes:\n%s", screen(m))
+	}
+	press(m, "down", "enter")
+	if m.s.TrustState().Trusted() {
+		t.Fatalf("no: %+v", m.s.TrustState())
+	}
+	if store, err := coding.LoadTrustStore(home); err != nil || len(store.Entries) != 0 {
+		t.Fatalf("the picker must not remember the answer: %+v %v", store, err)
+	}
+}
+
+// With nothing to load there is nothing to decide.
+func TestTrustPickerNeedsSomethingToLoad(t *testing.T) {
+	m := newTestModel(t)
+	m.command("/trust")
+	if m.picker != nil {
+		t.Fatal("bare /trust opened a picker for a directory with no project files")
+	}
+}
+
+// Choosing parent from an unanswered prompt is a yes for this directory that
+// is remembered for everything under its parent.
+func TestTrustPickerParentRemembersForSiblings(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	pkg := filepath.Join(repo, "api")
+	if err := os.Mkdir(pkg, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "AGENTS.md"), []byte("rules"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := coding.Open(coding.Options{Cwd: pkg, Home: home, Settings: &coding.Settings{}, Provider: fake.New(), NoSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	m := newModel(s, "")
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	if !m.s.TrustState().Pending {
+		t.Fatalf("want an unanswered prompt: %+v", m.s.TrustState())
+	}
+	m.command("/trust")
+	if !strings.Contains(screen(m), "remember yes for everything under") {
+		t.Fatalf("the parent option must say how far it reaches:\n%s", screen(m))
+	}
+	out := shown(m, func() tea.Cmd {
+		press(m, "parent", "enter")
+		return nil
+	})
+	if st := m.s.TrustState(); !st.Trusted() || st.Source != "inherited" {
+		t.Fatalf("parent: %+v\n%s", st, out)
+	}
+	if !coding.ResolveTrust(home, filepath.Join(repo, "web"), coding.TrustAsk, "").Trusted() {
+		t.Fatal("a sibling does not inherit the parent's yes")
 	}
 }

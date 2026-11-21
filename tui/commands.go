@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -177,13 +178,61 @@ func (m *model) trustCommand(arg string) tea.Cmd {
 		}
 		return m.printDim(trustOutcome(m.s.TrustState()) + " (remembered for the parent directory)")
 	case "":
-		if state.Trusted() {
-			return m.printDim(trustOutcome(state))
-		}
-		return m.printDim(state.TrustNotice() + "\n\n  /trust yes to load them for this session · /trust parent if this is a package in a repo · /trust yes --save to remember · /trust no to decline")
+		return m.trustPicker(state)
 	default:
 		return m.printErr(fmt.Errorf("usage: /trust [yes|no] [--save] | parent"))
 	}
+}
+
+// trustPicker shows what the decision covers and asks yes or no for this
+// session. Settings that fix the answer, or a directory with nothing to
+// load, leave nothing to choose, so those only say how things stand.
+func (m *model) trustPicker(state coding.TrustState) tea.Cmd {
+	if state.Resources.Empty() || state.Source == "always" || state.Source == "never" {
+		if state.Trusted() {
+			return m.printDim(trustOutcome(state))
+		}
+		return m.printDim(state.TrustNotice())
+	}
+	current := ""
+	if !state.Pending {
+		current = "no"
+		if state.Trusted() {
+			current = "yes"
+		}
+	}
+	items := []pickerItem{
+		{label: "yes", detail: "load them for this session", value: "yes"},
+		{label: "no", detail: "withhold them for this session", value: "no"},
+	}
+	// Trusting the parent outlives the session and reaches past this
+	// directory, so the option says how far.
+	if parent := filepath.Dir(state.Path); parent != state.Path {
+		items = append(items, pickerItem{label: "parent", detail: "remember yes for everything under " + shortenHome(parent), value: "parent"})
+	}
+	m.picker = newPicker("load project instructions?", current, items, m.trustChoice)
+	about := trustOutcome(state)
+	if !state.Trusted() {
+		// The notice ends by saying which command to type; the picker below
+		// is that answer.
+		about = state.TrustNotice()
+		if i := strings.LastIndex(about, "\n"); i >= 0 {
+			about = about[:i]
+		}
+	}
+	return m.printDim(about + "\n\n  /trust yes --save to remember yes for this directory alone")
+}
+
+// trustChoice applies a picker answer. Choosing parent is itself a yes, so
+// it is given for this directory before being shared with the parent, which
+// only ever shares a yes.
+func (m *model) trustChoice(answer string) tea.Cmd {
+	if answer == "parent" && !m.s.TrustState().Trusted() {
+		if err := m.s.Trust(coding.TrustTrusted, false); err != nil {
+			return m.printErr(err)
+		}
+	}
+	return m.trustCommand(answer)
 }
 
 func trustDecisionOf(arg string) coding.TrustDecision {
