@@ -151,6 +151,33 @@ func TestGrepGlobFilterAndCase(t *testing.T) {
 	}
 }
 
+// literal searches for the text as it is: what would be a regexp
+// metacharacter matches only itself, and it combines with ignore_case.
+func TestGrepLiteral(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "a.go", "x := a.b[0]\nx := axb[0]\nf(BAR)\n")
+	grep := NewGrepTool(dir, ToolOptions{})
+
+	_, err := run(t, grep, map[string]any{"pattern": "f(bar"})
+	if err == nil || !strings.Contains(err.Error(), "set literal") {
+		t.Fatalf("an invalid regexp must point to literal: %v", err)
+	}
+	r, err := run(t, grep, map[string]any{"pattern": "a.b[0]", "literal": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := r.Text(); !strings.Contains(out, "a.go:1:") || strings.Contains(out, "a.go:2:") {
+		t.Errorf("literal matched a pattern, not the text:\n%s", out)
+	}
+	r, err = run(t, grep, map[string]any{"pattern": "f(bar", "literal": true, "ignore_case": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := r.Text(); !strings.Contains(out, "a.go:3:") {
+		t.Errorf("literal with ignore_case:\n%s", out)
+	}
+}
+
 func TestGrepLimitStopsAndSaysSo(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "a.go", strings.Repeat("needle\n", 50))

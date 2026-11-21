@@ -67,7 +67,8 @@ func NewGrepTool(cwd string, opts ToolOptions) *agent.Tool {
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"pattern":     map[string]any{"type": "string", "description": "Regular expression to search for"},
+				"pattern":     map[string]any{"type": "string", "description": "Regular expression to search for, or with literal the exact text"},
+				"literal":     map[string]any{"type": "boolean", "description": "Match pattern as plain text, so ( . [ * and the like need no escaping"},
 				"path":        map[string]any{"type": "string", "description": "File or directory to search (default: working directory)"},
 				"glob":        map[string]any{"type": "string", "description": "Only search files matching this pattern, e.g. \"*.go\" or \"src/**/*.ts\""},
 				"ignore_case": map[string]any{"type": "boolean", "description": "Case-insensitive match"},
@@ -103,6 +104,10 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any, structured b
 	}
 	if err := checkPattern(filter); err != nil {
 		return agent.ToolResult{}, fmt.Errorf("glob: %w", err)
+	}
+	literal, _, err := optBool(args, "literal")
+	if err != nil {
+		return agent.ToolResult{}, err
 	}
 	ignoreCase, _, err := optBool(args, "ignore_case")
 	if err != nil {
@@ -140,12 +145,15 @@ func executeGrep(cwd string, opts ToolOptions, args map[string]any, structured b
 	}
 
 	expr := pattern
+	if literal {
+		expr = regexp.QuoteMeta(pattern)
+	}
 	if ignoreCase {
-		expr = "(?i)" + pattern
+		expr = "(?i)" + expr
 	}
 	re, err := regexp.Compile(expr)
 	if err != nil {
-		return agent.ToolResult{}, fmt.Errorf("invalid pattern %q: %w", pattern, err)
+		return agent.ToolResult{}, fmt.Errorf("invalid pattern %q: %w. To search for the text as it is, set literal", pattern, err)
 	}
 
 	pol := opts.policy()
