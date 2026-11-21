@@ -21,8 +21,9 @@ const (
 // NewGlobTool returns the glob tool rooted at cwd.
 func NewGlobTool(cwd string, opts ToolOptions) *agent.Tool {
 	return &agent.Tool{
-		Name:  "glob",
-		Label: "Glob",
+		Name:         "glob",
+		OutputSchema: globOutputSchema,
+		Label:        "Glob",
 		Description: fmt.Sprintf("Find files by name pattern and return their paths, one per line, relative "+
 			"to the working directory. Supports \"**\" to match any number of directories, e.g. "+
 			"\"**/*_test.go\" or \"src/**/*.ts\". A pattern with no slash matches file names at any depth. "+
@@ -49,7 +50,7 @@ func NewGlobTool(cwd string, opts ToolOptions) *agent.Tool {
 }
 
 // executeGlob finds files. structured adds the paths to the details as
-// data, for scripts: see scriptResults.
+// data, for scripts, as its output schema describes.
 func executeGlob(cwd string, opts ToolOptions, args map[string]any, structured bool) (agent.ToolResult, error) {
 	pattern, err := strArg(args, "pattern")
 	if err != nil {

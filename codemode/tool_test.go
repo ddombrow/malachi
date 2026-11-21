@@ -238,3 +238,30 @@ func TestScriptToolExtraTools(t *testing.T) {
 		t.Fatalf("after: %q", res.Text())
 	}
 }
+
+// A tool's output schema is what a script reads its details by: the
+// description lists the fields, and describeTool returns the schema.
+func TestScriptsSeeOutputSchemas(t *testing.T) {
+	read := fakeTool("read", true, func(map[string]any) (agent.ToolResult, error) { return agent.TextResult("x"), nil })
+	read.OutputSchema = map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path":       map[string]any{"type": "string"},
+			"truncation": map[string]any{"type": "object", "properties": map[string]any{"truncated": map[string]any{"type": "boolean"}}, "required": []string{"truncated"}},
+			"results":    map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"line": map[string]any{"type": "integer"}}}},
+		},
+		"required": []string{"path"},
+	}
+	plain := fakeTool("plain", true, func(map[string]any) (agent.ToolResult, error) { return agent.TextResult("x"), nil })
+	tool := scriptTool([]*agent.Tool{read, plain}, Options{})
+	if want := "read: {path, results?: [{line?}], truncation?: {truncated}}"; !strings.Contains(tool.Description, want) {
+		t.Errorf("description lacks %q:\n%s", want, tool.Description)
+	}
+	if strings.Contains(tool.Description, "plain: ") {
+		t.Errorf("a tool without a schema is listed:\n%s", tool.Description)
+	}
+	res, isError := runScript(t, tool, `return [describeTool("read").details.required[0], describeTool("plain").details === undefined]`)
+	if isError || res.Text() != "[\n  \"path\",\n  true\n]" {
+		t.Fatalf("describeTool: %s", res.Text())
+	}
+}

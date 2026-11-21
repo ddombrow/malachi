@@ -435,8 +435,9 @@ func (j *job) read(ctx context.Context, wait time.Duration) (text string, droppe
 // starts.
 func NewJobsTool(jobs *jobManager) *agent.Tool {
 	return &agent.Tool{
-		Name:  "jobs",
-		Label: "Jobs",
+		Name:         "jobs",
+		OutputSchema: jobsOutputSchema(),
+		Label:        "Jobs",
 		Description: "List, read and stop background jobs, which bash starts with background=true. " +
 			"action=list shows every job and its state. action=output returns what a job has printed since it was last read, " +
 			fmt.Sprintf("waiting up to wait seconds (at most %d) for something new while it runs. ", int(maxJobWait.Seconds())) +

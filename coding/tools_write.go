@@ -22,8 +22,9 @@ func lockFile(path string) func() {
 // NewWriteTool returns the write tool rooted at cwd.
 func NewWriteTool(cwd string, opts ToolOptions) *agent.Tool {
 	return &agent.Tool{
-		Name:  "write",
-		Label: "Write",
+		Name:         "write",
+		OutputSchema: writeOutputSchema,
+		Label:        "Write",
 		Description: "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. " +
 			"Automatically creates parent directories.",
 		PromptSnippet:    "Create or overwrite files",

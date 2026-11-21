@@ -301,8 +301,17 @@ const [mod, hits] = await Promise.all([
   tools.read({ path: "go.mod" }),
   tools.grep({ pattern: "TODO", output: "files" }),
 ]);
-return hits.text.split("\n").filter(f => f.endsWith(".go")).join("\n");
+return hits.details.results.map(r => r.path).filter(p => p.endsWith(".go"));
 ```
+
+Each call returns `{text, details, isError}`: `text` is what the model would
+see, and `details` is the same result as data. Every built-in tool declares
+a schema for its details, so a script reads fields instead of parsing text:
+grep's matches with their paths and lines, bash's exit code and full output
+file, the patch an edit made. The script tool's description lists each
+tool's fields, and `describeTool(name).details` gives the whole schema. An
+MCP tool's details carry the server's `structuredContent`, described by the
+server's own output schema when it declares one.
 
 A script can do nothing the model could not do one call at a time. It runs
 in QuickJS-ng compiled to WebAssembly, with no filesystem, network,

@@ -96,17 +96,22 @@ func NewTool(tools []*agent.Tool, opts Options) *agent.Tool {
 		names = append(names, t.Name)
 	}
 	r := &runner{tools: tools, opts: opts}
+	description := "Run a short JavaScript program that calls tools, and get back only what it prints and returns. " +
+		"The code is the body of an async function. Every tool is a function: `await tools.read({path: \"go.mod\"})` " +
+		"returns {text, details, isError}: text is what you would see, details the same result as data. " +
+		"A failed call is a result with isError set, not an exception. " +
+		"Calls made together run together: `await Promise.all([tools.read(...), tools.grep(...)])`. " +
+		"print() and console.log() write output; `return` a value to end with it (non-strings as JSON). " +
+		"ALL_TOOLS lists the tools, describeTool(name) gives one's parameters and details schema, searchTools(query) finds tools by keyword. " +
+		"There is no require, filesystem, network, process or timers: everything goes through tools. " +
+		"Available tools: " + strings.Join(names, ", ") + "."
+	if s := detailsSummary(tools); s != "" {
+		description += "\n\n" + s
+	}
 	return &agent.Tool{
-		Name:  ToolName,
-		Label: "Script",
-		Description: "Run a short JavaScript program that calls tools, and get back only what it prints and returns. " +
-			"The code is the body of an async function. Every tool is a function: `await tools.read({path: \"go.mod\"})` " +
-			"returns {text, details, isError}; a failed call is a result with isError set, not an exception. " +
-			"Calls made together run together: `await Promise.all([tools.read(...), tools.grep(...)])`. " +
-			"print() and console.log() write output; `return` a value to end with it (non-strings as JSON). " +
-			"ALL_TOOLS lists the tools, describeTool(name) gives one's parameters, searchTools(query) finds tools by keyword. " +
-			"There is no require, filesystem, network, process or timers: everything goes through tools. " +
-			"Available tools: " + strings.Join(names, ", ") + ".",
+		Name:          ToolName,
+		Label:         "Script",
+		Description:   description,
 		PromptSnippet: "Run JavaScript that calls the other tools and returns only what matters",
 		PromptGuidelines: []string{
 			"When you would read, grep or glob more than two things, as when exploring a codebase, do it in one script: run the calls together with Promise.all and return only the lines you need, not whole files or every match.",
@@ -150,7 +155,7 @@ func (r *runner) toolset(ctx context.Context) *toolset {
 		}
 		ts.byName[t.Name] = t
 		ts.names = append(ts.names, t.Name)
-		ts.catalog = append(ts.catalog, ToolInfo{Name: t.Name, Description: t.Description, Parameters: t.Parameters})
+		ts.catalog = append(ts.catalog, ToolInfo{Name: t.Name, Description: t.Description, Parameters: t.Parameters, Details: t.OutputSchema})
 	}
 	return ts
 }

@@ -23,8 +23,9 @@ type edit struct {
 // NewEditTool returns the edit tool rooted at cwd.
 func NewEditTool(cwd string, opts ToolOptions) *agent.Tool {
 	return &agent.Tool{
-		Name:  "edit",
-		Label: "Edit",
+		Name:         "edit",
+		OutputSchema: editOutputSchema,
+		Label:        "Edit",
 		Description: "Edit a single file using exact text replacement. Every edits[].oldText must match " +
 			"a unique, non-overlapping region of the original file. If two changes affect the " +
 			"same block or nearby lines, merge them into one edit instead of emitting overlapping " +

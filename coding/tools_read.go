@@ -22,8 +22,9 @@ var imageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/g
 // NewReadTool returns the read tool rooted at cwd.
 func NewReadTool(cwd string, opts ToolOptions) *agent.Tool {
 	return &agent.Tool{
-		Name:  "read",
-		Label: "Read",
+		Name:         "read",
+		OutputSchema: readOutputSchema,
+		Label:        "Read",
 		Description: fmt.Sprintf("Read the contents of a file. Supports text files, PDFs, and images (jpg, png, gif, webp). "+
 			"Images are sent to vision-capable models as attachments. For text and PDF content, output is truncated to "+
 			"%d lines or %dKB (whichever is hit first). Use offset/limit for large files. When you need the "+

@@ -128,6 +128,9 @@ func (m *MCPManager) agentTool(server, name string, t mcp.Tool) *agent.Tool {
 		Label:       "MCP (untrusted): " + server + ": " + label,
 		Description: mcpToolDescription(t.Description),
 		Parameters:  params,
+		// Scripts get the server's structured result in details, as the
+		// server's own output schema describes it.
+		OutputSchema: mcpOutputSchema(t.OutputSchema),
 		// A server's read-only hint is a claim, but a false one costs only
 		// ordering: Parallel decides what runs together, not what may run.
 		Parallel: t.ReadOnly(),

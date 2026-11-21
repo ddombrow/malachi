@@ -40,7 +40,11 @@ type Tool struct {
 	Description string
 	// Parameters is the JSON Schema for the arguments object.
 	Parameters map[string]any
-	Execute    ToolExecutor
+	// OutputSchema, if set, is the JSON Schema for the result's Details as
+	// JSON: what a program calling the tool, such as a script, can rely on
+	// finding there. A field the schema does not require may be missing.
+	OutputSchema map[string]any
+	Execute      ToolExecutor
 	// PromptSnippet and PromptGuidelines are optional text that a coding
 	// application may fold into its system prompt.
 	PromptSnippet    string

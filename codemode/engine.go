@@ -52,6 +52,9 @@ type ToolInfo struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
+	// Details is the JSON Schema of the tool's result details, when the
+	// tool declares one.
+	Details map[string]any `json:"details,omitempty"`
 }
 
 // Script is one program to run.

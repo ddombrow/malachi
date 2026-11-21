@@ -58,8 +58,9 @@ func NewFetchTool(opts ToolOptions) *agent.Tool {
 func newFetchTool(opts ToolOptions, allowAddr func(netip.Addr) bool) *agent.Tool {
 	f := &fetcher{opts: opts, allowAddr: allowAddr}
 	return &agent.Tool{
-		Name:  "fetch",
-		Label: "Fetch",
+		Name:         "fetch",
+		OutputSchema: fetchOutputSchema,
+		Label:        "Fetch",
 		Description: fmt.Sprintf("Fetch a URL over HTTP(S) with GET and return its body as text: HTML reduced to "+
 			"readable text with links kept, JSON and other text as is. Binary content is not returned. "+
 			"Works only when the user has the network on. Does not reach localhost or private addresses. "+

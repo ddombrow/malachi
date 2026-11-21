@@ -254,6 +254,7 @@ func NewBashTool(cwd string, opts ToolOptions) *agent.Tool {
 	}
 	return &agent.Tool{
 		Name:          "bash",
+		OutputSchema:  bashOutputSchema(),
 		Label:         "Bash",
 		Description:   description,
 		PromptSnippet: "Execute bash commands (ls, grep, find, etc.)",

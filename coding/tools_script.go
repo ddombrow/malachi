@@ -67,7 +67,6 @@ func newScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onS
 			}
 		},
 	})
-	t.Description += " " + scriptResults
 	inner := t.Execute
 	t.Execute = func(ctx context.Context, callID string, args map[string]any, onUpdate func(agent.ToolResult)) (agent.ToolResult, error) {
 		res, err := inner(ctx, callID, args, onUpdate)
@@ -82,13 +81,6 @@ func newScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onS
 	}
 	return t
 }
-
-// scriptResults tells the model what data search tools give scripts, so a
-// script filters values instead of parsing the text the model would see.
-const scriptResults = "In scripts, search tools also return data in details, with paths relative to the working " +
-	"directory so they can be passed straight to read or edit: grep's details.results is a list of " +
-	"{path, line, text} per match (output \"lines\"), {path} per file (\"files\") or {path, count} (\"count\"); " +
-	"glob's details.paths is a list of paths. Prefer these to parsing text."
 
 // scriptPath is a search result's path as a script should get it: relative
 // to the working directory when it is inside it, so the script can hand it

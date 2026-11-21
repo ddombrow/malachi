@@ -48,8 +48,9 @@ const binarySniffBytes = 8000
 // NewGrepTool returns the grep tool rooted at cwd.
 func NewGrepTool(cwd string, opts ToolOptions) *agent.Tool {
 	return &agent.Tool{
-		Name:  "grep",
-		Label: "Grep",
+		Name:         "grep",
+		OutputSchema: grepOutputSchema,
+		Label:        "Grep",
 		Description: fmt.Sprintf("Search file contents with a regular expression and return matching lines "+
 			"as path:line: text. Searches the working directory by default; pass path to target a file or "+
 			"subdirectory, and glob to restrict by filename (e.g. \"*_test.go\"). Set context to also show "+
@@ -87,7 +88,7 @@ func NewGrepTool(cwd string, opts ToolOptions) *agent.Tool {
 }
 
 // executeGrep runs a search. structured adds the results to the details as
-// data, for scripts: see scriptResults.
+// data, for scripts, as its output schema describes.
 func executeGrep(cwd string, opts ToolOptions, args map[string]any, structured bool) (agent.ToolResult, error) {
 	pattern, err := strArg(args, "pattern")
 	if err != nil {
