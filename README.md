@@ -307,8 +307,11 @@ return hits.details.results.map(r => r.path).filter(p => p.endsWith(".go"));
 Each call returns `{text, details, isError}`: `text` is what the model would
 see, and `details` is the same result as data. Every built-in tool declares
 a schema for its details, so a script reads fields instead of parsing text:
-grep's matches with their paths and lines, bash's exit code and full output
-file, the patch an edit made. The script tool's description lists each
+grep's matches with their paths and lines, bash's exit code, the patch an
+edit made. A script also gets far more of a command's output than the model
+is shown: bash's `details.output` holds it whole up to 1 MiB, and the start
+and end of anything longer, so a script can run the tests and return only
+the failures. The script tool's description lists each
 tool's fields, and `describeTool(name).details` gives the whole schema. An
 MCP tool's details carry the server's `structuredContent`, described by the
 server's own output schema when it declares one.

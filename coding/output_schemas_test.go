@@ -116,7 +116,10 @@ func TestOutputSchemasMatchDetails(t *testing.T) {
 		const out = [];
 		const call = async (label, tool, args) => {
 			const r = await tools[tool](args);
-			out.push({label, tool, details: r.details, isError: r.isError});
+			// A command's whole output would push this script's own past the
+			// display limit; a few bytes keep its type for the check.
+			const details = r.details && typeof r.details.output === "string" ? {...r.details, output: r.details.output.slice(0, 8)} : r.details;
+			out.push({label, tool, details, isError: r.isError});
 			return r;
 		};
 		await call("read text", "read", {path: "a.txt"});

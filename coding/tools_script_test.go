@@ -2,6 +2,7 @@ package coding
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,5 +187,59 @@ func TestScriptSearchResultsAreData(t *testing.T) {
 		if _, ok := r.Details.(map[string]any)["results"]; ok {
 			t.Error("a direct grep carried script results")
 		}
+	}
+}
+
+// A script gets far more of a command's output than the model is shown, so
+// it can filter a test run's log itself: whole up to 1 MiB, then the start
+// and end around a marker. A direct call carries none of it.
+func TestScriptsGetACommandsWholeOutput(t *testing.T) {
+	opts := ToolOptions{SpillDir: t.TempDir()}
+	bash := NewBashTool(t.TempDir(), opts)
+	tool := NewScriptTool([]*agent.Tool{bash}, opts, nil, nil)
+	res, isError := runScriptTool(t, tool, `
+		const show = (r) => {
+			const o = r.details.output;
+			return {cut: r.details.output_truncated, len: o.length, first: o.slice(0, 2), last: o.trimEnd().split("\n").pop(),
+				textLen: r.text.length, marker: o.includes("of output omitted")};
+		};
+		return [
+			show(await tools.bash({command: "echo hi"})),
+			show(await tools.bash({command: "seq 1 20000"})),
+			show(await tools.bash({command: "seq 1 300000"})),
+		];`)
+	if isError {
+		t.Fatalf("script failed: %s", res.Text())
+	}
+	var got []struct {
+		Cut     bool
+		Len     int
+		First   string
+		Last    string
+		TextLen int
+		Marker  bool
+	}
+	if err := json.Unmarshal([]byte(res.Text()), &got); err != nil {
+		t.Fatalf("%v: %s", err, res.Text())
+	}
+	small, whole, long := got[0], got[1], got[2]
+	if small.Cut || small.Last != "hi" {
+		t.Errorf("small output: %+v", small)
+	}
+	// 108 kB: cut for the model, whole for the script.
+	if whole.Cut || whole.Marker || whole.Last != "20000" || whole.First != "1\n" || whole.Len <= whole.TextLen {
+		t.Errorf("output under 1 MiB must reach the script whole: %+v", whole)
+	}
+	// 2 MB: the start and the end, the middle left out and said so.
+	if !long.Cut || !long.Marker || long.First != "1\n" || long.Last != "300000" || long.Len > MaxScriptOutputBytes+200 || long.Len < MaxScriptOutputBytes-200 {
+		t.Errorf("output over 1 MiB must keep its start and end: %+v", long)
+	}
+
+	r, err := run(t, bash, map[string]any{"command": "echo hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.Details.(map[string]any)["output"]; ok {
+		t.Error("a direct call carried the script's copy of the output")
 	}
 }

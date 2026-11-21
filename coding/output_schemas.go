@@ -99,11 +99,13 @@ func bashOutputSchema() map[string]any {
 		"output_bytes":     typed("integer", "Bytes of output"),
 		"dropped_bytes":    typed("integer", "Bytes of output not kept in memory (still in full_output_path)"),
 		"sandbox_denial":   typed("string", "If the command failed and the sandbox looks like the cause: what it refused, else empty"),
+		"output":           typed("string", "The command's stdout and stderr: far more than text shows, up to 1 MiB. Longer output keeps its first and last 512 KiB around a line saying how much was left out"),
+		"output_truncated": typed("boolean", "Whether output left part of the middle out"),
 	} {
 		props[name] = s
 	}
 	s := object(props, "command")
-	s["description"] = "A command that ran to the end has exit_code, timed_out, cancelled, duration_seconds, truncation, full_output_path, output_bytes, dropped_bytes and sandbox_denial. One started with background=true has the job fields instead: job, status, running, log, output_bytes and dropped_bytes."
+	s["description"] = "A command that ran to the end has output, output_truncated, exit_code, timed_out, cancelled, duration_seconds, truncation, full_output_path, output_bytes, dropped_bytes and sandbox_denial; filter output rather than text, which is cut to what the model would see. One started with background=true has the job fields instead: job, status, running, log, output_bytes and dropped_bytes."
 	return s
 }
 

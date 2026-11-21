@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -14,8 +15,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ddombrow/malachi/agent"
+	"github.com/ddombrow/malachi/codemode"
 	"github.com/ddombrow/malachi/sandbox"
 )
 
@@ -33,6 +36,10 @@ const (
 	// display: twice the display limit, so the shown tail never starts at a
 	// line the ring cut in half.
 	tailBytesKept = 2 * MaxOutputBytes
+	// MaxScriptOutputBytes is how much of a command's output a script gets
+	// in details.output: far more than the model is shown, since a script is
+	// there to filter it. Longer output keeps its start and end, half each.
+	MaxScriptOutputBytes = 1 << 20
 )
 
 // ToolOptions configure the coding tools. The zero value means defaults.
@@ -433,21 +440,89 @@ wait:
 		}
 	}
 
-	return agent.ToolResult{
-		Content: []agent.Content{&agent.TextContent{Text: text}},
-		Details: map[string]any{
-			"command":          command,
-			"exit_code":        exitCode,
-			"timed_out":        timedOut,
-			"cancelled":        cancelled,
-			"duration_seconds": time.Since(start).Round(time.Millisecond).Seconds(),
-			"truncation":       t,
-			"full_output_path": fullPath,
-			"output_bytes":     totalBytes,
-			"dropped_bytes":    dropped,
-			"sandbox_denial":   denial,
-		},
-	}, nil
+	details := map[string]any{
+		"command":          command,
+		"exit_code":        exitCode,
+		"timed_out":        timedOut,
+		"cancelled":        cancelled,
+		"duration_seconds": time.Since(start).Round(time.Millisecond).Seconds(),
+		"truncation":       t,
+		"full_output_path": fullPath,
+		"output_bytes":     totalBytes,
+		"dropped_bytes":    dropped,
+		"sandbox_denial":   denial,
+	}
+	if codemode.InScript(ctx) {
+		details["output"], details["output_truncated"] = scriptOutput(out)
+	}
+	return agent.ToolResult{Content: []agent.Content{&agent.TextContent{Text: text}}, Details: details}, nil
+}
+
+// scriptOutput is a finished command's output as a script gets it: whole up
+// to MaxScriptOutputBytes, else its first and last halves around a marker.
+// cut reports whether anything was left out. The start comes from the spill
+// file and the end from the spill file or, past what the file holds, the
+// tail kept in memory.
+func scriptOutput(o *outputSink) (output string, cut bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.spill == nil && o.spillErr == nil {
+		return string(o.pending), false
+	}
+	half := MaxScriptOutputBytes / 2
+	var head, tail []byte
+	if o.spillPath != "" {
+		if f, err := os.Open(o.spillPath); err == nil {
+			defer f.Close()
+			if o.dropped == 0 && o.spilled <= MaxScriptOutputBytes {
+				if all, err := io.ReadAll(f); err == nil && int64(len(all)) == o.total {
+					return string(all), false
+				}
+			}
+			head = make([]byte, half)
+			n, _ := f.ReadAt(head, 0)
+			head = head[:n]
+			if o.dropped == 0 {
+				tail = make([]byte, half)
+				n, _ := f.ReadAt(tail, max(0, o.spilled-int64(half)))
+				tail = tail[:n]
+			}
+		}
+	}
+	if tail == nil {
+		tail = o.tail
+	}
+	head, tail = runeCut(head, false), runeCut(tail, true)
+	omitted := o.total - int64(len(head)) - int64(len(tail))
+	if omitted <= 0 {
+		return string(head) + string(tail[min(len(tail), int(-omitted)):]), false
+	}
+	where := "the start of it is in full_output_path"
+	if o.dropped == 0 && o.spillPath != "" {
+		where = "the whole of it is in full_output_path"
+	}
+	return fmt.Sprintf("%s\n[… %s of output omitted; %s …]\n%s", head, FormatSize(int(omitted)), where, tail), true
+}
+
+// runeCut trims a partial UTF-8 character from the end of b, or from its
+// start when b is a tail.
+func runeCut(b []byte, isTail bool) []byte {
+	if isTail {
+		i := 0
+		for i < len(b) && i < utf8.UTFMax && !utf8.RuneStart(b[i]) {
+			i++
+		}
+		return b[i:]
+	}
+	for i := len(b) - 1; i >= 0 && i >= len(b)-utf8.UTFMax; i-- {
+		if utf8.RuneStart(b[i]) {
+			if !utf8.FullRune(b[i:]) {
+				return b[:i]
+			}
+			break
+		}
+	}
+	return b
 }
 
 // denialSigns are what a command prints when the sandbox refused it: EPERM
