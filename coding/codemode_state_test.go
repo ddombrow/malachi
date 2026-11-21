@@ -2,8 +2,10 @@ package coding
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/ai/fake"
 	"github.com/ddombrow/malachi/codemode"
 )
@@ -33,7 +35,7 @@ func TestSessionCountsScripts(t *testing.T) {
 	if err := s.Prompt(context.Background(), "go"); err != nil {
 		t.Fatal(err)
 	}
-	want := CodeModeState{Enabled: true, Scripts: 2, Failed: 1, Calls: 2, CallErrors: 1}
+	want := CodeModeState{Enabled: true, Mode: CodeModeOn, Scripts: 2, Failed: 1, Calls: 2, CallErrors: 1}
 	if got := s.CodeMode(); got != want {
 		t.Errorf("got %+v, want %+v", got, want)
 	}
@@ -57,4 +59,73 @@ func TestCodeModeOffLeavesTheToolOut(t *testing.T) {
 			t.Error("script tool offered with codeMode: false")
 		}
 	}
+}
+
+// The code mode can change while a session runs, and each mode's tools and
+// advice are what the next request carries; a run in progress refuses it.
+func TestCodeModeCyclesWhileTheSessionRuns(t *testing.T) {
+	release := make(chan struct{})
+	p := fake.New(fake.Text("one"), fake.Text("two"), fake.Text("three"), fake.Text("four"), fake.Text("five"))
+	off := false
+	s, err := Open(Options{Cwd: t.TempDir(), Home: t.TempDir(), Settings: &Settings{CodeMode: &off}, Provider: p, NoSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	var events []string
+	s.Subscribe(func(e any) {
+		if c, ok := e.(CodeModeChangedEvent); ok {
+			events = append(events, c.State.Mode)
+		}
+	})
+	names := func(req agent.Request) string {
+		var n []string
+		for _, tl := range req.Tools {
+			n = append(n, tl.Name)
+		}
+		return strings.Join(n, " ")
+	}
+	if got := s.CodeMode().Mode; got != CodeModeOff {
+		t.Fatalf("starts in %q", got)
+	}
+	for _, want := range []struct{ mode, tools, advice string }{
+		{CodeModeOn, "read grep glob bash fetch edit write jobs script", "Use script when you would otherwise"},
+		{CodeModeExplore, "bash fetch edit write jobs view script", "Do not read or search files with bash"},
+		{CodeModeOff, "read grep glob bash fetch edit write jobs", "call read once per file in the same response"},
+	} {
+		mode, err := s.CycleCodeMode()
+		if err != nil || mode != want.mode {
+			t.Fatalf("cycled to %q, %v; want %q", mode, err, want.mode)
+		}
+		if err := s.Prompt(context.Background(), "go"); err != nil {
+			t.Fatal(err)
+		}
+		req := p.Requests[len(p.Requests)-1]
+		if got := names(req); got != want.tools {
+			t.Errorf("%s: tools %q, want %q", mode, got, want.tools)
+		}
+		if !strings.Contains(req.System, want.advice) {
+			t.Errorf("%s: the prompt lacks %q", mode, want.advice)
+		}
+	}
+	s.Flush()
+	if strings.Join(events, " ") != "on explore off" {
+		t.Errorf("events %v", events)
+	}
+	if err := s.SetCodeMode("sideways"); err == nil {
+		t.Error("an unknown mode was accepted")
+	}
+
+	// A run in progress keeps its tools.
+	s2 := openRunSession(t, fake.New(blockingReply(release, "done")))
+	if err := s2.Submit(context.Background(), "go", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s2.CycleCodeMode(); err == nil {
+		t.Error("the code mode changed during a run")
+	}
+	if s2.CodeMode().Mode != CodeModeOn {
+		t.Errorf("mode during the run: %q", s2.CodeMode().Mode)
+	}
+	close(release)
 }

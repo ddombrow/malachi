@@ -84,6 +84,17 @@ type ACPSettings struct {
 	EditorMCPServers bool `json:"editorMcpServers,omitempty"`
 }
 
+// CodeModeSetting is the code mode settings give a new session.
+func (s *Settings) CodeModeSetting() string {
+	switch {
+	case !s.CodeModeEnabled():
+		return CodeModeOff
+	case s.ExploreInScripts:
+		return CodeModeExplore
+	}
+	return CodeModeOn
+}
+
 // CodeModeEnabled reports whether the script tool is offered.
 func (s *Settings) CodeModeEnabled() bool { return s.CodeMode == nil || *s.CodeMode }
 

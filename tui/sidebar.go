@@ -29,8 +29,9 @@ const (
 )
 
 const (
-	keySidebar = "ctrl+s"
-	keyNetwork = "ctrl+o"
+	keySidebar  = "ctrl+s"
+	keyNetwork  = "ctrl+o"
+	keyCodeMode = "ctrl+x"
 )
 
 // sidebarState is what the sections draw, computed when its source changes
@@ -82,6 +83,22 @@ func (m *model) toggleNetwork() tea.Cmd {
 		return m.networkCommand("off")
 	}
 	return m.networkCommand("on")
+}
+
+// cycleCodeMode moves to the next code mode, off → on → explore, and says
+// what the model is now offered.
+func (m *model) cycleCodeMode() tea.Cmd {
+	mode, err := m.s.CycleCodeMode()
+	if err != nil {
+		return m.printErr(err)
+	}
+	return m.printDim("code mode " + mode + ": " + codeModeMeaning[mode] + " (from the next request)")
+}
+
+var codeModeMeaning = map[string]string{
+	coding.CodeModeOff:     "no script tool",
+	coding.CodeModeOn:      "the script tool beside the other tools",
+	coding.CodeModeExplore: "read, grep and glob only through scripts",
 }
 
 // sidebarSections are the sidebar's sections, top to bottom.
@@ -183,12 +200,17 @@ func (m *model) codeModeSection() []sideRow {
 	cm, s := m.s.CodeMode(), m.r.st
 	var rows []sideRow
 	add := func(text string) { rows = append(rows, sideRow{text: text}) }
+	value := s.toolOK.Render(cm.Mode)
 	if !cm.Enabled {
-		add(sidePair(s.accent.Render("code mode"), s.dim.Render("off")))
-		add(s.dim.Render("  codeMode: false"))
+		value = s.dim.Render(cm.Mode)
+	}
+	rows = append(rows, sideRow{text: sidePair(s.accent.Render("code mode"), s.dim.Render("^x ")+value), click: m.cycleCodeMode})
+	if !cm.Enabled {
 		return rows
 	}
-	add(sidePair(s.accent.Render("code mode"), s.toolOK.Render("on")))
+	if cm.Mode == coding.CodeModeExplore {
+		add(s.dim.Render("  read, grep, glob in scripts"))
+	}
 	if cm.Scripts == 0 {
 		add(s.dim.Render("  no scripts yet"))
 		return rows

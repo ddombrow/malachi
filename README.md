@@ -136,7 +136,7 @@ which follows Pi's, so clients written for those should work here.
 | --- | --- |
 | `prompt` (`message`, `streamingBehavior?`), `steer`, `follow_up` | — |
 | `abort` | — |
-| `get_state` | model, thinking level, `isStreaming`, `isCompacting`, session file and id, queue size, `projectTrust`, `sandbox`, `codeMode` (whether the script tool is offered; scripts, calls and failures this session), `mcp` (each configured server: status, error, tools, roots, whether deferred, `stale` and `staleReason`), `jobs` (each background job: id, command, status, exit code, start time, log file) |
+| `get_state` | model, thinking level, `isStreaming`, `isCompacting`, session file and id, queue size, `projectTrust`, `sandbox`, `codeMode` (whether the script tool is offered, and its `mode`: `off`, `on` or `explore`; scripts, calls and failures this session), `mcp` (each configured server: status, error, tools, roots, whether deferred, `stale` and `staleReason`), `jobs` (each background job: id, command, status, exit code, start time, log file) |
 | `get_messages`, `get_last_assistant_text` | the transcript; the last reply's text |
 | `get_available_models`, `set_model` (`provider?`, `modelId`) | model descriptions |
 | `get_available_thinking_levels`, `set_thinking_level` (`level`) | `levels` |
@@ -161,7 +161,8 @@ session reports `compaction_start`/`_progress`/`_end`, `queue_update`,
 `thinking_level_changed`, `mcp_changed` (a server started, failed, restarted,
 changed its tools or went stale; carries `mcp` as `get_state` does),
 `jobs_changed` (a background job started or ended; carries `jobs` as
-`get_state` does) and `agent_settled` (all work for a prompt is done).
+`get_state` does), `code_mode_changed` (carries `codeMode` as `get_state`
+does) and `agent_settled` (all work for a prompt is done).
 
 Differences from tau, checked by `rpc/golden_test.go`: `compact` and
 `get_available_models` are answered from a goroutine, so their responses can

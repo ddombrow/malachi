@@ -533,6 +533,8 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			return nil
 		case keyNetwork:
 			return m.toggleNetwork()
+		case keyCodeMode:
+			return m.cycleCodeMode()
 		case "pgup":
 			m.vp.PageUp()
 			return nil

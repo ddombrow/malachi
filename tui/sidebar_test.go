@@ -173,3 +173,33 @@ func TestSidebarShowsVersionOnTop(t *testing.T) {
 		t.Fatalf("no divider under the top row: %q", divider)
 	}
 }
+
+// ctrl+x, or a click on the code mode row, cycles the code mode: the
+// session changes it, the sidebar shows it, and the transcript says what
+// the model is now offered.
+func TestCodeModeKeyCycles(t *testing.T) {
+	m := newTestModel(t)
+	if got := m.s.CodeMode().Mode; got != coding.CodeModeOn {
+		t.Fatalf("starts in %q", got)
+	}
+	for _, want := range []string{coding.CodeModeExplore, coding.CodeModeOff, coding.CodeModeOn} {
+		out := shown(m, func() tea.Cmd {
+			m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
+			return nil
+		})
+		if got := m.s.CodeMode().Mode; got != want {
+			t.Fatalf("ctrl+x went to %q, want %q", got, want)
+		}
+		if !strings.Contains(sidebarText(m), "^x "+want) || !strings.Contains(out, "code mode "+want+":") {
+			t.Fatalf("%s: sidebar or transcript does not say so:\n%s\n%s", want, sidebarText(m), out)
+		}
+	}
+	row := slices.IndexFunc(m.sidebarLines(m.vp.Height()), func(l string) bool { return strings.Contains(ansi.Strip(l), "code mode") })
+	if row < 0 {
+		t.Fatal("no code mode row")
+	}
+	m.Update(tea.MouseClickMsg{X: m.contentWidth() + 3, Y: row, Button: tea.MouseLeft})
+	if got := m.s.CodeMode().Mode; got != coding.CodeModeExplore {
+		t.Errorf("a click went to %q", got)
+	}
+}

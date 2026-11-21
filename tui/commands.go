@@ -39,6 +39,7 @@ const helpText = `Commands:
   /quit               exit
 
 Keys: enter send · alt+enter newline · esc cancel run · ctrl+c clear/quit
+ctrl+x cycle code mode: off → on → explore (read, grep and glob only in scripts)
 Scroll: mouse wheel · pgup/pgdown · shift+↑/↓ · ctrl+home/ctrl+end
 Copy: drag over the transcript to select; releasing copies it.
 Hold shift while dragging to use the terminal's own selection instead.

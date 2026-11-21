@@ -208,15 +208,16 @@ func mcpOf(st coding.MCPState) mcpWire {
 // is offered, and what scripts have done in this session. A running
 // script's calls arrive as tool_execution_update details.
 type codeModeWire struct {
-	Enabled    bool `json:"enabled"`
-	Scripts    int  `json:"scripts"`
-	Failed     int  `json:"failed"`
-	Calls      int  `json:"calls"`
-	CallErrors int  `json:"callErrors"`
+	Enabled    bool   `json:"enabled"`
+	Mode       string `json:"mode"` // off, on or explore
+	Scripts    int    `json:"scripts"`
+	Failed     int    `json:"failed"`
+	Calls      int    `json:"calls"`
+	CallErrors int    `json:"callErrors"`
 }
 
 func codeModeOf(c coding.CodeModeState) codeModeWire {
-	return codeModeWire{Enabled: c.Enabled, Scripts: c.Scripts, Failed: c.Failed, Calls: c.Calls, CallErrors: c.CallErrors}
+	return codeModeWire{Enabled: c.Enabled, Mode: c.Mode, Scripts: c.Scripts, Failed: c.Failed, Calls: c.Calls, CallErrors: c.CallErrors}
 }
 
 // sandboxWire is a malachi extension to get_state: what sandboxed commands
@@ -371,6 +372,9 @@ func eventJSON(e any) ([]byte, error) {
 	}
 	if mc, ok := e.(coding.MCPChangedEvent); ok {
 		return json.Marshal(map[string]any{"type": "mcp_changed", "mcp": mcpOf(mc.State)})
+	}
+	if cc, ok := e.(coding.CodeModeChangedEvent); ok {
+		return json.Marshal(map[string]any{"type": "code_mode_changed", "codeMode": codeModeOf(cc.State)})
 	}
 	if jc, ok := e.(coding.JobsChangedEvent); ok {
 		return json.Marshal(map[string]any{"type": "jobs_changed", "jobs": jobsOf(jc.State)})

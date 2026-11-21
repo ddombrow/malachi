@@ -112,6 +112,10 @@ type Session struct {
 	toolsMu   sync.Mutex
 	tools     []*agent.Tool
 	baseTools []*agent.Tool
+	// coreTools are the built-in tools before code mode is applied, and
+	// toolOpts their options, so the code mode can change while it runs.
+	coreTools []*agent.Tool
+	toolOpts  ToolOptions
 	// persisted maps messages to the session entries they were written as, so
 	// a compaction can record where its retained tail begins.
 	persisted []persistedMessage
@@ -356,7 +360,8 @@ func Open(opts Options) (*Session, error) {
 	// MCP servers carry over from the session this one replaces, so a /new
 	// or resume does not restart them; otherwise they start once the
 	// session is ready, in the background.
-	codeMode := opts.Settings.CodeModeEnabled()
+	mode := opts.Settings.CodeModeSetting()
+	codeMode := mode != CodeModeOff
 	freshMCP := opts.mcp == nil
 	s.mcp = opts.mcp
 	if freshMCP {
@@ -365,10 +370,9 @@ func Open(opts Options) (*Session, error) {
 		s.mcp = newMCPManager(cfg, err, cwd, toolOpts, s.sandboxPolicy, s.diag)
 	}
 	s.mcp.bind(s.sandboxPolicy, nil, codeMode)
-	if codeMode {
-		s.codeMode.enable()
-		tools = withScripts(tools, toolOpts, s.diag, s.codeMode.record, s.mcp, opts.Settings.ExploreInScripts)
-	}
+	s.coreTools, s.toolOpts = tools, toolOpts
+	s.codeMode.setMode(mode)
+	tools = s.toolsFor(mode)
 	s.trims = &trimLog{}
 	s.preparer = newCodingContextPreparer(s.trims, opts.Settings.TrimToolOutput)
 	s.runtime = provider
@@ -611,6 +615,7 @@ func (s *Session) trustNow(decision TrustDecision, remember bool, override strin
 		s.trust.Source = "session"
 	}
 	system := s.buildPrompt(s.baseTools)
+	s.system = system
 	s.mu.Unlock()
 
 	s.Harness.Update(func(c *agent.HarnessConfig) { c.System = system })
