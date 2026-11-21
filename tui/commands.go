@@ -16,8 +16,8 @@ import (
 )
 
 const helpText = `Commands:
-  /model [ref]        show models, or switch (e.g. /model glm-5.2, /model openai/gpt-5.1)
-  /thinking [level]   show or set the reasoning level
+  /model [ref]        pick a model, or switch (e.g. /model glm-5.2, /model openai/gpt-5.1)
+  /thinking [level]   pick or set the reasoning level
   /compact [note]    summarize the conversation with the agent
   /trim [bytes]      trim old tool output before the next request
   /trust [yes|no] [--save] load this directory's AGENTS.md into the prompt
@@ -31,7 +31,7 @@ const helpText = `Commands:
   /sidebar            show or hide the sidebar (ctrl+s)
   /ctx               measured context: tokens, tool output share, trim passes
   /new, /clear        start a fresh session with an empty context
-  /resume [n|name]    list recent sessions, or resume one
+  /resume [name]      pick a recent session, or resume one
   /copy               copy the latest assistant response
   /last               print the full output of the last tool call
   /session            show the session file path
@@ -41,7 +41,8 @@ Keys: enter send · alt+enter newline · esc cancel run · ctrl+c clear/quit
 Scroll: mouse wheel · pgup/pgdown · shift+↑/↓ · ctrl+home/ctrl+end
 Copy: drag over the transcript to select; releasing copies it.
 Hold shift while dragging to use the terminal's own selection instead.
-While the agent runs, enter queues a steering message.`
+While the agent runs, enter queues a steering message.
+In a picker: type to filter · ↑↓ move · enter choose · esc cancel.`
 
 func (m *model) printDim(s string) tea.Cmd {
 	return m.print(func(r *renderer) string { return item(perLine(r.st.dim, s)) })
@@ -106,14 +107,7 @@ func (m *model) command(line string) tea.Cmd {
 	case "mcp":
 		return m.mcpCommand(arg)
 	case "thinking":
-		if arg == "" {
-			levels := strings.Join(m.s.Provider().ThinkingLevels, ", ")
-			return m.printDim(fmt.Sprintf("thinking: %s (available: %s)", m.s.ThinkingLevel(), levels))
-		}
-		if err := m.s.SetThinkingLevel(arg); err != nil {
-			return m.printErr(err)
-		}
-		return m.printDim("thinking level set to " + arg)
+		return m.thinkingCommand(arg)
 	case "trim":
 		return m.trimCommand(arg)
 	case "trust":
@@ -359,30 +353,84 @@ func (m *model) trimCommand(arg string) tea.Cmd {
 	return m.printDim(fmt.Sprintf("trimming tool output above %s before the next request", bytesHuman(budget)))
 }
 
-func (m *model) modelCommand(arg string) tea.Cmd {
-	if arg == "" {
-		// Fetch off the UI goroutine; the result is printed when it arrives.
-		s := m.s
-		return func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			ids, err := s.Models(ctx)
-			var b strings.Builder
-			fmt.Fprintf(&b, "current: %s/%s\n", s.Provider().Name, s.Model())
-			if err != nil {
-				fmt.Fprintf(&b, "(could not fetch live model list: %v; showing built-in list)\n", err)
-			}
-			text := strings.TrimRight(b.String(), "\n")
-			return printMsg{func(r *renderer) string {
-				t := text
-				if len(ids) > 0 {
-					t += fmt.Sprintf("\n%s models (%d):\n%s", s.Provider().Name, len(ids), columns(ids, r.width-4))
-				}
-				return item(perLine(r.st.dim, t))
-			}}
-		}
+// thinkingCommand sets the reasoning level, or with no argument opens a
+// picker of the levels the provider offers.
+func (m *model) thinkingCommand(arg string) tea.Cmd {
+	if arg != "" {
+		return m.setThinking(arg)
 	}
-	if err := m.s.SetModel(arg); err != nil {
+	levels := m.s.Provider().ThinkingLevels
+	if len(levels) == 0 {
+		return m.printDim(fmt.Sprintf("thinking: %s (%s lists no levels; set one with /thinking <level>)", m.s.ThinkingLevel(), m.s.Provider().Name))
+	}
+	items := make([]pickerItem, len(levels))
+	for i, l := range levels {
+		items[i] = pickerItem{label: l, value: l}
+	}
+	m.picker = newPicker("thinking", m.s.ThinkingLevel(), items, m.setThinking)
+	return nil
+}
+
+func (m *model) setThinking(level string) tea.Cmd {
+	if err := m.s.SetThinkingLevel(level); err != nil {
+		return m.printErr(err)
+	}
+	return m.printDim("thinking level set to " + level)
+}
+
+// modelsMsg carries a live model list back to the picker that asked for it.
+type modelsMsg struct {
+	p   *picker
+	ids []string
+	err error
+}
+
+// modelCommand switches model, or with no argument opens a picker filled
+// with the provider's live list once it arrives.
+func (m *model) modelCommand(arg string) tea.Cmd {
+	if arg != "" {
+		return m.setModel(arg)
+	}
+	s := m.s
+	p := newPicker(s.Provider().Name+" model", s.Model(), nil, m.setModel)
+	p.loading = true
+	m.picker = p
+	// Fetch off the UI goroutine; the picker spins until the list arrives.
+	fetch := func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		ids, err := s.Models(ctx)
+		return modelsMsg{p: p, ids: ids, err: err}
+	}
+	return tea.Batch(fetch, m.spin.Tick)
+}
+
+// fillModels hands a fetched list to its picker, unless that picker has
+// already been closed or replaced.
+func (m *model) fillModels(msg modelsMsg) tea.Cmd {
+	if m.picker != msg.p {
+		return nil
+	}
+	if len(msg.ids) == 0 {
+		m.picker = nil
+		if msg.err != nil {
+			return m.printErr(fmt.Errorf("could not fetch the model list: %w", msg.err))
+		}
+		return m.printDim("the provider lists no models; set one with /model <ref>")
+	}
+	items := make([]pickerItem, len(msg.ids))
+	for i, id := range msg.ids {
+		items[i] = pickerItem{label: id, value: id}
+	}
+	if msg.err != nil {
+		msg.p.note = "live list unavailable; showing the built-in list"
+	}
+	msg.p.setItems(items)
+	return nil
+}
+
+func (m *model) setModel(ref string) tea.Cmd {
+	if err := m.s.SetModel(ref); err != nil {
 		return m.printErr(err)
 	}
 	return m.printDim(fmt.Sprintf("model set to %s/%s (thinking %s)", m.s.Provider().Name, m.s.Model(), m.s.ThinkingLevel()))
@@ -397,20 +445,25 @@ func (m *model) resumeCommand(arg string) tea.Cmd {
 		if len(infos) == 0 {
 			return m.printDim("no saved sessions for this directory")
 		}
-		var b strings.Builder
-		b.WriteString("Recent sessions (resume with /resume <n>):\n")
-		for i, in := range infos[:min(len(infos), 15)] {
+		items := make([]pickerItem, len(infos))
+		for i, in := range infos {
 			preview := in.Title
 			if preview == "" {
-				preview = strings.ReplaceAll(in.Preview, "\n", " ")
+				preview = strings.Join(strings.Fields(in.Preview), " ")
 			}
-			current := ""
-			if in.Path == m.s.Path() {
-				current = " (current)"
+			items[i] = pickerItem{
+				label: fmt.Sprintf("%s  %3d msgs  %s", in.Modified.Format("Jan 02 15:04"), in.Messages, truncateWidth(preview, 60)),
+				value: in.Path,
 			}
-			fmt.Fprintf(&b, "  %2d. %s  %3d msgs  %s%s\n", i+1, in.Modified.Format("Jan 02 15:04"), in.Messages, truncateWidth(preview, 60), current)
 		}
-		return m.printDim(strings.TrimRight(b.String(), "\n"))
+		current := m.s.Path()
+		m.picker = newPicker("resume", current, items, func(path string) tea.Cmd {
+			if path == current {
+				return m.printDim("already in that session")
+			}
+			return m.reopen(path)
+		})
+		return nil
 	}
 	ref := arg
 	if n, err := strconv.Atoi(arg); err == nil {
@@ -450,26 +503,6 @@ func (m *model) reopen(resume string) tea.Cmd {
 // printMsg asks the UI loop to append a block to the transcript; background
 // commands return it because only the UI goroutine may touch the model.
 type printMsg struct{ render func(r *renderer) string }
-
-// columns lays out ids in aligned columns within width.
-func columns(ids []string, width int) string {
-	colW := 0
-	for _, id := range ids {
-		colW = max(colW, len(id)+2)
-	}
-	perRow := max(1, width/max(colW, 1))
-	var b strings.Builder
-	for i, id := range ids {
-		b.WriteString("  ")
-		b.WriteString(id)
-		if (i+1)%perRow == 0 || i == len(ids)-1 {
-			b.WriteByte('\n')
-		} else {
-			b.WriteString(strings.Repeat(" ", colW-len(id)))
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
 
 // networkCommand shows or switches sandboxed commands' network access for
 // this session.

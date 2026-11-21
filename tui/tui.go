@@ -159,6 +159,8 @@ type model struct {
 	// hiding it (it also hides itself on a small terminal).
 	side          sidebarState
 	sidebarHidden bool
+	// picker, when open, takes the input box's place to ask for a choice.
+	picker *picker
 }
 
 // Run starts the interactive UI. initialPrompt, if non-empty, is sent first.
@@ -351,7 +353,7 @@ func (m *model) refresh() {
 	// Let the box hold more input than it can show, so a small terminal
 	// scrolls the input instead of refusing what is typed into it.
 	m.input.MaxContentHeight = inputMaxHeight
-	m.vp.SetHeight(max(1, m.height-m.input.Height()-m.chrome))
+	m.vp.SetHeight(max(1, m.height-m.bottomHeight(avail)-m.chrome))
 	var live []string
 	if s := m.live(); s != "" {
 		live = strings.Split(s, "\n")
@@ -360,6 +362,15 @@ func (m *model) refresh() {
 	if follow {
 		m.vp.GotoBottom()
 	}
+}
+
+// bottomHeight is the rows the input box, or a picker in its place, takes
+// given at most avail.
+func (m *model) bottomHeight(avail int) int {
+	if m.picker != nil {
+		return m.picker.height(max(1, avail))
+	}
+	return m.input.Height()
 }
 
 func (m *model) update(msg tea.Msg) tea.Cmd {
@@ -420,6 +431,9 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 	case printMsg:
 		return m.print(msg.render)
 
+	case modelsMsg:
+		return m.fillModels(msg)
+
 	case tea.MouseWheelMsg:
 		switch msg.Button {
 		case tea.MouseWheelUp:
@@ -450,7 +464,7 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
-		if !m.busy() {
+		if !m.busy() && (m.picker == nil || !m.picker.loading) {
 			return nil
 		}
 		return cmd
@@ -459,6 +473,11 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		return nil
 
 	case tea.PasteMsg:
+		if m.picker != nil {
+			m.picker.filter += strings.Join(strings.Fields(msg.Content), " ")
+			m.picker.cursor, m.picker.top = 0, 0
+			return nil
+		}
 		if lines := pastedLineCount(msg.Content); lines > 1 {
 			marker := fmt.Sprintf("[Pasted %d Lines]", lines)
 			m.input.DeleteSelection()
@@ -472,6 +491,13 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 
 	case tea.KeyPressMsg:
 		m.sel = selection{} // typing dismisses a finished selection
+		if m.picker != nil {
+			cmd, done := m.picker.key(msg)
+			if done {
+				m.picker = nil
+			}
+			return cmd
+		}
 		switch msg.String() {
 		case "ctrl+c":
 			if m.input.Value() != "" {
@@ -706,6 +732,9 @@ func (m *model) View() tea.View {
 	// background separates it from the status text.
 	lower := m.r.st.dim.Render(strings.Repeat(lowRule, max(1, m.width)))
 	input := m.input.View()
+	if m.picker != nil {
+		input = m.picker.view(m.r.st, m.spin.View(), max(1, m.width-1), m.bottomHeight(m.height-m.chrome-1))
+	}
 	transcript := m.withSidebar(m.highlightSelection(m.vp.View()))
 	body := transcript + "\n" + input
 	if m.chrome >= chromeRows {
