@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ddombrow/malachi/agent"
+	"github.com/ddombrow/malachi/ai/fake"
 	"github.com/ddombrow/malachi/codemode"
 	"github.com/ddombrow/malachi/sandbox"
 )
@@ -241,5 +242,82 @@ func TestScriptsGetACommandsWholeOutput(t *testing.T) {
 	}
 	if _, ok := r.Details.(map[string]any)["output"]; ok {
 		t.Error("a direct call carried the script's copy of the output")
+	}
+}
+
+// Code mode decides what the provider is sent. On, the script tool is
+// offered, every other tool says how a script calls it, and the prompt's
+// advice allows for scripts; off, none of that is sent, and read's advice
+// is to read files in parallel. Scripts see the tools as they are either
+// way, without the note about calling them from a script.
+func TestCodeModeChangesWhatIsSent(t *testing.T) {
+	sent := func(on bool) agent.Request {
+		t.Helper()
+		p := fake.New(fake.Text("ok"))
+		s, err := Open(Options{Cwd: t.TempDir(), Home: t.TempDir(), Settings: &Settings{CodeMode: &on}, Provider: p, NoSession: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(s.Close)
+		if err := s.Prompt(context.Background(), "hi"); err != nil {
+			t.Fatal(err)
+		}
+		if len(p.Requests) != 1 {
+			t.Fatalf("%d requests", len(p.Requests))
+		}
+		return p.Requests[0]
+	}
+	tool := func(req agent.Request, name string) *agent.Tool {
+		for _, tl := range req.Tools {
+			if tl.Name == name {
+				return tl
+			}
+		}
+		return nil
+	}
+	const note = "In a script: `await tools."
+
+	off := sent(false)
+	if tool(off, codemode.ToolName) != nil {
+		t.Error("code mode off: the script tool was sent")
+	}
+	for _, tl := range off.Tools {
+		if strings.Contains(tl.Description, note) {
+			t.Errorf("code mode off: %s says how a script calls it", tl.Name)
+		}
+	}
+	if !strings.Contains(off.System, readSeveral) || strings.Contains(off.System, readSeveralWithScripts) ||
+		strings.Contains(off.System, "Use script") || strings.Contains(off.System, "scripts") || strings.Contains(off.System, "\n- script:") {
+		t.Errorf("code mode off: the prompt mentions scripts or lacks read's advice:\n%s", off.System)
+	}
+
+	on := sent(true)
+	script := tool(on, codemode.ToolName)
+	if script == nil {
+		t.Fatal("code mode on: no script tool was sent")
+	}
+	for _, tl := range on.Tools {
+		if tl.Name == codemode.ToolName {
+			continue
+		}
+		if !strings.Contains(tl.Description, note+tl.Name+"({...})`") {
+			t.Errorf("code mode on: %s does not say how a script calls it:\n%s", tl.Name, tl.Description)
+		}
+	}
+	if !strings.Contains(tool(on, "edit").Description, "details {edits, first_changed_line, patch, path}") {
+		t.Errorf("edit's note lacks its details fields:\n%s", tool(on, "edit").Description)
+	}
+	if strings.Contains(on.System, readSeveral) || !strings.Contains(on.System, readSeveralWithScripts) ||
+		!strings.Contains(on.System, "Use script when you would otherwise take in more than you need") {
+		t.Errorf("code mode on: the prompt's advice does not allow for scripts:\n%s", on.System)
+	}
+	// The fields are said once, on each tool, not again in the script tool.
+	if strings.Contains(script.Description, "Each result's details, by tool") {
+		t.Errorf("the script tool repeats every tool's details:\n%s", script.Description)
+	}
+
+	res, isError := runScriptTool(t, script, `return [describeTool("read").description.includes("In a script"), ALL_TOOLS.length > 0]`)
+	if isError || res.Text() != "[\n  false,\n  true\n]" {
+		t.Errorf("scripts must see the tools without the note: %s", res.Text())
 	}
 }

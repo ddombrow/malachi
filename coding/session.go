@@ -367,7 +367,7 @@ func Open(opts Options) (*Session, error) {
 	s.mcp.bind(s.sandboxPolicy, nil, codeMode)
 	if codeMode {
 		s.codeMode.enable()
-		tools = append(tools, newScriptTool(tools, toolOpts, s.diag, s.codeMode.record, s.mcp))
+		tools = withScripts(tools, toolOpts, s.diag, s.codeMode.record, s.mcp)
 	}
 	s.trims = &trimLog{}
 	s.preparer = newCodingContextPreparer(s.trims, opts.Settings.TrimToolOutput)

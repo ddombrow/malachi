@@ -1,6 +1,7 @@
 package codemode
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -78,4 +79,23 @@ func fields(schema map[string]any, depth int) string {
 		parts[i] = part
 	}
 	return "{" + strings.Join(parts, ", ") + "}"
+}
+
+// Advertise returns copies of tools, for offering to the model next to the
+// script tool, whose descriptions end by saying how a script calls each one
+// and what its details hold: the model picks a tool by its description, so
+// that is where it learns a script could make the call. The script tool
+// itself should keep the originals, and Options.Advertised set.
+func Advertise(tools []*agent.Tool) []*agent.Tool {
+	out := make([]*agent.Tool, len(tools))
+	for i, t := range tools {
+		c := *t
+		note := fmt.Sprintf("In a script: `await tools.%s({...})` gives {text, details, isError}", t.Name)
+		if f := fields(t.OutputSchema, 1); f != "" {
+			note += ", details " + f
+		}
+		c.Description = strings.TrimRight(t.Description, " ") + "\n\n" + note + "."
+		out[i] = &c
+	}
+	return out
 }

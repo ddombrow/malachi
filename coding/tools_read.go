@@ -19,6 +19,14 @@ const MaxImageBytes = 5 * 1024 * 1024
 
 var imageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
 
+// readSeveral is read's advice on reading several files, and
+// readSeveralWithScripts the same advice when the script tool is offered:
+// the first alone would steer the model away from scripts.
+const (
+	readSeveral            = "To read several files, call read once per file in the same response; the calls run in parallel. Do not combine files with cat."
+	readSeveralWithScripts = "To read several files you need whole, call read once per file in the same response; the calls run in parallel. When you need only parts of them, read them in a script and return those parts. Do not combine files with cat."
+)
+
 // NewReadTool returns the read tool rooted at cwd.
 func NewReadTool(cwd string, opts ToolOptions) *agent.Tool {
 	return &agent.Tool{
@@ -32,7 +40,7 @@ func NewReadTool(cwd string, opts ToolOptions) *agent.Tool {
 		PromptSnippet: "Read file contents",
 		PromptGuidelines: []string{
 			"Use read to examine files instead of cat or sed.",
-			"To read several files, call read once per file in the same response; the calls run in parallel. Do not combine files with cat.",
+			readSeveral,
 		},
 		Parallel: true,
 		Parameters: map[string]any{

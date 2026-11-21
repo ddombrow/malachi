@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -34,13 +35,30 @@ var scriptEngine = sync.OnceValues(func() (*codemode.Engine, error) {
 // spill file. diag, if set, logs each script and any sandbox refusal inside
 // one; onScript, if set, hears how each script ended.
 func NewScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScript func(codemode.Details)) *agent.Tool {
-	return newScriptTool(tools, opts, diag, onScript, nil)
+	return newScriptTool(tools, opts, diag, onScript, nil, false)
+}
+
+// withScripts is tools as offered to the model with code mode on: each says
+// how a script calls it, read's advice on several files allows for
+// scripts, and the script tool comes last, calling the tools as they were.
+func withScripts(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScript func(codemode.Details), servers *MCPManager) []*agent.Tool {
+	script := newScriptTool(tools, opts, diag, onScript, servers, true)
+	offered := codemode.Advertise(tools)
+	for _, t := range offered {
+		t.PromptGuidelines = slices.Clone(t.PromptGuidelines)
+		for i, g := range t.PromptGuidelines {
+			if g == readSeveral {
+				t.PromptGuidelines[i] = readSeveralWithScripts
+			}
+		}
+	}
+	return append(offered, script)
 }
 
 // newScriptTool is NewScriptTool whose scripts also call the deferred MCP
 // servers' tools, when servers is set: each script starts with the tools of
 // the servers running then, waiting for any still starting.
-func newScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScript func(codemode.Details), servers *MCPManager) *agent.Tool {
+func newScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScript func(codemode.Details), servers *MCPManager, advertised bool) *agent.Tool {
 	var extra func(context.Context) []*agent.Tool
 	var notFound func(string) string
 	if servers != nil {
@@ -51,10 +69,11 @@ func newScriptTool(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onS
 		notFound = servers.missing
 	}
 	t := codemode.NewTool(tools, codemode.Options{
-		Extra:    extra,
-		NotFound: notFound,
-		Engine:   scriptEngine,
-		Timeout:  opts.bashTimeout(),
+		Extra:      extra,
+		Advertised: advertised,
+		NotFound:   notFound,
+		Engine:     scriptEngine,
+		Timeout:    opts.bashTimeout(),
 		OnCall: func(call *agent.ToolCall, result agent.ToolResult, isError bool) {
 			if source, reason := sandboxDenialOf(result, isError); source != "" {
 				diag.LogSandboxDenied(codemode.ToolName+":"+call.Name, source, reason, toolTarget(call.Arguments))

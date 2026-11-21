@@ -55,6 +55,10 @@ type Options struct {
 	// changes while a session runs, such as MCP servers'. It may wait, bounded
 	// by ctx, for tools that are on their way.
 	Extra func(ctx context.Context) []*agent.Tool
+	// Advertised says the tools offered to the model already say, in their
+	// own descriptions, how scripts call them (see Advertise), so the
+	// script tool's description does not list their details again.
+	Advertised bool
 	// NotFound, if set, explains a call to a tool no script may call, beyond
 	// listing the tools there are: why a tool the model was told of is
 	// missing. It returns "" when it has nothing to add.
@@ -105,7 +109,9 @@ func NewTool(tools []*agent.Tool, opts Options) *agent.Tool {
 		"ALL_TOOLS lists the tools, describeTool(name) gives one's parameters and details schema, searchTools(query) finds tools by keyword. " +
 		"There is no require, filesystem, network, process or timers: everything goes through tools. " +
 		"Available tools: " + strings.Join(names, ", ") + "."
-	if s := detailsSummary(tools); s != "" {
+	if opts.Advertised {
+		description += " Each tool's own description says what its details hold; describeTool(name).details is the full schema."
+	} else if s := detailsSummary(tools); s != "" {
 		description += "\n\n" + s
 	}
 	return &agent.Tool{
@@ -114,9 +120,9 @@ func NewTool(tools []*agent.Tool, opts Options) *agent.Tool {
 		Description:   description,
 		PromptSnippet: "Run JavaScript that calls the other tools and returns only what matters",
 		PromptGuidelines: []string{
-			"When you would read, grep or glob more than two things, as when exploring a codebase, do it in one script: run the calls together with Promise.all and return only the lines you need, not whole files or every match.",
-			"Use script to cut large output, such as a broad search or a long log, down to what matters before it reaches you. A script can branch on what it finds, so a next step that depends on a result does not need a turn of its own.",
-			"Make an ordinary tool call for a single step, or when deciding what to do next takes judgment that code cannot make.",
+			"Use script when you would otherwise take in more than you need: parts of several files, the matches of a broad search that matter, the failures in a long test log. Run the calls together and return only those parts.",
+			"A script can branch on what it finds, so a step that depends on a result does not need a turn of its own.",
+			"Make an ordinary tool call for a single step, to read files you need whole, or when the next step takes judgment that code cannot make.",
 		},
 		Parameters: map[string]any{
 			"type": "object",
