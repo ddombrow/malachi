@@ -321,3 +321,22 @@ func TestTrustPickerParentRemembersForSiblings(t *testing.T) {
 		t.Fatal("a sibling does not inherit the parent's yes")
 	}
 }
+
+func TestCodeModePickerAndArgument(t *testing.T) {
+	m := newTestModel(t)
+	run(m, m.command("/codemode"))
+	if m.picker == nil || !strings.Contains(screen(m), "› ● on") || !strings.Contains(screen(m), "only through scripts") {
+		t.Fatalf("bare /codemode must open a picker on the current mode:\n%s", screen(m))
+	}
+	press(m, "explore", "enter")
+	if m.s.CodeMode().Mode != coding.CodeModeExplore || !strings.Contains(screen(m), "code mode explore:") {
+		t.Fatalf("picking explore: %q\n%s", m.s.CodeMode().Mode, screen(m))
+	}
+	m.command("/codemode OFF")
+	if m.s.CodeMode().Mode != coding.CodeModeOff {
+		t.Fatalf("/codemode OFF: %q", m.s.CodeMode().Mode)
+	}
+	if out := shown(m, func() tea.Cmd { return m.command("/codemode sideways") }); !strings.Contains(out, "must be one of") {
+		t.Fatalf("an unknown mode: %s", out)
+	}
+}

@@ -92,6 +92,7 @@ to cancel, and use `/help` for the full command list.
 | `/compact [note]` | Fold the conversation into a handover the model writes |
 | `/trim [bytes]` | Trim old tool output mechanically before the next request |
 | `/ctx` | Context budget: prompt tokens, tool output share, compaction count |
+| `/codemode [mode]` | Pick or set the code mode: `off`, `on`, `explore` (`ctrl+x` cycles) |
 | `/trust [yes\|no\|parent]` | Decide whether this directory's `AGENTS.md` is obeyed |
 | `/sandbox` | Show what commands and file tools may touch |
 | `/allow-read <dir>` | Let the model read an existing directory in your home for this session only |
@@ -215,8 +216,9 @@ saved and resumed like any other.
 - **Slash commands.** `/sandbox` shows what malachi's sandbox allows in that
   session (the same report as in the TUI). `/allow-read <dir>` and
   `/allow-write <dir>` widen the sandbox for that session, with the same limits as in the TUI (not
-  your whole home, nothing hidden). malachi handles them itself; they never
-  reach the model.
+  your whole home, nothing hidden). `/codemode [off|on|explore]` shows or
+  sets the code mode, which the Code mode option also picks. malachi handles
+  them itself; they never reach the model.
 - **Other folders in the window.** Folders an editor opens beside the
   project (ACP's `additionalDirectories`) become readable for that session,
   as `/allow-read` would make them; writing there still takes `/allow-write`
@@ -350,8 +352,8 @@ Everything else, edits and commands included, stays a direct call. It is
 an experiment: compare the tokens a task takes with it on and off.
 
 The setting decides the mode a session starts in. To switch while it runs,
-press `ctrl+x` in the TUI (off → on → explore); RPC clients use
-`set_code_mode`.
+press `ctrl+x` in the TUI (off → on → explore) or use `/codemode`; editors
+get a Code mode option, and RPC clients `set_code_mode`.
 
 ### Fetch
 

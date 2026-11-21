@@ -294,7 +294,15 @@ const (
 	configModel    = "model"
 	configThinking = "thought_level"
 	configNetwork  = "network"
+	configCodeMode = "code_mode"
 )
+
+// codeModeValues are the code modes as the client offers them.
+var codeModeValues = []configValue{
+	{Value: coding.CodeModeOff, Name: "Code mode off", Description: "No script tool"},
+	{Value: coding.CodeModeOn, Name: "Code mode on", Description: "The script tool beside the other tools"},
+	{Value: coding.CodeModeExplore, Name: "Explore in scripts", Description: "read, grep and glob only through scripts"},
+}
 
 // configOptions are the session's model, thinking level, and whether
 // sandboxed commands reach the network. The network is the user's to
@@ -357,6 +365,11 @@ func (as *acpSession) configOptions() []configOption {
 			CurrentValue: as.s.ThinkingLevel(), Options: lv,
 		})
 	}
+	opts = append(opts, configOption{
+		ID: configCodeMode, Name: "Code mode", Category: "_code_mode", Type: "select",
+		Description:  "Whether the model can write scripts that call its tools, and whether it must to explore",
+		CurrentValue: as.s.CodeMode().Mode, Options: codeModeValues,
+	})
 	if sb := as.s.Sandbox(); sb.Enabled {
 		current := "off"
 		if sb.Network {
@@ -395,6 +408,8 @@ func (as *acpSession) setConfig(id, value string) error {
 			err = as.s.SetThinkingLevel(value)
 		case configNetwork:
 			err = as.s.SetNetwork(value == "on")
+		case configCodeMode:
+			err = as.s.SetCodeMode(value)
 		}
 		as.s.Flush() // the change's config_option_update comes before the reply
 		return err

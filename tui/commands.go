@@ -31,6 +31,7 @@ const helpText = `Commands:
   /mcp restart <name> restart an MCP server now
   /sidebar            show or hide the sidebar (ctrl+s)
   /ctx               measured context: tokens, tool output share, trim passes
+  /codemode [mode]    pick or set the code mode: off, on, explore (ctrl+x cycles)
   /new, /clear        start a fresh session with an empty context
   /resume [name]      pick a recent session, or resume one
   /copy               copy the latest assistant response
@@ -140,6 +141,8 @@ func (m *model) command(line string) tea.Cmd {
 		return nil
 	case "compact":
 		return m.compactCommand(arg)
+	case "codemode":
+		return m.codeModeCommand(arg)
 	case "ctx":
 		return m.printDim(coding.ContextLine(m.s.Model(), m.s.ContextStats()))
 	case "new", "clear":

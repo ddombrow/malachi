@@ -13,6 +13,7 @@ var commands = []command{
 	{Name: "sandbox", Description: "Show what malachi's sandbox lets commands and file tools touch in this session"},
 	{Name: "allow-read", Description: "Allow reading a directory in your home for this session", Input: &commandInput{Hint: "directory"}},
 	{Name: "allow-write", Description: "Allow writes to a directory for this session", Input: &commandInput{Hint: "directory"}},
+	{Name: "codemode", Description: "Show or set the code mode: off, on, or explore (read, grep and glob only through scripts)", Input: &commandInput{Hint: "off, on or explore"}},
 }
 
 // advertise tells the client which commands the session has.
@@ -68,7 +69,17 @@ func (as *acpSession) command(name, arg string) {
 			break
 		}
 		msg = fmt.Sprintf("Added writable root %s for this session. Model-run tools can modify or delete its contents.", root)
+	case "codemode":
+		if arg == "" {
+			msg = "Code mode is " + as.s.CodeMode().Mode + ". Set it with /codemode off, /codemode on or /codemode explore, or with the Code mode option."
+			break
+		}
+		if err := as.s.SetCodeMode(strings.ToLower(arg)); err != nil {
+			msg = "Not changed: " + err.Error()
+			break
+		}
+		msg = "Code mode is now " + as.s.CodeMode().Mode + ", from the next prompt."
 	}
-	as.s.Flush() // the sandbox change's config_option_update comes first
+	as.s.Flush() // the change's config_option_update comes first
 	as.update(chunkUpdate{SessionUpdate: "agent_message_chunk", Content: textBlock(msg)})
 }

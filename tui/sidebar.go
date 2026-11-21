@@ -92,7 +92,34 @@ func (m *model) cycleCodeMode() tea.Cmd {
 	if err != nil {
 		return m.printErr(err)
 	}
-	return m.printDim("code mode " + mode + ": " + codeModeMeaning[mode] + " (from the next request)")
+	return m.printDim(codeModeLine(mode))
+}
+
+// setCodeMode switches to mode, as /codemode does, and says what the
+// model is now offered.
+func (m *model) setCodeMode(mode string) tea.Cmd {
+	if err := m.s.SetCodeMode(mode); err != nil {
+		return m.printErr(err)
+	}
+	return m.printDim(codeModeLine(mode))
+}
+
+func codeModeLine(mode string) string {
+	return "code mode " + mode + ": " + codeModeMeaning[mode] + " (from the next request)"
+}
+
+// codeModeCommand sets the code mode, or with no argument opens a picker
+// of the modes.
+func (m *model) codeModeCommand(arg string) tea.Cmd {
+	if arg != "" {
+		return m.setCodeMode(strings.ToLower(arg))
+	}
+	var items []pickerItem
+	for _, mode := range coding.CodeModes() {
+		items = append(items, pickerItem{label: mode, detail: codeModeMeaning[mode], value: mode})
+	}
+	m.picker = newPicker("code mode", m.s.CodeMode().Mode, items, m.setCodeMode)
+	return nil
 }
 
 var codeModeMeaning = map[string]string{

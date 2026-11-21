@@ -723,3 +723,34 @@ func TestSecondPromptIsRefusedBeforeTheFirstStartsRunning(t *testing.T) {
 		t.Fatalf("after cancel: %v", r)
 	}
 }
+
+// The code mode is a config option, the editor's picker for it, and a
+// slash command; both switch it as ctrl+x does in the TUI.
+func TestCodeModeIsAConfigOptionAndACommand(t *testing.T) {
+	c := start(t, t.TempDir(), testSettings())
+	c.initialize()
+	id, r := c.newSession(t.TempDir())
+	if o := option(r, "code_mode"); o == nil || o["currentValue"] != "on" || len(o["options"].([]any)) != 3 {
+		t.Fatalf("no code mode option, on by default: %s", mustJSON(r["configOptions"]))
+	}
+	as, _ := c.sv.session(id)
+	resp, us := c.await(c.call("session/set_config_option", map[string]any{"sessionId": id, "configId": "code_mode", "value": "explore"}))
+	if o := option(result(t, resp), "code_mode"); o == nil || o["currentValue"] != "explore" || as.s.CodeMode().Mode != coding.CodeModeExplore {
+		t.Fatalf("after set: %v", resp)
+	}
+	if !slices.Contains(kinds(us), "config_option_update") {
+		t.Fatalf("no config_option_update: %v", kinds(us))
+	}
+	resp, _ = c.await(c.call("session/set_config_option", map[string]any{"sessionId": id, "configId": "code_mode", "value": "sideways"}))
+	if resp["error"] == nil {
+		t.Fatal("unlisted value accepted")
+	}
+
+	_, us = c.prompt(id, "/codemode off")
+	if as.s.CodeMode().Mode != coding.CodeModeOff || !strings.Contains(text(us, "agent_message_chunk"), "now off") {
+		t.Fatalf("/codemode off: %q", text(us, "agent_message_chunk"))
+	}
+	if _, us = c.prompt(id, "/codemode"); !strings.Contains(text(us, "agent_message_chunk"), "Code mode is off") {
+		t.Fatalf("/codemode: %q", text(us, "agent_message_chunk"))
+	}
+}

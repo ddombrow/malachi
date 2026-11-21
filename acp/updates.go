@@ -50,7 +50,7 @@ func (as *acpSession) event(e any) {
 		as.update(as.toolEnd(e.ToolCallID, e.ToolName, e.Result, e.IsError))
 	case coding.AgentSettledEvent:
 		as.finish()
-	case coding.ThinkingLevelChangedEvent, coding.SandboxChangedEvent:
+	case coding.ThinkingLevelChangedEvent, coding.SandboxChangedEvent, coding.CodeModeChangedEvent:
 		as.update(configOptionUpdate{SessionUpdate: "config_option_update", ConfigOptions: as.configOptions()})
 	case coding.CompactionStartEvent:
 		if as.sv.clientCaps().Session.Compaction != nil {
