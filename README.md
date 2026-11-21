@@ -88,7 +88,7 @@ to cancel, and use `/help` for the full command list.
 | --- | --- |
 | `/model` | Show or switch model; bare `/model` lists what the provider serves |
 | `/thinking` | Show or set the thinking level |
-| `/new`, `/resume`, `/session`, `/last` | Start, resume, or inspect sessions |
+| `/new` (or `/clear`), `/resume`, `/session`, `/last` | Start, resume, or inspect sessions |
 | `/compact [note]` | Fold the conversation into a handover the model writes |
 | `/trim [bytes]` | Trim old tool output mechanically before the next request |
 | `/ctx` | Context budget: prompt tokens, tool output share, compaction count |

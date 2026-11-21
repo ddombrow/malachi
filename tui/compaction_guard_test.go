@@ -180,7 +180,7 @@ func TestSessionChangesRefusedDuringCompaction(t *testing.T) {
 	defer close(release)
 	m := compactingModel(t, release)
 	before := m.s
-	for _, cmd := range []string{"/new", "/model glm-5.2", "/compact"} {
+	for _, cmd := range []string{"/new", "/clear", "/model glm-5.2", "/compact"} {
 		out := shown(m, func() tea.Cmd { return m.command(cmd) })
 		if !strings.Contains(out, "compaction") {
 			t.Errorf("%s during a compaction: %q", cmd, out)

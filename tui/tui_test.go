@@ -865,3 +865,28 @@ func TestNetworkCommand(t *testing.T) {
 		t.Fatal("bad argument not reported")
 	}
 }
+
+// /clear starts the next task from an empty context without quitting: the
+// conversation so far is neither sent with the next request nor shown.
+func TestClearStartsWithAnEmptyContext(t *testing.T) {
+	t.Setenv("OPENCODE_API_KEY", "test") // the fresh session builds a real provider; it is never called
+	m := newTestModel(t)
+	if err := m.s.Prompt(context.Background(), "the old task"); err != nil {
+		t.Fatal(err)
+	}
+	m.Update(nil)
+	before := m.s
+	if len(before.Harness.Messages()) == 0 {
+		t.Fatal("the prompt left no history to clear")
+	}
+	out := shown(m, func() tea.Cmd { return m.command("/clear") })
+	if m.s == before {
+		t.Fatalf("/clear kept the old session: %s", out)
+	}
+	if n := len(m.s.Harness.Messages()); n != 0 {
+		t.Fatalf("/clear left %d messages in the context", n)
+	}
+	if out := ansi.Strip(m.tr.text(m.r)); strings.Contains(out, "the old task") {
+		t.Fatalf("/clear left the old conversation on screen: %s", out)
+	}
+}
