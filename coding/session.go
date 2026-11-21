@@ -48,6 +48,9 @@ type Options struct {
 	// Loopback overrides private loopback access: "on" or "off".
 	// Empty uses settings (off by default).
 	Loopback string
+	// CodeMode is the code mode the session opens in: CodeModeOff,
+	// CodeModeOn or CodeModeExplore. Empty uses settings.
+	CodeMode string
 
 	// ExtraMCPServers are servers added to mcp.json's for this session, such
 	// as the ones an ACP client passes. They get mcp.json's rules; on a name
@@ -361,6 +364,12 @@ func Open(opts Options) (*Session, error) {
 	// or resume does not restart them; otherwise they start once the
 	// session is ready, in the background.
 	mode := opts.Settings.CodeModeSetting()
+	if opts.CodeMode != "" {
+		if !slices.Contains(codeModes, opts.CodeMode) {
+			return nil, fmt.Errorf("code mode must be one of %s, not %q", strings.Join(codeModes, ", "), opts.CodeMode)
+		}
+		mode = opts.CodeMode
+	}
 	codeMode := mode != CodeModeOff
 	freshMCP := opts.mcp == nil
 	s.mcp = opts.mcp
@@ -920,6 +929,9 @@ func (s *Session) Reopen(resume string) (*Session, error) {
 	opts.Sandbox = s.sandboxSet
 	s.sbMu.Lock()
 	opts.Network = s.networkSet
+	// The mode in effect, set by flag or switched since, carries over as
+	// the network setting does.
+	opts.CodeMode = s.CodeMode().Mode
 	opts.Loopback = s.loopbackSet
 	s.sbMu.Unlock()
 	if resume == "" {

@@ -189,7 +189,7 @@ use an ACP client extension. In Zed, add malachi to `settings.json`:
 ```
 
 then start a new malachi thread from the agent panel. `-model`, `-thinking`,
-`-trust`, `-sandbox` and `-network` in `args` apply to every session the
+`-trust`, `-sandbox`, `-network` and `-code-mode` in `args` apply to every session the
 editor opens; each session is opened in the project the editor names, and
 saved and resumed like any other.
 
@@ -351,7 +351,9 @@ instead, and a `view` tool shows it image files, which scripts cannot.
 Everything else, edits and commands included, stays a direct call. It is
 an experiment: compare the tokens a task takes with it on and off.
 
-The setting decides the mode a session starts in. To switch while it runs,
+The setting decides the mode a session starts in, unless `-code-mode
+off|on|explore` says otherwise. The mode in effect carries over to the next
+session on `/new`, `/resume` or RPC's `switch_session`. To switch while it runs,
 press `ctrl+x` in the TUI (off → on → explore) or use `/codemode`; editors
 get a Code mode option, and RPC clients `set_code_mode`.
 

@@ -129,3 +129,39 @@ func TestCodeModeCyclesWhileTheSessionRuns(t *testing.T) {
 	}
 	close(release)
 }
+
+// Options.CodeMode opens a session in a mode whatever the settings say,
+// and the mode in effect carries over to the session that replaces it, as
+// a frontend's /new or switch would otherwise lose it.
+func TestCodeModeOptionAndCarryOver(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	t.Setenv("OPENCODE_API_KEY", "test") // Reopen builds a real provider; it is never called
+	s, err := Open(Options{Cwd: cwd, Home: home, Settings: &Settings{}, Provider: fake.New(), NoSession: true, CodeMode: CodeModeExplore})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.CodeMode().Mode; got != CodeModeExplore {
+		t.Fatalf("opened in %q", got)
+	}
+	next, err := s.Reopen("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := next.CodeMode().Mode; got != CodeModeExplore {
+		t.Errorf("a new session went to %q", got)
+	}
+	if err := next.SetCodeMode(CodeModeOff); err != nil {
+		t.Fatal(err)
+	}
+	last, err := next.Reopen("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(last.Close)
+	if got := last.CodeMode().Mode; got != CodeModeOff {
+		t.Errorf("a switch made since did not carry over: %q", got)
+	}
+	if _, err := Open(Options{Cwd: cwd, Home: home, Settings: &Settings{}, Provider: fake.New(), NoSession: true, CodeMode: "sideways"}); err == nil {
+		t.Error("an unknown code mode was accepted")
+	}
+}

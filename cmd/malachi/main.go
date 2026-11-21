@@ -67,6 +67,7 @@ func run() int {
 		trustFlag   = flag.String("trust", "", `project trust for this run: "yes" to load this directory's instruction files, "no" to withhold them`)
 		networkSet  = flag.String("network", "", `"on" or "off": commands' network access in the sandbox for this run (default from settings: off)`)
 		loopbackSet = flag.String("loopback", "", `"on" or "off": loopback access for sandboxed commands with the network off (default from settings: on; on macOS only when asked for, and shared with local services)`)
+		codeModeSet = flag.String("code-mode", "", `"off", "on" or "explore" (read, grep and glob only through scripts): the code mode sessions open in (default from settings: on)`)
 		sandboxSet  = flag.String("sandbox", "", `"on" or "off" for this run (default from settings: on). Off lets commands and file tools reach everything you can`)
 	)
 	flag.BoolVar(cont, "continue", false, "same as -c")
@@ -106,6 +107,7 @@ func run() int {
 			Sandbox:       *sandboxSet,
 			Network:       *networkSet,
 			Loopback:      *loopbackSet,
+			CodeMode:      *codeModeSet,
 		})
 	}
 
@@ -120,6 +122,7 @@ func run() int {
 		Sandbox:       *sandboxSet,
 		Network:       *networkSet,
 		Loopback:      *loopbackSet,
+		CodeMode:      *codeModeSet,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "malachi:", err)
