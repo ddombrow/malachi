@@ -321,7 +321,24 @@ tool's fields, and `describeTool(name).details` gives the whole schema. An
 MCP tool's details carry the server's `structuredContent`, described by the
 server's own output schema when it declares one.
 
-A script can do nothing the model could not do one call at a time. It runs
+In a git repository scripts also get a `git` tool, which the model is not
+offered directly: `status`, `log`, `diff` and `show` (a file as of a
+revision), all as data, so one script can take a branch's diff and read
+around each hunk:
+
+```js
+const { details } = await tools.git({ action: "diff", base: "main" });
+return details.files.flatMap(f => f.hunks.map(h => `${f.path}:${h.new_start} ${h.header}`));
+```
+
+A diff from `base` starts where the branch left it, so the base's own later
+work stays out. The tool only looks; commits and the rest are still bash's.
+git runs in the sandbox as a command does, without the hooks, external
+diffs, textconv and fsmonitor programs the repository's configuration may
+name.
+
+A script can do nothing the model could not do one call at a time with the
+same tools and bash. It runs
 in QuickJS-ng compiled to WebAssembly, with no filesystem, network,
 environment or timers of its own, and each call it makes runs the real tool
 under the same sandbox, refusals included. Calls made together run

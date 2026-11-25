@@ -82,7 +82,7 @@ func (s *Session) toolsFor(mode string) []*agent.Tool {
 	if mode == CodeModeOff {
 		return s.coreTools
 	}
-	return withScripts(s.coreTools, s.toolOpts, s.diag, s.codeMode.record, s.mcp, mode == CodeModeExplore)
+	return withScripts(s.coreTools, gitToolFor(s.Cwd(), s.toolOpts), s.toolOpts, s.diag, s.codeMode.record, s.mcp, mode == CodeModeExplore)
 }
 
 // SetCodeMode changes the code mode for the rest of this session: the tools

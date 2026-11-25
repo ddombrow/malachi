@@ -55,7 +55,8 @@ var exploreGuidelines = []string{
 // advice on several files allows for scripts. With explore, read, grep and
 // glob are left out and the model reaches them only through scripts, whose
 // tool describes them in full; view shows it images, which scripts cannot.
-func withScripts(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScript func(codemode.Details), servers *MCPManager, explore bool) []*agent.Tool {
+// scriptOnly are reached only through scripts in either case.
+func withScripts(tools, scriptOnly []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScript func(codemode.Details), servers *MCPManager, explore bool) []*agent.Tool {
 	direct := map[string]bool{}
 	var offered, callable []*agent.Tool
 	for _, t := range tools {
@@ -80,10 +81,16 @@ func withScripts(tools []*agent.Tool, opts ToolOptions, diag *Diagnostics, onScr
 		callable = append(callable, t)
 		offered = append(offered, &c)
 	}
+	callable = append(callable, scriptOnly...)
 	script := newScriptTool(callable, opts, diag, onScript, servers, direct)
 	offered = codemode.Advertise(offered)
 	if explore {
-		script.PromptGuidelines = exploreGuidelines
+		script.PromptGuidelines = slices.Clone(exploreGuidelines)
+	}
+	if slices.ContainsFunc(scriptOnly, func(t *agent.Tool) bool { return t.Name == "git" }) {
+		script.PromptGuidelines = append(script.PromptGuidelines, gitGuideline)
+	}
+	if explore {
 		for _, t := range tools {
 			if t.Name == "read" {
 				offered = append(offered, newViewTool(t))

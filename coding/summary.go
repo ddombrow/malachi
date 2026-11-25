@@ -51,6 +51,14 @@ func SummarizeToolCall(name string, args map[string]any) string {
 			return "$ " + cmd + " (background job)"
 		}
 		return "$ " + cmd
+	case "git":
+		s := "git " + str("action")
+		for _, k := range []string{"commit", "base", "head", "rev", "path"} {
+			if v := strings.TrimSpace(str(k)); v != "" {
+				s += " " + v
+			}
+		}
+		return s
 	case "jobs":
 		s := "jobs " + str("action")
 		if id, ok := args["id"]; ok {
