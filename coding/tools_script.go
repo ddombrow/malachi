@@ -99,7 +99,7 @@ func newViewTool(read *agent.Tool) *agent.Tool {
 	return &agent.Tool{
 		Name:          "view",
 		Label:         "View",
-		Description:   "Show you an image file (png, jpg, gif or webp) so you can see it. Text files and PDFs are read in a script with tools.read.",
+		Description:   "Show you an image file (png, jpg, gif or webp) so you can see it. Text files are read in a script with tools.read.",
 		PromptSnippet: "Look at an image file",
 		Parallel:      true,
 		Parameters: map[string]any{
@@ -121,7 +121,7 @@ func newViewTool(read *agent.Tool) *agent.Tool {
 			if d, ok := res.Details.(map[string]any); ok && imageTypes[fmt.Sprint(d["mime_type"])] {
 				return res, nil // an image too large to show says so itself
 			}
-			return agent.ToolResult{}, errors.New("not an image: read text files and PDFs in a script, `return (await tools.read({path})).text`")
+			return agent.ToolResult{}, errors.New("not an image: read text files in a script, `return (await tools.read({path})).text`")
 		},
 	}
 }

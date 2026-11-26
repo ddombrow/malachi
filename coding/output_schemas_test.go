@@ -90,7 +90,6 @@ func TestOutputSchemasMatchDetails(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cwd, "a.txt"), []byte("alpha\nbeta\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	writePDF(t, filepath.Join(cwd, "doc.pdf"), "BT (alpha) Tj ET")
 	var img bytes.Buffer
 	if err := png.Encode(&img, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
 		t.Fatal(err)
@@ -124,7 +123,6 @@ func TestOutputSchemasMatchDetails(t *testing.T) {
 		};
 		await call("read text", "read", {path: "a.txt"});
 		await call("read window past the end", "read", {path: "a.txt", offset: 50});
-		await call("read pdf", "read", {path: "doc.pdf"});
 		await call("read image", "read", {path: "dot.png"});
 		await call("grep lines", "grep", {pattern: "alpha"});
 		await call("grep files", "grep", {pattern: "alpha", output: "files"});

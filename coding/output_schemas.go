@@ -39,10 +39,9 @@ func truncationSchema(description string) map[string]any {
 
 var readOutputSchema = object(map[string]any{
 	"path":       typed("string", "The file read, as given"),
-	"truncation": truncationSchema("How the text shown was cut to the window and output limits (text and PDFs)"),
-	"mime_type":  typed("string", "For images and PDFs: the detected type"),
+	"truncation": truncationSchema("How the text shown was cut to the window and output limits"),
+	"mime_type":  typed("string", "For images: the detected type"),
 	"bytes":      typed("integer", "For images: the image's size"),
-	"pages":      typed("integer", "For PDFs: the number of pages"),
 }, "path")
 
 var grepOutputSchema = object(map[string]any{

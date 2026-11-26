@@ -33,8 +33,8 @@ func NewReadTool(cwd string, opts ToolOptions) *agent.Tool {
 		Name:         "read",
 		OutputSchema: readOutputSchema,
 		Label:        "Read",
-		Description: fmt.Sprintf("Read the contents of a file. Supports text files, PDFs, and images (jpg, png, gif, webp). "+
-			"Images are sent to vision-capable models as attachments. For text and PDF content, output is truncated to "+
+		Description: fmt.Sprintf("Read the contents of a file. Supports text files and images (jpg, png, gif, webp). "+
+			"Images are sent to vision-capable models as attachments. Text output is truncated to "+
 			"%d lines or %dKB (whichever is hit first). Use offset/limit for large files. When you need the "+
 			"full file, continue with offset until complete.", MaxOutputLines, MaxOutputBytes/1024),
 		PromptSnippet: "Read file contents",
@@ -131,23 +131,9 @@ func executeRead(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 		}, nil
 	}
 	if mime == "application/pdf" {
-		reader, err := openPDF(f, info.Size())
-		if err != nil {
-			return agent.ToolResult{}, fmt.Errorf("Cannot read PDF %s: %w", path, err)
-		}
-		pages := func() (io.Reader, error) { return newPDFTextReader(reader), nil }
-		result, err := readWindow(raw, path, pages, offset, limit, hasLimit, map[string]any{
-			"mime_type": "application/pdf",
-			"pages":     reader.NumPage(),
-		})
-		if err != nil {
-			return agent.ToolResult{}, fmt.Errorf("Cannot extract text from PDF %s: %w", path, err)
-		}
-		if strings.TrimSpace(result.Text()) == "" {
-			result.Content = []agent.Content{&agent.TextContent{Text: fmt.Sprintf(
-				"No selectable text found in PDF [%s]. It may be scanned and require OCR.", path)}}
-		}
-		return result, nil
+		// Converting documents is for a tool made for it, such as an MCP
+		// document converter, not for read.
+		return agent.ToolResult{}, fmt.Errorf("Cannot read %s: it is a PDF, which read does not convert; use a document conversion tool if one is available", path)
 	}
 
 	// Text: stream the file, keeping only the requested window and only as
@@ -164,7 +150,7 @@ func executeRead(cwd string, opts ToolOptions, args map[string]any) (agent.ToolR
 		}
 		return f, nil
 	}
-	return readWindow(raw, path, text, offset, limit, hasLimit, nil)
+	return readWindow(raw, path, text, offset, limit, hasLimit)
 }
 
 // pastEndTailLines is how much of the end of a file read shows when asked
@@ -183,12 +169,12 @@ func (e *pastEndError) Error() string {
 // usually from a wrong guess at the length, and the last lines plus the
 // real length answer it in one call. open must return the content from the
 // start each time it is called.
-func readWindow(raw, path string, open func() (io.Reader, error), offset, limit int, hasLimit bool, details map[string]any) (agent.ToolResult, error) {
+func readWindow(raw, path string, open func() (io.Reader, error), offset, limit int, hasLimit bool) (agent.ToolResult, error) {
 	content, err := open()
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
-	result, err := readText(raw, path, content, offset, limit, hasLimit, details)
+	result, err := readText(raw, path, content, offset, limit, hasLimit)
 	past, ok := err.(*pastEndError)
 	if !ok {
 		return result, err
@@ -201,7 +187,7 @@ func readWindow(raw, path string, open func() (io.Reader, error), offset, limit 
 	if content, err = open(); err != nil {
 		return agent.ToolResult{}, err
 	}
-	result, err = readText(raw, path, content, start, n, true, details)
+	result, err = readText(raw, path, content, start, n, true)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -211,7 +197,7 @@ func readWindow(raw, path string, open func() (io.Reader, error), offset, limit 
 	return result, nil
 }
 
-func readText(raw, path string, content io.Reader, offset, limit int, hasLimit bool, details map[string]any) (agent.ToolResult, error) {
+func readText(raw, path string, content io.Reader, offset, limit int, hasLimit bool) (agent.ToolResult, error) {
 	start := 0
 	if offset > 0 {
 		start = offset - 1
@@ -244,7 +230,7 @@ func readText(raw, path string, content io.Reader, offset, limit int, hasLimit b
 		return agent.ToolResult{}, err
 	}
 	if !valid {
-		return agent.ToolResult{}, fmt.Errorf("Cannot read %s: file is not UTF-8 text or a supported image or PDF", path)
+		return agent.ToolResult{}, fmt.Errorf("Cannot read %s: file is not UTF-8 text or a supported image", path)
 	}
 	if start >= total {
 		return agent.ToolResult{}, &pastEndError{offset, total}
@@ -275,11 +261,7 @@ func readText(raw, path string, content io.Reader, offset, limit int, hasLimit b
 	default:
 		out = t.Content
 	}
-	if details == nil {
-		details = make(map[string]any, 2)
-	}
-	details["path"] = path
-	details["truncation"] = t
+	details := map[string]any{"path": path, "truncation": t}
 	return agent.ToolResult{
 		Content: []agent.Content{&agent.TextContent{Text: out}},
 		Details: details,

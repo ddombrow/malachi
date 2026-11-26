@@ -9,7 +9,6 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/landlock-lsm/go-landlock v0.10.1
-	github.com/ledongthuc/pdf v0.0.0-20261020125853-5e46805f718e
 	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/net v0.59.0
 	golang.org/x/sys v0.48.0
