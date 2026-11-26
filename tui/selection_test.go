@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/ddombrow/malachi/agent"
 	"github.com/ddombrow/malachi/sandbox"
 )
 
@@ -175,5 +176,57 @@ func TestLinesWithoutGutterKeepTheirFirstColumns(t *testing.T) {
 	}
 	if g := m.lineGutter(strings.Repeat(" ", m.r.gutterWidth(iconReply)) + "continued"); g != m.r.gutterWidth(iconReply) {
 		t.Fatalf("indented line gutter = %d", g)
+	}
+}
+
+// codeModel shows a reply holding a code block and returns the screen row
+// of the block's copy label and the label's column.
+func codeModel(t *testing.T, reply string) (*model, int, int) {
+	t.Helper()
+	m := newTestModel(t)
+	msg := agent.NewAssistantMessage("m")
+	msg.Content = []agent.Content{&agent.TextContent{Text: reply}}
+	m.Update(printMsg{func(r *renderer) string { return r.assistantMessage(msg) }})
+	for i, l := range strings.Split(m.vp.View(), "\n") {
+		if start, _, ok := m.r.copyLabelAt(l); ok {
+			return m, i, start
+		}
+	}
+	t.Fatalf("no copy label:\n%s", ansi.Strip(m.vp.View()))
+	return nil, 0, 0
+}
+
+// The label copies the block as written: tabs kept, and a line too long
+// for the screen whole rather than cut where it wrapped.
+func TestCopyLabelCopiesCodeBlock(t *testing.T) {
+	clip := fakeClipboard(t)
+	code := "func f() {\n\treturn " + strings.Repeat("x + ", 40) + "1\n}"
+	m, row, col := codeModel(t, "Here:\n\n```go\n"+code+"\n```\n\nand after.")
+	m.Update(tea.MouseClickMsg{X: col + 1, Y: row, Button: tea.MouseLeft})
+	_, cmd := m.Update(tea.MouseReleaseMsg{X: col + 1, Y: row, Button: tea.MouseLeft})
+	runCmd(cmd)
+	if got := clip(); got != code {
+		t.Fatalf("clipboard = %q, want %q", got, code)
+	}
+	if !strings.Contains(m.statusLine(), "copied code") {
+		t.Fatalf("status: %s", ansi.Strip(m.statusLine()))
+	}
+}
+
+func TestClickBesideCopyLabelDoesNotCopy(t *testing.T) {
+	m, row, col := codeModel(t, "```go\nreturn 1\n```")
+	m.Update(tea.MouseClickMsg{X: col - 3, Y: row, Button: tea.MouseLeft})
+	if _, cmd := m.Update(tea.MouseReleaseMsg{X: col - 3, Y: row, Button: tea.MouseLeft}); cmd != nil {
+		t.Fatal("a click off the label copied")
+	}
+}
+
+// Selecting across a code block copies its text, not its label.
+func TestSelectionSkipsCopyLabel(t *testing.T) {
+	m, row, _ := codeModel(t, "```go\nreturn 1\n```")
+	m.Update(tea.MouseClickMsg{X: 0, Y: row, Button: tea.MouseLeft})
+	m.Update(tea.MouseMotionMsg{X: 40, Y: row + 1, Button: tea.MouseLeft})
+	if got := m.selectedText(); strings.Contains(got, copyLabel) || !strings.Contains(got, "return 1") {
+		t.Fatalf("selection = %q", got)
 	}
 }

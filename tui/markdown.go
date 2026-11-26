@@ -229,13 +229,17 @@ func (r *renderer) mdBlocks(src string, width int, code *codeCache) string {
 	b := []byte(src)
 	doc := mdParser.Parse(text.NewReader(b), parser.WithContext(parser.NewContext()))
 	w := mdWriter{src: b, st: r.md, code: code}
+	if code == nil {
+		w.codes = r.codes
+	}
 	return w.children(doc, width, "\n\n")
 }
 
 type mdWriter struct {
-	src  []byte
-	st   mdStyles
-	code *codeCache // nil unless streaming
+	src   []byte
+	st    mdStyles
+	code  *codeCache        // nil unless streaming
+	codes map[string]string // where finished code blocks are kept for copying
 }
 
 // children renders each block child of n and joins them with sep.
@@ -297,7 +301,8 @@ func (w *mdWriter) codeBlock(lines *text.Segments, lang string, width int) strin
 		seg := lines.At(i)
 		b.Write(seg.Value(w.src))
 	}
-	code := expandTabs(strings.TrimRight(b.String(), "\r\n "), 4)
+	source := strings.TrimRight(b.String(), "\r\n ")
+	code := expandTabs(source, 4)
 	if code == "" {
 		return ""
 	}
@@ -308,18 +313,99 @@ func (w *mdWriter) codeBlock(lines *text.Segments, lang string, width int) strin
 	}
 	// The block sits on a tinted panel the full width of the text, padded
 	// by a row above and below and two columns either side. Copying trims
-	// the padding.
+	// the padding. The top row holds the copy label (see codeAt).
 	const padX = 2
 	bg := w.st.codeBg
-	blank := bg.render(strings.Repeat(" ", width))
-	rows := []string{blank}
+	top := bg.render(strings.Repeat(" ", width))
+	if width >= len(copyLabel)+2*padX {
+		top = bg.render(strings.Repeat(" ", width-len(copyLabel)-1)) + w.st.quote.on(bg).render(copyLabel) + bg.render(" ")
+	}
+	rows := []string{top}
+	var plain []string
 	for _, line := range hl {
 		for _, row := range hardWrapCells(line, width-2*padX) {
 			right := max(0, width-padX-cellsWidth(row))
 			rows = append(rows, bg.render(strings.Repeat(" ", padX))+renderCells(row, bg)+bg.render(strings.Repeat(" ", right)))
+			plain = append(plain, cellsText(row))
 		}
 	}
-	return strings.Join(append(rows, blank), "\n")
+	if w.codes != nil {
+		w.codes[codeKey(plain)] = source
+	}
+	return strings.Join(append(rows, bg.render(strings.Repeat(" ", width))), "\n")
+}
+
+// copyLabel sits at the right of a code block's top row; clicking it
+// copies the block.
+const copyLabel = "[copy]"
+
+// codeKey identifies a code block by its rows as drawn, with the padding
+// (and whatever indents the block on screen) trimmed, so a click on the
+// drawn block can find the source it came from.
+func codeKey(rows []string) string {
+	trimmed := make([]string, len(rows))
+	for i, r := range rows {
+		trimmed[i] = strings.TrimSpace(r)
+	}
+	return strings.Join(trimmed, "\n")
+}
+
+func cellsText(cs []cell) string {
+	var b strings.Builder
+	for _, c := range cs {
+		b.WriteString(c.g)
+	}
+	return b.String()
+}
+
+// panelSeq is the escape sequence that opens a code block's tint; every
+// row of a panel carries it and no other text does.
+func (r *renderer) panelSeq() string {
+	return strings.TrimSuffix(r.md.codeBg.render("x"), "x\x1b[m")
+}
+
+// copyLabelAt reports whether raw, a rendered transcript line, is the top
+// row of a code block, and the columns its copy label spans.
+func (r *renderer) copyLabelAt(raw string) (start, end int, ok bool) {
+	if !strings.Contains(raw, r.panelSeq()) {
+		return 0, 0, false
+	}
+	// The viewport may pad the row, so find the label rather than
+	// counting from the end.
+	plain := ansi.Strip(raw)
+	i := strings.LastIndex(plain, copyLabel)
+	if i < 0 || strings.TrimSpace(plain[i+len(copyLabel):]) != "" {
+		return 0, 0, false
+	}
+	start = ansi.StringWidth(plain[:i])
+	end = start + len(copyLabel)
+	// Only the gutter may sit before the label: the rest of the row is tint.
+	if strings.TrimSpace(ansi.Cut(plain, r.gutterWidth(iconReply), start)) != "" {
+		return 0, 0, false
+	}
+	return start, end, true
+}
+
+// codeAt returns the source of the code block whose copy label is at
+// (line, col) of the content that line(i) reads, n lines long.
+func (r *renderer) codeAt(line func(int) string, n, i, col int) (string, bool) {
+	if i < 0 || i >= n {
+		return "", false
+	}
+	start, end, ok := r.copyLabelAt(line(i))
+	if !ok || col < start || col >= end {
+		return "", false
+	}
+	seq := r.panelSeq()
+	var rows []string
+	for j := i + 1; j < n && strings.Contains(line(j), seq); j++ {
+		rows = append(rows, ansi.Strip(line(j)))
+	}
+	if len(rows) == 0 {
+		return "", false
+	}
+	src, ok := r.codes[codeKey(rows[:len(rows)-1])] // the last row is padding
+	return src, ok
 }
 
 // highlight splits code into lines of styled cells. While streaming, the

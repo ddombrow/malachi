@@ -47,7 +47,8 @@ func newStyles(isDark bool) styles {
 type renderer struct {
 	st     styles
 	md     mdStyles
-	stream mdStream // the reply being streamed, rendered so far
+	stream mdStream          // the reply being streamed, rendered so far
+	codes  map[string]string // code blocks drawn, for their copy labels: codeKey → source
 	width  int
 	isDark bool
 	icons  map[string]string
@@ -55,7 +56,7 @@ type renderer struct {
 }
 
 func newRenderer(width int, isDark bool, icons, cwd string) *renderer {
-	return &renderer{st: newStyles(isDark), md: newMDStyles(isDark), width: width, isDark: isDark, icons: iconSet(icons), cwd: cwd}
+	return &renderer{st: newStyles(isDark), md: newMDStyles(isDark), codes: map[string]string{}, width: width, isDark: isDark, icons: iconSet(icons), cwd: cwd}
 }
 
 // Every transcript item starts on a new line; the transcript adds the blank
