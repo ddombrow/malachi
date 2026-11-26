@@ -3,11 +3,9 @@ package tui
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"unicode"
 
-	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -48,7 +46,8 @@ func newStyles(isDark bool) styles {
 // renderer turns transcript items into styled text.
 type renderer struct {
 	st     styles
-	md     *glamour.TermRenderer
+	md     mdStyles
+	stream mdStream // the reply being streamed, rendered so far
 	width  int
 	isDark bool
 	icons  map[string]string
@@ -56,52 +55,8 @@ type renderer struct {
 }
 
 func newRenderer(width int, isDark bool, icons, cwd string) *renderer {
-	r := &renderer{st: newStyles(isDark), width: width, isDark: isDark, icons: iconSet(icons), cwd: cwd}
-	style := "light"
-	if isDark {
-		style = "dark"
-	}
-	// Leave room for the icon gutter; glamour's own 2-space margin is
-	// stripped in markdown().
-	wrap := max(20, width-r.gutterWidth(iconReply)+glamourMargin-1)
-	if md, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style), glamour.WithWordWrap(wrap)); err == nil {
-		r.md = md
-	}
-	return r
+	return &renderer{st: newStyles(isDark), md: newMDStyles(isDark), width: width, isDark: isDark, icons: iconSet(icons), cwd: cwd}
 }
-
-// glamourMargin is the plain-space left margin glamour's standard styles
-// put on every line.
-const glamourMargin = 2
-
-func (r *renderer) markdown(text string) string {
-	if r.md == nil || strings.TrimSpace(text) == "" {
-		return text
-	}
-	out, err := r.md.Render(text)
-	if err != nil {
-		return text
-	}
-	// Glamour pads every line to the wrap width; trailing blanks make
-	// copying text ugly, so strip them (ANSI-aware). Also drop
-	// its left margin so the text sits right after the icon gutter.
-	lines := strings.Split(strings.Trim(out, "\n"), "\n")
-	for i, l := range lines {
-		l = strings.TrimPrefix(l, strings.Repeat(" ", glamourMargin))
-		l = trailingBlank.ReplaceAllString(l, "")
-		if l != "" {
-			l += "\x1b[0m"
-		}
-		lines[i] = l
-	}
-	for len(lines) > 0 && lines[0] == "" {
-		lines = lines[1:]
-	}
-	return strings.Join(lines, "\n")
-}
-
-// trailingBlank matches trailing spaces interleaved with SGR sequences.
-var trailingBlank = regexp.MustCompile(`(?:\x1b\[[0-9;]*m| )+$`)
 
 // Every transcript item starts on a new line; the transcript adds the blank
 // line between items.

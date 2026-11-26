@@ -785,10 +785,9 @@ func (m *model) live() string {
 			b.WriteString(item(m.r.gutter(iconThinking, m.r.st.thinking, m.r.st.thinking.Render(strings.Join(lines, "\n")))))
 		}
 		if text := strings.TrimLeft(m.partial.Text(), "\n"); text != "" {
-			// A tab has no width of its own, so wrapping would let the line
-			// run past the edge; the finished message expands them too.
-			lines := wrapLines(expandTabs(text, 4), m.contentWidth()-m.r.gutterWidth(iconReply)-1)
-			b.WriteString(item(m.r.gutter(iconReply, lipgloss.NewStyle(), strings.Join(lines, "\n"))))
+			// Drawn as markdown while it streams, so the finished message
+			// does not reflow when it lands.
+			b.WriteString(item(m.r.gutter(iconReply, lipgloss.NewStyle(), m.r.markdownStream(text))))
 		}
 		for _, c := range m.partial.ToolCalls() {
 			b.WriteString(item(m.r.gutter(toolIcon(c.Name), m.r.st.toolRun, m.r.st.dim.Render("preparing "+c.Name+"…"))))
