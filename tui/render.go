@@ -3,11 +3,10 @@ package tui
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
-	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -48,7 +47,9 @@ func newStyles(isDark bool) styles {
 // renderer turns transcript items into styled text.
 type renderer struct {
 	st     styles
-	md     *glamour.TermRenderer
+	md     mdStyles
+	stream mdStream          // the reply being streamed, rendered so far
+	codes  map[string]string // code blocks drawn, for their copy labels: codeKey → source
 	width  int
 	isDark bool
 	icons  map[string]string
@@ -56,52 +57,8 @@ type renderer struct {
 }
 
 func newRenderer(width int, isDark bool, icons, cwd string) *renderer {
-	r := &renderer{st: newStyles(isDark), width: width, isDark: isDark, icons: iconSet(icons), cwd: cwd}
-	style := "light"
-	if isDark {
-		style = "dark"
-	}
-	// Leave room for the icon gutter; glamour's own 2-space margin is
-	// stripped in markdown().
-	wrap := max(20, width-r.gutterWidth(iconReply)+glamourMargin-1)
-	if md, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style), glamour.WithWordWrap(wrap)); err == nil {
-		r.md = md
-	}
-	return r
+	return &renderer{st: newStyles(isDark), md: newMDStyles(isDark), codes: map[string]string{}, width: width, isDark: isDark, icons: iconSet(icons), cwd: cwd}
 }
-
-// glamourMargin is the plain-space left margin glamour's standard styles
-// put on every line.
-const glamourMargin = 2
-
-func (r *renderer) markdown(text string) string {
-	if r.md == nil || strings.TrimSpace(text) == "" {
-		return text
-	}
-	out, err := r.md.Render(text)
-	if err != nil {
-		return text
-	}
-	// Glamour pads every line to the wrap width; trailing blanks make
-	// copying text ugly, so strip them (ANSI-aware). Also drop
-	// its left margin so the text sits right after the icon gutter.
-	lines := strings.Split(strings.Trim(out, "\n"), "\n")
-	for i, l := range lines {
-		l = strings.TrimPrefix(l, strings.Repeat(" ", glamourMargin))
-		l = trailingBlank.ReplaceAllString(l, "")
-		if l != "" {
-			l += "\x1b[0m"
-		}
-		lines[i] = l
-	}
-	for len(lines) > 0 && lines[0] == "" {
-		lines = lines[1:]
-	}
-	return strings.Join(lines, "\n")
-}
-
-// trailingBlank matches trailing spaces interleaved with SGR sequences.
-var trailingBlank = regexp.MustCompile(`(?:\x1b\[[0-9;]*m| )+$`)
 
 // Every transcript item starts on a new line; the transcript adds the blank
 // line between items.
@@ -161,34 +118,48 @@ func expandTabs(text string, tabWidth int) string {
 	return b.String()
 }
 
-// thinkingBlock shows at most a few lines of reasoning, dimmed.
-func (r *renderer) thinkingBlock(text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
+// hasThinking reports whether the model reasoned before answering, even
+// when the reasoning came back redacted or empty.
+func hasThinking(m *agent.AssistantMessage) bool {
+	for _, c := range m.Content {
+		if _, ok := c.(*agent.ThinkingContent); ok {
+			return true
+		}
 	}
-	lines := wrapLines(text, r.width-r.gutterWidth(iconThinking)-1)
-	const keep = 3
-	more := ""
-	if len(lines) > keep {
-		more = fmt.Sprintf(" … (+%d lines)", len(lines)-keep)
-		lines = lines[:keep]
+	return false
+}
+
+// thoughtMarker is what reasoning leaves in the transcript: how long it
+// took and how many tokens it spent, not the reasoning itself. A message
+// loaded from a saved session has no timing (d is 0).
+func (r *renderer) thoughtMarker(d time.Duration, u agent.Usage) string {
+	text := "thought"
+	if d > 0 {
+		text += " for " + thoughtDuration(d)
 	}
-	for i, l := range lines {
-		lines[i] = r.st.thinking.Render(l)
+	if u.Reasoning != nil && *u.Reasoning > 0 {
+		text += " · " + tokens(*u.Reasoning) + " tokens"
 	}
-	if more != "" {
-		lines[len(lines)-1] += r.st.dim.Render(more)
+	return r.gutter(iconThinking, r.st.thinking, r.st.thinking.Render(text))
+}
+
+func thoughtDuration(d time.Duration) string {
+	switch {
+	case d < time.Second:
+		return "<1s"
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
 	}
-	return r.gutter(iconThinking, r.st.thinking, strings.Join(lines, "\n"))
+	return fmt.Sprintf("%dm %02ds", int(d.Minutes()), int(d.Seconds())%60)
 }
 
 // assistantMessage renders a completed assistant message (without its tool
 // calls, which are printed as they execute).
-func (r *renderer) assistantMessage(m *agent.AssistantMessage) string {
+// thought is how long the model reasoned, or 0 when that is not known.
+func (r *renderer) assistantMessage(m *agent.AssistantMessage, thought time.Duration) string {
 	var parts []string
-	if t := r.thinkingBlock(m.ThinkingText()); t != "" {
-		parts = append(parts, item(t))
+	if hasThinking(m) {
+		parts = append(parts, item(r.thoughtMarker(thought, m.Usage)))
 	}
 	if text := m.Text(); strings.TrimSpace(text) != "" {
 		parts = append(parts, item(r.gutter(iconReply, lipgloss.NewStyle(), r.markdown(text))))
@@ -331,7 +302,7 @@ func (r *renderer) history(msgs []agent.Message) []string {
 		case *agent.UserMessage:
 			appendEntry(r.userMessage(v.Content.String()), true)
 		case *agent.AssistantMessage:
-			if s := r.assistantMessage(v); s != "" {
+			if s := r.assistantMessage(v, 0); s != "" {
 				appendEntry(s, false)
 			}
 			for _, c := range v.ToolCalls() {
@@ -542,36 +513,6 @@ func takeWidth(s string, width int) (head, tail string) {
 		end = 1
 	}
 	return string(runes[:end]), string(runes[end:])
-}
-
-// wrapLines hard-wraps text to width for the live area, counting display
-// cells so CJK and emoji don't overflow.
-func wrapLines(s string, width int) []string {
-	if width < 10 {
-		width = 10
-	}
-	var out []string
-	for _, line := range strings.Split(s, "\n") {
-		var cur strings.Builder
-		curW := 0
-		for _, r := range line {
-			// Printable ASCII is one cell; only the rest needs measuring,
-			// which matters because the live area re-wraps on every token.
-			w := 1
-			if r < ' ' || r > '~' {
-				w = lipgloss.Width(string(r))
-			}
-			if curW > 0 && curW+w > width {
-				out = append(out, cur.String())
-				cur.Reset()
-				curW = 0
-			}
-			cur.WriteRune(r)
-			curW += w
-		}
-		out = append(out, cur.String())
-	}
-	return out
 }
 
 func shortenHome(p string) string {

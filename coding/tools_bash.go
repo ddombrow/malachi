@@ -75,6 +75,15 @@ func (o ToolOptions) policy() sandbox.Policy {
 	return o.Sandbox()
 }
 
+// command returns a command confined by pol, in the namespace the session's
+// commands share where there is one.
+func (o ToolOptions) command(ctx context.Context, pol sandbox.Policy, name string, args ...string) (*exec.Cmd, error) {
+	if o.jobs != nil {
+		return o.jobs.command(ctx, pol, name, args...)
+	}
+	return sandbox.Command(ctx, pol, name, args...)
+}
+
 var defaultCommandEnv = []string{
 	"PATH", "HOME", "TMPDIR", "TMP", "TEMP",
 	"LANG", "LC_ALL", "LC_CTYPE", "TERM", "COLORTERM", "NO_COLOR",
@@ -317,12 +326,7 @@ func executeBash(ctx context.Context, cwd string, opts ToolOptions, args map[str
 	}
 
 	pol := opts.policy()
-	var cmd *exec.Cmd
-	if opts.jobs != nil {
-		cmd, err = opts.jobs.command(runCtx, pol, shellPath(), "-c", command)
-	} else {
-		cmd, err = sandbox.Command(runCtx, pol, shellPath(), "-c", command)
-	}
+	cmd, err := opts.command(runCtx, pol, shellPath(), "-c", command)
 	if err != nil {
 		return agent.ToolResult{}, fmt.Errorf("%v. Commands cannot run until that is fixed or the user turns the sandbox off (-sandbox off)", err)
 	}

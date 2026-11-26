@@ -374,8 +374,9 @@ func (m *model) compactSummary(res *coding.SummarizeResult) {
 	m.tr.add(func(r *renderer) string {
 		return r.gutter(iconCompacted, r.st.dim, r.markdown(strings.TrimSpace(res.Summary)))
 	})
+	// The checks behind these are heuristics; the compaction went through.
 	for _, w := range res.Warnings {
-		m.tr.add(func(r *renderer) string { return r.gutter(iconError, r.st.toolErr, r.st.toolErr.Render(w)) })
+		m.tr.add(func(r *renderer) string { return r.gutter(iconWarning, r.st.toolRun, r.st.toolRun.Render(w)) })
 	}
 }
 

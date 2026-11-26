@@ -116,7 +116,13 @@ func (m *model) handleMouse(msg tea.MouseMsg) tea.Cmd {
 		}
 		m.sel.dragging = false
 		if !m.sel.active {
-			m.sel = selection{} // a click, not a drag
+			// A click, not a drag: on a code block's copy label it copies
+			// the block.
+			p := m.sel.anchor
+			m.sel = selection{}
+			if code, ok := m.r.codeAt(m.vp.Line, m.vp.TotalLineCount(), p.line, p.col); ok {
+				return m.copyText(code, "copied code")
+			}
 			return nil
 		}
 		text := m.selectedText()
@@ -138,9 +144,10 @@ func (m *model) selectedText() string {
 	start, end := m.sel.bounds()
 	var out []string
 	for i := start.line; i <= end.line && i < m.vp.TotalLineCount(); i++ {
-		plain := ansi.Strip(m.vp.Line(i))
+		raw := m.vp.Line(i)
+		plain := ansi.Strip(raw)
 		c0, c1, ok := m.sel.span(i, ansi.StringWidth(plain), m.lineGutter(plain))
-		if !ok {
+		if _, _, label := m.r.copyLabelAt(raw); !ok || label {
 			out = append(out, "")
 			continue
 		}

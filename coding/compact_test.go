@@ -823,3 +823,40 @@ func TestCompactBoundaryKeepsMoreThanALatePrompt(t *testing.T) {
 		t.Fatalf("boundary = %d, %v; want the user message at %d", keepFrom, err, at)
 	}
 }
+
+// A long session names many things once in passing early on. Those are what a
+// summary should compress, so they do not fill the sample; the names the work
+// kept coming back to, most of them recent, are what it is checked for.
+func TestSummaryIsCheckedForRecurringNamesNotTheOldestOnes(t *testing.T) {
+	var messages []agent.Message
+	for i := range 80 {
+		messages = append(messages, agent.NewUserText(fmt.Sprintf("glance at `oldHelper%d` in old/file%d.go", i, i)))
+	}
+	for range 3 {
+		messages = append(messages,
+			agent.NewUserText("keep going on coding/compact.go and `distinctiveIdentifiers`"),
+			assistantText("updated `distinctiveIdentifiers` in coding/compact.go"))
+	}
+	ids := distinctiveIdentifiers(messages)
+	if len(ids) != 2 || ids[0] != "coding/compact.go" && ids[0] != "distinctiveIdentifiers" {
+		t.Fatalf("only the recurring names should be checked: %v", ids)
+	}
+	summary := "## Goal\nRework `distinctiveIdentifiers` in coding/compact.go.\n\n## Progress\nUnderway.\n\n" +
+		strings.Repeat("Nothing else is pending. ", 10)
+	if w := validateSummary(summary, messages); len(w) != 0 {
+		t.Fatalf("a summary that kept the recurring names should not warn: %v", w)
+	}
+}
+
+// A name the previous handover carried was already judged worth keeping, so
+// one mention of it is enough to be checked for.
+func TestPreviousHandoverNamesAreCheckedForOnOneMention(t *testing.T) {
+	messages := []agent.Message{
+		&agent.CompactionSummaryMessage{Summary: "## Goal\nFix sandbox/policy.go."},
+		agent.NewUserText("and a one-off look at misc/once.go"),
+	}
+	ids := distinctiveIdentifiers(messages)
+	if len(ids) != 1 || ids[0] != "sandbox/policy.go" {
+		t.Fatalf("want only the handover's name: %v", ids)
+	}
+}
