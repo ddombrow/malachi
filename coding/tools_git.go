@@ -27,11 +27,11 @@ const (
 	maxGitListBytes = 16 << 20
 )
 
-var gitActions = []string{"status", "log", "diff", "show"}
+var gitActions = []string{"status", "log", "diff", "show", "blame"}
 
 // gitGuideline is the prompt's advice on the git tool, which the model is
 // offered only through scripts.
-const gitGuideline = "To review changes or look through history, call git in a script: its details are data (changed files, hunks with line numbers, commits), so one script can take a branch's diff and read around each hunk that matters. Commit, and change anything else in the repository, with bash."
+const gitGuideline = "To review changes, look through history or find the commit behind a line, call git in a script: its details are data (changed files, hunks with line numbers, commits), so one script can take a branch's diff and read around each hunk that matters. Commit, and change anything else in the repository, with bash."
 
 // NewGitTool returns the git tool for the repository holding cwd: a script's
 // view of its state and history as data. It only looks; commits stay with
@@ -53,20 +53,23 @@ func NewGitTool(cwd string, opts ToolOptions) *agent.Tool {
 			fmt.Sprintf("- log: details.commits, newest first [{hash, parents, author, date, refs, subject, body, files?: [{path, old_path?, status}]}]. rev takes a range such as \"main..HEAD\". At most %d commits; raise limit for more.\n", DefaultGitLogLimit) +
 			"- diff: details.files [{path, old_path?, status, binary, additions, deletions, hunks, hunks_omitted?}] and details.base, the commit compared with. A hunk is {header, old_start, old_lines, new_start, new_lines, text, lines: [{op: \"+\", \"-\" or \" \", text, old?, new?}]}, old and new being line numbers. " +
 			"With no arguments: every uncommitted change to tracked files (untracked files are only in status). {base: \"main\"}: this branch's work since it left main, uncommitted changes included; add head: \"HEAD\" for commits only. {commit: rev}: what one commit changed. {staged: true}: what would be committed.\n" +
-			"- show: details.content, the file at path as of rev (default HEAD). For a diff's old side, use rev details.base and old_path, or path when there is none.",
+			"- show: details.content, the file at path as of rev (default HEAD). For a diff's old side, use rev details.base and old_path, or path when there is none.\n" +
+			"- blame: which commit last changed each line of path, as it is now or as of rev; start and end narrow it to those lines. details.lines [{line, text, commit, orig_line, orig_path?}] (commit is absent for an uncommitted line; orig_path is where it was when that commit wrote it, if the file moved since) and details.commits [{hash, author, date, subject}], newest first. To see why a line changed, diff that commit.",
 		Parallel: true,
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"action":  map[string]any{"type": "string", "enum": gitActions, "description": "What to look at"},
-				"rev":     map[string]any{"type": "string", "description": "log: a revision or range; show: a revision (default HEAD)"},
+				"rev":     map[string]any{"type": "string", "description": "log: a revision or range; show: a revision (default HEAD); blame: a revision (default the working tree)"},
 				"base":    map[string]any{"type": "string", "description": "diff: compare from where the branch left this revision (default HEAD)"},
 				"head":    map[string]any{"type": "string", "description": "diff: compare to this revision (default: the working tree)"},
 				"exact":   map[string]any{"type": "boolean", "description": "diff: compare from base itself, not from where the branch left it"},
 				"commit":  map[string]any{"type": "string", "description": "diff: one commit, against its first parent"},
 				"staged":  map[string]any{"type": "boolean", "description": "diff: compare to the index instead of the working tree"},
 				"context": map[string]any{"type": "integer", "description": "diff: unchanged lines around each change (default 3)"},
-				"path":    map[string]any{"type": "string", "description": "show: the file"},
+				"path":    map[string]any{"type": "string", "description": "show, blame: the file"},
+				"start":   map[string]any{"type": "integer", "description": "blame: the first line (default 1)"},
+				"end":     map[string]any{"type": "integer", "description": "blame: the last line (default the file's last)"},
 				"paths":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "status, log, diff: only these files, directories or pathspecs, relative to the working directory"},
 				"search":  map[string]any{"type": "string", "description": "log: only commits that change how often this text occurs"},
 				"files":   map[string]any{"type": "boolean", "description": "log: list each commit's changed files"},
@@ -115,6 +118,8 @@ func (g *gitTool) execute(ctx context.Context, args map[string]any) (agent.ToolR
 		return g.diff(ctx, repo.Top, args)
 	case "show":
 		return g.show(ctx, repo.Top, args)
+	case "blame":
+		return g.blame(ctx, repo.Top, args)
 	}
 	return agent.ToolResult{}, fmt.Errorf("action must be one of %s, not %q", strings.Join(gitActions, ", "), action)
 }
@@ -537,21 +542,9 @@ func (g *gitTool) show(ctx context.Context, top string, args map[string]any) (ag
 	if rev == "" {
 		rev = "HEAD"
 	}
-	raw, err := strArg(args, "path")
+	rel, err := g.repoPath(top, args)
 	if err != nil {
 		return agent.ToolResult{}, err
-	}
-	// The path is taken as it is spelled: the file need not exist now, and a
-	// link in the working tree says nothing of the tree at rev. Only the
-	// working directory is resolved, so an absolute path through a link to
-	// it, as /tmp is on macOS, still lands inside the repository.
-	path := resolvePath(g.cwd, raw)
-	rel, err := filepath.Rel(top, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
-		rel, err = filepath.Rel(top, filepath.Join(sandbox.Canonical(filepath.Dir(path)), filepath.Base(path)))
-	}
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
-		return agent.ToolResult{}, fmt.Errorf("%s is not a file in the repository at %s", raw, top)
 	}
 	out, cut, err := g.run(ctx, "", MaxScriptOutputBytes, "cat-file", "blob", rev+":"+filepath.ToSlash(rel))
 	if err != nil {
@@ -564,6 +557,27 @@ func (g *gitTool) show(ctx context.Context, top string, args map[string]any) (ag
 	}
 	details["content"] = out
 	return gitResult(out, details), nil
+}
+
+// repoPath is the path argument relative to the repository's top level.
+// It is taken as it is spelled: the file need not exist now, and a link in
+// the working tree says nothing of the tree at a revision. Only the working
+// directory is resolved, so an absolute path through a link to it, as /tmp
+// is on macOS, still lands inside the repository.
+func (g *gitTool) repoPath(top string, args map[string]any) (string, error) {
+	raw, err := strArg(args, "path")
+	if err != nil {
+		return "", err
+	}
+	path := resolvePath(g.cwd, raw)
+	rel, err := filepath.Rel(top, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+		rel, err = filepath.Rel(top, filepath.Join(sandbox.Canonical(filepath.Dir(path)), filepath.Base(path)))
+	}
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", fmt.Errorf("%s is not a file in the repository at %s", raw, top)
+	}
+	return rel, nil
 }
 
 // gitResult is a result whose text is cut to the display limits. Nothing is

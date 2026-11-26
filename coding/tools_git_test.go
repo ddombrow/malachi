@@ -87,6 +87,7 @@ type gitOut struct {
 	Ahead, Behind                int
 	Files                        []gitAnyFile
 	Commits                      []gitCommit
+	Lines                        []gitBlameLine
 	Path, Content                string
 	Binary, Truncated            bool
 	HitLimit                     bool `json:"hit_limit"`
@@ -222,6 +223,51 @@ func TestGitLog(t *testing.T) {
 	}
 	if out = gitDetails(t, tool, map[string]any{"action": "log", "rev": "main..main"}); len(out.Commits) != 0 || out.text != "No commits." {
 		t.Errorf("empty range: %+v", out)
+	}
+}
+
+// Blame names the commit behind each line, follows the file through a
+// move, and marks what is not committed yet.
+func TestGitBlame(t *testing.T) {
+	dir := testRepo(t, nil)
+	write(t, dir, "f.txt", "a\nb\nc\n")
+	testGit(t, dir, "add", "f.txt")
+	testGit(t, dir, "commit", "-q", "--date=2026-01-01T00:00:00+01:00", "-m", "add f")
+	write(t, dir, "f.txt", "a\nB\nc\n")
+	testGit(t, dir, "commit", "-q", "--date=2026-02-01T00:00:00-05:00", "-am", "capital B")
+	testGit(t, dir, "mv", "f.txt", "g.txt")
+	testGit(t, dir, "commit", "-q", "--date=2026-03-01T00:00:00Z", "-m", "move")
+	write(t, dir, "g.txt", "a\nB\nc\nd\n")
+	tool := NewGitTool(dir, ToolOptions{})
+
+	out := gitDetails(t, tool, map[string]any{"action": "blame", "path": "g.txt"})
+	if len(out.Lines) != 4 || len(out.Commits) != 2 {
+		t.Fatalf("blame: %+v %+v", out.Lines, out.Commits)
+	}
+	added, capital := out.Commits[1], out.Commits[0] // newest first
+	if added.Subject != "add f" || added.Author != "Ann" || added.Date != "2026-01-01T00:00:00+01:00" || capital.Subject != "capital B" {
+		t.Errorf("commits: %+v", out.Commits)
+	}
+	if l := out.Lines[0]; l != (gitBlameLine{Line: 1, Text: "a", Commit: added.Hash, OrigLine: 1, OrigPath: "f.txt"}) {
+		t.Errorf("line 1: %+v", l)
+	}
+	if l := out.Lines[1]; l.Commit != capital.Hash || l.Text != "B" || l.OrigPath != "f.txt" {
+		t.Errorf("line 2: %+v", l)
+	}
+	if l := out.Lines[3]; l != (gitBlameLine{Line: 4, Text: "d", OrigLine: 4}) {
+		t.Errorf("uncommitted line: %+v", l)
+	}
+	if !strings.Contains(out.text, "(uncommitted)     4  d") {
+		t.Errorf("text:\n%s", out.text)
+	}
+
+	out = gitDetails(t, tool, map[string]any{"action": "blame", "path": "g.txt", "start": 2.0, "end": 3.0})
+	if len(out.Lines) != 2 || out.Lines[0].Line != 2 || out.Lines[1].Text != "c" {
+		t.Errorf("range: %+v", out.Lines)
+	}
+	out = gitDetails(t, tool, map[string]any{"action": "blame", "path": "f.txt", "rev": "HEAD~1"})
+	if len(out.Lines) != 3 || out.Lines[1].Commit != capital.Hash || out.Lines[1].OrigPath != "" {
+		t.Errorf("at a revision: %+v", out.Lines)
 	}
 }
 
@@ -440,6 +486,7 @@ func TestGitIgnoresRepositoryConfiguration(t *testing.T) {
 	}
 	gitDetails(t, tool, map[string]any{"action": "log", "search": "3"})
 	gitDetails(t, tool, map[string]any{"action": "show", "path": "a.txt"})
+	gitDetails(t, tool, map[string]any{"action": "blame", "path": "a.txt"})
 	if data, err := os.ReadFile(ran); err == nil {
 		t.Errorf("git ran the repository's programs:\n%s", data)
 	}
@@ -465,6 +512,12 @@ func TestGitRefusals(t *testing.T) {
 		{map[string]any{"action": "log", "rev": "nope"}, "nope"},
 		{map[string]any{"action": "show", "path": "../elsewhere"}, "not a file in the repository"},
 		{map[string]any{"action": "show", "path": "missing.txt"}, "missing.txt"},
+		{map[string]any{"action": "blame", "path": "a.txt", "rev": "--incremental"}, "must be a revision"},
+		{map[string]any{"action": "blame", "path": "a.txt", "rev": "HEAD~1..HEAD"}, "one revision"},
+		{map[string]any{"action": "blame", "path": "a.txt", "start": 0.0}, "line numbers from 1"},
+		{map[string]any{"action": "blame", "path": "a.txt", "start": 3.0, "end": 2.0}, "end not before start"},
+		{map[string]any{"action": "blame", "path": "../elsewhere"}, "not a file in the repository"},
+		{map[string]any{"action": "blame", "path": "missing.txt"}, "missing.txt"},
 		{map[string]any{"action": "push"}, "action must be one of"},
 	} {
 		r, err := run(t, tool, tc.args)
@@ -553,6 +606,21 @@ func TestGitIsOfferedOnlyToScripts(t *testing.T) {
 			return d.details.files.flatMap(f => f.hunks.flatMap(h => h.lines.filter(l => l.op === "+").map(l => f.path + ":" + l.new + ":" + l.text)));`)
 		if isError || res.Text() != "[\n  \"a.txt:1:b\"\n]" {
 			t.Errorf("%s: %s", tc.mode, res.Text())
+		}
+	}
+}
+
+func TestGitBlameSummary(t *testing.T) {
+	for _, tc := range []struct {
+		args map[string]any
+		want string
+	}{
+		{map[string]any{"action": "blame", "path": "g.txt"}, "git blame g.txt"},
+		{map[string]any{"action": "blame", "path": "g.txt", "start": 2.0, "end": 3.0}, "git blame g.txt:2-3"},
+		{map[string]any{"action": "blame", "path": "g.txt", "start": 5.0}, "git blame g.txt:5-"},
+	} {
+		if got := SummarizeToolCall("git", tc.args); got != tc.want {
+			t.Errorf("%v: got %q, want %q", tc.args, got, tc.want)
 		}
 	}
 }

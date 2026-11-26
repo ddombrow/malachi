@@ -58,6 +58,16 @@ func SummarizeToolCall(name string, args map[string]any) string {
 				s += " " + v
 			}
 		}
+		start, hasStart := args["start"].(float64)
+		end, hasEnd := args["end"].(float64)
+		switch {
+		case hasStart && hasEnd:
+			s += fmt.Sprintf(":%d-%d", int(start), int(end))
+		case hasStart:
+			s += fmt.Sprintf(":%d-", int(start))
+		case hasEnd:
+			s += fmt.Sprintf(":1-%d", int(end))
+		}
 		return s
 	case "jobs":
 		s := "jobs " + str("action")

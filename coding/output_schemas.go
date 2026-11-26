@@ -211,15 +211,22 @@ func gitOutputSchema() map[string]any {
 			"subject": typed("string", "The message's first line"),
 			"body":    typed("string", "The rest of the message"),
 			"files":   arrayOf(change, "With files: true: what it changed, a merge against its first parent"),
-		}, "hash", "parents", "author", "date", "refs", "subject", "body"), "log: the commits, newest first"),
+		}, "hash", "author", "date", "subject"), "log: the commits, newest first, with every field but files always present. blame: the commits the lines come from, newest first: hash, author, date and subject only"),
+		"lines": arrayOf(object(map[string]any{
+			"line":      typed("integer", "Its line number in the file blamed"),
+			"text":      typed("string", "The line"),
+			"commit":    typed("string", "The hash of the commit that last changed it; absent when that change is not committed"),
+			"orig_line": typed("integer", "Its line number in that commit"),
+			"orig_path": typed("string", "The file's path in that commit, when it has moved since"),
+		}, "line", "text", "orig_line"), "blame: the file's lines, or those from start to end"),
 		"base":      typed("string", "diff: the commit compared from; absent for a first commit"),
 		"hit_limit": typed("boolean", "status, log, diff: the list stopped at its limit, so there is more"),
 		"truncated": typed("boolean", "diff: the patch was too long, so some files have hunks_omitted. show: the file was cut at 1 MiB"),
-		"path":      typed("string", "show: the file"),
-		"rev":       typed("string", "show: the revision"),
+		"path":      typed("string", "show, blame: the file"),
+		"rev":       typed("string", "show: the revision. blame: the revision, unless the working tree was blamed"),
 		"content":   typed("string", "show: the file's content, unless binary"),
 		"binary":    typed("boolean", "show: the file is binary, so there is no content"),
 	}, "action")
-	s["description"] = "Each action fills in its own fields: status has branch, head, upstream, ahead, behind, files, hit_limit; log has commits, hit_limit; diff has base, files, hit_limit, truncated; show has path, rev, content, binary, truncated."
+	s["description"] = "Each action fills in its own fields: status has branch, head, upstream, ahead, behind, files, hit_limit; log has commits, hit_limit; diff has base, files, hit_limit, truncated; show has path, rev, content, binary, truncated; blame has path, rev, lines, commits."
 	return s
 }

@@ -322,9 +322,9 @@ MCP tool's details carry the server's `structuredContent`, described by the
 server's own output schema when it declares one.
 
 In a git repository scripts also get a `git` tool, which the model is not
-offered directly: `status`, `log`, `diff` and `show` (a file as of a
-revision), all as data, so one script can take a branch's diff and read
-around each hunk:
+offered directly: `status`, `log`, `diff`, `show` (a file as of a
+revision) and `blame` (which commit last changed each line), all as data,
+so one script can take a branch's diff and read around each hunk:
 
 ```js
 const { details } = await tools.git({ action: "diff", base: "main" });
