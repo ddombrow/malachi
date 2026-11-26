@@ -128,9 +128,12 @@ type model struct {
 	chrome        int // rows the block under the transcript currently uses
 	isDark        bool
 
-	partial   *agent.AssistantMessage
-	lastReply string
-	sel       selection
+	partial *agent.AssistantMessage
+	// When the streaming message's reasoning began and ended (zero until
+	// it does), for the spinner's clock and the marker it leaves behind.
+	thinkStart, thinkEnd time.Time
+	lastReply            string
+	sel                  selection
 	// flash is a short confirmation (e.g. "copied selection") shown in the
 	// status bar until flashUntil.
 	flash      string
@@ -632,11 +635,13 @@ func (m *model) handleEvent(e any) tea.Cmd {
 		return tea.Sequence(cmds...)
 	case *agent.MessageStartEvent:
 		if a, ok := ev.Message.(*agent.AssistantMessage); ok {
-			m.partial = a
+			m.partial, m.thinkStart, m.thinkEnd = a, time.Time{}, time.Time{}
+			m.trackThinking(a)
 		}
 	case *agent.MessageUpdateEvent:
 		if a, ok := ev.Message.(*agent.AssistantMessage); ok {
 			m.partial = a
+			m.trackThinking(a)
 		}
 	case *agent.MessageEndEvent:
 		switch msg := ev.Message.(type) {
@@ -655,7 +660,12 @@ func (m *model) handleEvent(e any) tea.Cmd {
 			for _, c := range msg.ToolCalls() {
 				m.toolArgs[c.ID] = c.Arguments
 			}
-			return m.print(func(r *renderer) string { return r.assistantMessage(msg) })
+			m.trackThinking(msg)
+			if !m.thinkStart.IsZero() && m.thinkEnd.IsZero() {
+				m.thinkEnd = time.Now() // reasoned, then stopped without answering
+			}
+			thought := m.thought()
+			return m.print(func(r *renderer) string { return r.assistantMessage(msg, thought) })
 		case *agent.ToolResultMessage:
 			// Synthetic interruption results (no execution events) still
 			// deserve a line in the transcript.
@@ -775,14 +785,39 @@ func (m *model) jumpWidgetHit(msg tea.MouseClickMsg) bool {
 	return mouse.Button == tea.MouseLeft && mouse.Y == m.vp.Height() && mouse.X >= start && mouse.X < start+lipgloss.Width(widget)
 }
 
+// trackThinking notes when the streaming message starts reasoning and when
+// it moves on to answering or calling a tool.
+func (m *model) trackThinking(a *agent.AssistantMessage) {
+	now := time.Now()
+	if m.thinkStart.IsZero() && hasThinking(a) {
+		m.thinkStart = now
+	}
+	if !m.thinkStart.IsZero() && m.thinkEnd.IsZero() && (a.Text() != "" || len(a.ToolCalls()) > 0) {
+		m.thinkEnd = now
+	}
+}
+
+func (m *model) thought() time.Duration {
+	if m.thinkStart.IsZero() || m.thinkEnd.IsZero() {
+		return 0
+	}
+	return max(m.thinkEnd.Sub(m.thinkStart), time.Millisecond) // nonzero: it was timed
+}
+
 // live renders the in-progress parts of the current turn: the streaming
 // message, tools that are running, or a spinner while waiting.
 func (m *model) live() string {
 	var b strings.Builder
 	if m.partial != nil {
-		if th := strings.TrimSpace(m.partial.ThinkingText()); th != "" && m.partial.Text() == "" {
-			lines := lastN(wrapLines(expandTabs(th, 4), m.contentWidth()-m.r.gutterWidth(iconThinking)-1), 3)
-			b.WriteString(item(m.r.gutter(iconThinking, m.r.st.thinking, m.r.st.thinking.Render(strings.Join(lines, "\n")))))
+		// Reasoning shows as a spinner with a clock while it runs, and as
+		// the marker the finished message keeps once the answer starts.
+		if hasThinking(m.partial) {
+			if m.thinkEnd.IsZero() {
+				secs := time.Since(m.thinkStart).Truncate(time.Second)
+				b.WriteString(item(m.r.st.toolRun.Render(m.spin.View()) + m.r.st.dim.Render("  thinking… "+secs.String())))
+			} else {
+				b.WriteString(item(m.r.thoughtMarker(m.thought(), m.partial.Usage)))
+			}
 		}
 		if text := strings.TrimLeft(m.partial.Text(), "\n"); text != "" {
 			// Drawn as markdown while it streams, so the finished message

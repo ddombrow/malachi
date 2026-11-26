@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -212,7 +213,7 @@ func TestIconsPerItemKind(t *testing.T) {
 	}
 	a := agent.NewAssistantMessage("m")
 	a.Content = []agent.Content{&agent.ThinkingContent{Thinking: "hmm"}, &agent.TextContent{Text: "Done."}}
-	out := m.r.assistantMessage(a)
+	out := m.r.assistantMessage(a, 0)
 	if !strings.Contains(out, m.r.icons[iconThinking]) || !strings.Contains(out, m.r.icons[iconReply]) {
 		t.Errorf("reply icons missing: %q", out)
 	}
@@ -223,7 +224,7 @@ func TestGutterAlignsMarkdown(t *testing.T) {
 	m := newTestModel(t)
 	a := agent.NewAssistantMessage("m")
 	a.Content = []agent.Content{&agent.TextContent{Text: "First paragraph.\n\n- one\n- two"}}
-	out := ansi.Strip(m.r.assistantMessage(a))
+	out := ansi.Strip(m.r.assistantMessage(a, 0))
 	lines := strings.Split(strings.TrimLeft(out, "\n"), "\n")
 	glyph := m.r.icons[iconReply]
 	indent := strings.Repeat(" ", lipgloss.Width(glyph)+lipgloss.Width(iconGap))
@@ -244,7 +245,7 @@ func TestListReplyStartsOnIconLine(t *testing.T) {
 	m := newTestModel(t)
 	a := agent.NewAssistantMessage("m")
 	a.Content = []agent.Content{&agent.TextContent{Text: "- **one**\n- two"}}
-	out := strings.TrimLeft(ansi.Strip(m.r.assistantMessage(a)), "\n")
+	out := strings.TrimLeft(ansi.Strip(m.r.assistantMessage(a, 0)), "\n")
 	if !strings.HasPrefix(out, m.r.icons[iconReply]+iconGap+"• one") {
 		t.Fatalf("got %q", out)
 	}
@@ -396,18 +397,6 @@ func TestSpinnerStopsWhenIdle(t *testing.T) {
 	_, cmd = busy.Update(busy.spin.Tick())
 	if cmd == nil {
 		t.Fatal("a busy session must keep the spinner ticking")
-	}
-}
-
-func TestWrapLinesUsesCells(t *testing.T) {
-	lines := wrapLines(strings.Repeat("漢", 12), 20)
-	if got := strings.Join(lines, ""); got != strings.Repeat("漢", 12) {
-		t.Fatalf("lost text: %q", got)
-	}
-	for _, l := range lines {
-		if w := ansi.StringWidth(l); w > 20 {
-			t.Fatalf("line %q is %d cells", l, w)
-		}
 	}
 }
 
@@ -888,5 +877,43 @@ func TestClearStartsWithAnEmptyContext(t *testing.T) {
 	}
 	if out := ansi.Strip(m.tr.text(m.r)); strings.Contains(out, "the old task") {
 		t.Fatalf("/clear left the old conversation on screen: %s", out)
+	}
+}
+
+// Reasoning is never shown: a spinner with a clock while it runs, then a
+// marker with how long it took.
+func TestThinkingShowsSpinnerThenMarker(t *testing.T) {
+	m := newTestModel(t)
+	a := agent.NewAssistantMessage("m")
+	a.Content = []agent.Content{&agent.ThinkingContent{Thinking: "secret musings"}}
+	m.handleEvent(&agent.MessageStartEvent{Message: a})
+	live := ansi.Strip(m.live())
+	if !strings.Contains(live, "thinking…") || strings.Contains(live, "secret") {
+		t.Fatalf("while thinking: %q", live)
+	}
+	m.thinkStart = m.thinkStart.Add(-12 * time.Second)
+	a.Content = append(a.Content, &agent.TextContent{Text: "Answer."})
+	m.handleEvent(&agent.MessageUpdateEvent{Message: a})
+	if live := ansi.Strip(m.live()); !strings.Contains(live, "thought for 12s") || strings.Contains(live, "thinking…") {
+		t.Fatalf("once answering: %q", live)
+	}
+	reasoning := int64(1500)
+	a.Usage.Reasoning = &reasoning
+	m.handleEvent(&agent.MessageEndEvent{Message: a})
+	m.refresh()
+	out := ansi.Strip(m.vp.View())
+	if !strings.Contains(out, "thought for 12s · 1.5k tokens") || strings.Contains(out, "secret") {
+		t.Fatalf("transcript: %s", out)
+	}
+}
+
+// A saved session has no timing, so its marker says only that it thought.
+func TestThinkingMarkerWithoutTiming(t *testing.T) {
+	m := newTestModel(t)
+	a := agent.NewAssistantMessage("m")
+	a.Content = []agent.Content{&agent.ThinkingContent{Redacted: true}, &agent.TextContent{Text: "Done."}}
+	out := ansi.Strip(m.r.assistantMessage(a, 0))
+	if !strings.Contains(out, m.r.icons[iconThinking]+iconGapFor(iconThinking)+"thought\n") {
+		t.Fatalf("got %q", out)
 	}
 }

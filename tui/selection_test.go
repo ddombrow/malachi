@@ -186,7 +186,7 @@ func codeModel(t *testing.T, reply string) (*model, int, int) {
 	m := newTestModel(t)
 	msg := agent.NewAssistantMessage("m")
 	msg.Content = []agent.Content{&agent.TextContent{Text: reply}}
-	m.Update(printMsg{func(r *renderer) string { return r.assistantMessage(msg) }})
+	m.Update(printMsg{func(r *renderer) string { return r.assistantMessage(msg, 0) }})
 	for i, l := range strings.Split(m.vp.View(), "\n") {
 		if start, _, ok := m.r.copyLabelAt(l); ok {
 			return m, i, start
