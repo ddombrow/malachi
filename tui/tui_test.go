@@ -48,12 +48,18 @@ func requireSandboxInForce(t *testing.T, m *model) {
 	}
 }
 
-// shown returns the plain text of the transcript after running fn, which
-// is how tests observe what the user would see in the viewport.
+// shown returns the plain text of the transcript added by running fn, which
+// is how tests observe what the user would see in the viewport. A command
+// that resets the transcript (/clear) leaves nothing shorter than what was
+// there before, so the whole of what it shows is returned.
 func shown(m *model, fn func() tea.Cmd) string {
-	before := len(ansi.Strip(m.tr.text(m.r)))
+	before := ansi.Strip(m.tr.text(m.r))
 	fn()
-	return ansi.Strip(m.tr.text(m.r))[before:]
+	after := ansi.Strip(m.tr.text(m.r))
+	if strings.HasPrefix(after, before) {
+		return after[len(before):]
+	}
+	return after
 }
 
 func TestTerminalFocusBlursAndRestoresInput(t *testing.T) {

@@ -600,6 +600,11 @@ func TestGitIsOfferedOnlyToScripts(t *testing.T) {
 		if !tc.want {
 			continue
 		}
+		// Running the script runs git under the sandbox, which cannot be
+		// built inside another one (see TestGitRunsInTheSandbox).
+		if err := sandbox.Available(); err != nil {
+			t.Skip(err)
+		}
 		res, isError := runScriptTool(t, script, `
 			const d = await tools.git({action: "diff"});
 			if (d.isError) throw new Error(d.text);
