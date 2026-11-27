@@ -61,6 +61,7 @@ func (s *scroller) clamp() { s.yOffset = max(0, min(s.yOffset, s.maxYOffset())) 
 // AtBottom reports whether the last line is in view.
 func (s *scroller) AtBottom() bool { return s.yOffset >= s.maxYOffset() }
 
+func (s *scroller) SetYOffset(n int) { s.yOffset = n; s.clamp() }
 func (s *scroller) GotoTop()         { s.yOffset = 0 }
 func (s *scroller) GotoBottom()      { s.yOffset = s.maxYOffset() }
 func (s *scroller) ScrollUp(n int)   { s.yOffset -= n; s.clamp() }

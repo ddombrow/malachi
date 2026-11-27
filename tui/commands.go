@@ -30,6 +30,7 @@ const helpText = `Commands:
   /mcp [server]       show MCP servers: status, roots, tools
   /mcp restart <name> restart an MCP server now
   /sidebar            show or hide the sidebar (ctrl+s)
+  /diff               show or hide uncommitted changes beside the transcript (ctrl+g)
   /ctx               measured context: tokens, tool output share, trim passes
   /codemode [mode]    pick or set the code mode: off, on, explore (ctrl+x cycles)
   /new, /clear        start a fresh session with an empty context
@@ -41,7 +42,7 @@ const helpText = `Commands:
 
 Keys: enter send · alt+enter newline · esc cancel run · ctrl+c clear/quit
 ctrl+x cycle code mode: off → on → explore (read, grep and glob only in scripts)
-Scroll: mouse wheel · pgup/pgdown · shift+↑/↓ · ctrl+home/ctrl+end
+Scroll: mouse wheel · pgup/pgdown · shift+↑/↓ · ctrl+home/ctrl+end (the diff pane's, while it is open)
 Copy: drag over the transcript to select; releasing copies it.
 Hold shift while dragging to use the terminal's own selection instead.
 While the agent runs, enter queues a steering message.
@@ -133,6 +134,8 @@ func (m *model) command(line string) tea.Cmd {
 		return m.printDim(fmt.Sprintf("Added writable root %s for this session. Model-run tools can modify or delete its contents.", root))
 	case "network":
 		return m.networkCommand(arg)
+	case "diff":
+		return m.toggleDiff()
 	case "sidebar":
 		m.toggleSidebar()
 		if !m.sidebarHidden && !m.sidebarShown() {

@@ -100,6 +100,7 @@ to cancel, and use `/help` for the full command list.
 | `/network [on\|off]` | Switch commands' network access for this session (`ctrl+o` toggles it) |
 | `/mcp [server]`, `/mcp restart <server>` | Show MCP servers; restart one now |
 | `/sidebar` | Show or hide the sidebar (`ctrl+s`) |
+| `/diff` | Show or hide uncommitted changes beside the transcript (`ctrl+g`): a summary of the files, then each file's diff with an `[ ask ]` that puts it in the prompt |
 | `/copy`, `/quit` | Copy the transcript, exit |
 
 `/compact` and `/trim` are different tools: `/compact` is a lossy,

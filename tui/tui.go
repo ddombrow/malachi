@@ -161,6 +161,7 @@ type model struct {
 	// side is the sandbox the sidebar draws; sidebarHidden is the user
 	// hiding it (it also hides itself on a small terminal).
 	side          sidebarState
+	dp            diffPane // the working tree's diff, when open
 	sidebarHidden bool
 	// picker, when open, takes the input box's place to ask for a choice.
 	picker *picker
@@ -282,6 +283,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmd := m.update(msg)
 	m.noteTrim()
 	m.refresh()
+	// A resize or a new diff can leave the pane drawn at the wrong width.
+	if draw := m.drawDiff(); draw != nil {
+		cmd = tea.Batch(cmd, draw)
+	}
 	return m, cmd
 }
 
@@ -357,6 +362,9 @@ func (m *model) refresh() {
 	// scrolls the input instead of refusing what is typed into it.
 	m.input.MaxContentHeight = inputMaxHeight
 	m.vp.SetHeight(max(1, m.height-m.bottomHeight(avail)-m.chrome))
+	if m.dp.open {
+		m.sizeDiff()
+	}
 	var live []string
 	if s := m.live(); s != "" {
 		live = strings.Split(s, "\n")
@@ -411,7 +419,7 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 	case sessionEventsMsg:
 		cmds := make([]tea.Cmd, 0, len(msg)+1)
 		for _, e := range msg {
-			cmds = append(cmds, m.handleEvent(e))
+			cmds = append(cmds, m.handleEvent(e), m.diffEvent(e))
 			// A trim is noticed between updates; noticing it here keeps its
 			// marker next to the request it belongs to.
 			m.noteTrim()
@@ -437,12 +445,23 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 	case modelsMsg:
 		return m.fillModels(msg)
 
+	case diffFetchedMsg:
+		return m.diffFetched(msg)
+
+	case diffDrawnMsg:
+		m.diffDrawn(msg)
+		return nil
+
 	case tea.MouseWheelMsg:
+		sc := &m.vp
+		if mouse := msg.Mouse(); m.diffHit(mouse.X, mouse.Y) {
+			sc = &m.dp.sc
+		}
 		switch msg.Button {
 		case tea.MouseWheelUp:
-			m.vp.ScrollUp(wheelLines)
+			sc.ScrollUp(wheelLines)
 		case tea.MouseWheelDown:
-			m.vp.ScrollDown(wheelLines)
+			sc.ScrollDown(wheelLines)
 		}
 		return nil
 
@@ -450,6 +469,13 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		if m.jumpWidgetHit(msg) {
 			m.sel = selection{}
 			m.vp.GotoBottom()
+			return nil
+		}
+		if mouse := msg.Mouse(); m.diffHit(mouse.X, mouse.Y) {
+			m.sel = selection{}
+			if mouse.Button == tea.MouseLeft {
+				return m.diffClick(mouse.X, mouse.Y)
+			}
 			return nil
 		}
 		if mouse := msg.Mouse(); m.sidebarHit(mouse.X, mouse.Y) {
@@ -534,10 +560,17 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		case keySidebar:
 			m.toggleSidebar()
 			return nil
+		case keyDiff:
+			return m.toggleDiff()
 		case keyNetwork:
 			return m.toggleNetwork()
 		case keyCodeMode:
 			return m.cycleCodeMode()
+		}
+		if m.dp.open && m.diffKey(msg.String()) {
+			return nil
+		}
+		switch msg.String() {
 		case "pgup":
 			m.vp.PageUp()
 			return nil
@@ -765,7 +798,7 @@ const jumpWidgetText = "↓ jump to bottom ↓"
 // jumpWidget occupies the pad row below the viewport, so it never covers
 // transcript text or steals rows from the pinned input.
 func (m *model) jumpWidget() string {
-	if m.chrome < chromeRows || m.vp.AtBottom() || m.contentWidth() < 16 {
+	if m.chrome < chromeRows || m.vp.AtBottom() || m.contentWidth() < 16 || m.diffCovers() {
 		return ""
 	}
 	return m.r.st.jump.Render(jumpWidgetText)

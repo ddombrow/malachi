@@ -203,3 +203,21 @@ func TestCodeModeKeyCycles(t *testing.T) {
 		t.Errorf("a click went to %q", got)
 	}
 }
+
+func TestSidebarPointsAtTheDiffPane(t *testing.T) {
+	m := newTestModel(t)
+	lines := m.sidebarLines(m.vp.Height())
+	y := -1
+	for i, l := range lines {
+		if strings.Contains(ansi.Strip(l), "changes") && strings.Contains(ansi.Strip(l), "^g show") {
+			y = i
+		}
+	}
+	if y < 0 {
+		t.Fatalf("no diff pane hint:\n%s", sidebarText(m))
+	}
+	m.Update(tea.MouseClickMsg{X: m.width - 3, Y: y, Button: tea.MouseLeft})
+	if !m.dp.open || m.sidebarShown() {
+		t.Fatal("clicking the hint did not open the diff pane in the sidebar's place")
+	}
+}

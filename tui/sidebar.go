@@ -13,7 +13,7 @@ import (
 
 // The sidebar is a panel beside the transcript showing the session's
 // surroundings, one section after another: the sandbox, project trust,
-// Code Mode and MCP servers. Each section draws from session state cached in
+// Code Mode, the diff pane and MCP servers. Each section draws from session state cached in
 // sidebarState and refreshed from the session's events; the UI keeps no
 // rules of its own.
 const (
@@ -58,11 +58,15 @@ func (m *model) syncSandbox(st coding.SandboxState) {
 // sidebarShown reports whether the sidebar is on screen: wanted, and the
 // terminal roomy enough for it.
 func (m *model) sidebarShown() bool {
-	return !m.sidebarHidden && m.width >= sidebarMinWidth && m.height >= chromeRows+2
+	return !m.sidebarHidden && !m.dp.open && m.width >= sidebarMinWidth && m.height >= chromeRows+2
 }
 
-// contentWidth is the columns the transcript gets.
+// contentWidth is the columns the transcript gets. A diff pane that covers
+// the transcript leaves it its width, for when the pane closes.
 func (m *model) contentWidth() int {
+	if m.dp.open && m.diffSplit() {
+		return m.width - m.diffPaneWidth()
+	}
 	if m.sidebarShown() {
 		return m.width - sidebarWidth
 	}
@@ -130,7 +134,17 @@ var codeModeMeaning = map[string]string{
 
 // sidebarSections are the sidebar's sections, top to bottom.
 func (m *model) sidebarSections() [][]sideRow {
-	return [][]sideRow{m.sandboxSection(), m.trustSection(), m.codeModeSection(), m.mcpSection(), m.jobsSection()}
+	return [][]sideRow{m.sandboxSection(), m.trustSection(), m.codeModeSection(), m.changesSection(), m.mcpSection(), m.jobsSection()}
+}
+
+// changesSection points at the diff pane, which takes the sidebar's place
+// while it is open; clicking it opens the pane.
+func (m *model) changesSection() []sideRow {
+	s := m.r.st
+	return []sideRow{{
+		text:  sidePair(s.accent.Render("changes"), s.dim.Render("^g ")+s.toolOK.Render("show")),
+		click: m.toggleDiff,
+	}}
 }
 
 // sidePair puts label on the left of a row and value on the right.
@@ -329,8 +343,20 @@ func (m *model) sidebarClick(y int) tea.Cmd {
 	return rows[y].click()
 }
 
-// withSidebar puts the sidebar to the right of the transcript's lines.
+// withSidebar puts the sidebar, or the diff pane, to the right of the
+// transcript's lines; a pane on a narrow terminal takes their place.
 func (m *model) withSidebar(transcript string) string {
+	if m.dp.open {
+		lines := strings.Split(transcript, "\n")
+		pane := m.diffLines(len(lines))
+		if m.diffCovers() {
+			return strings.Join(pane, "\n")
+		}
+		for i, l := range lines {
+			lines[i] = l + pane[i]
+		}
+		return strings.Join(lines, "\n")
+	}
 	if !m.sidebarShown() {
 		return transcript
 	}
