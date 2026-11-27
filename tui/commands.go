@@ -90,7 +90,7 @@ func (m *model) command(line string) tea.Cmd {
 			out := last.result.Text()
 			if d, ok := last.result.Details.(map[string]any); ok {
 				if patch, _ := d["patch"].(string); patch != "" {
-					out = r.diff(patch, 1<<30)
+					out, _ = r.diffView(patch, diffOpts{width: r.width, files: true, wrap: true})
 				}
 			}
 			// A script shows what it ran and every call it made, then its

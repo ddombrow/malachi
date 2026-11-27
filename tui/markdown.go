@@ -427,10 +427,15 @@ func (w *mdWriter) highlight(code, lang string) [][]cell {
 }
 
 // lex splits code into lines of styled cells.
-func (w *mdWriter) lex(code, lang string) [][]cell {
+func (w *mdWriter) lex(code, lang string) [][]cell { return lexCells(code, lang, &w.st) }
+
+// lexCells splits code into lines of cells styled by st's syntax colors.
+// lang is a language name or a file name; one chroma does not know leaves
+// the code plain.
+func lexCells(code, lang string, st *mdStyles) [][]cell {
 	var lines [][]cell
 	var line []cell
-	add := func(s string, st *mdStyle) {
+	add := func(s string, style *mdStyle) {
 		for s != "" {
 			if s[0] == '\n' {
 				lines, line = append(lines, line), nil
@@ -444,15 +449,15 @@ func (w *mdWriter) lex(code, lang string) [][]cell {
 			} else {
 				g, s, gw, _ = uniseg.FirstGraphemeClusterInString(s, -1)
 			}
-			line = append(line, cell{g: g, w: gw, st: st})
+			line = append(line, cell{g: g, w: gw, st: style})
 		}
 	}
 	if it := tokenise(code, lang); it != nil {
 		for t := it(); t != chroma.EOF; t = it() {
-			add(t.Value, w.st.token(t.Type))
+			add(t.Value, st.token(t.Type))
 		}
 	} else {
-		add(code, &w.st.codeBlock)
+		add(code, &st.codeBlock)
 	}
 	return append(lines, line)
 }

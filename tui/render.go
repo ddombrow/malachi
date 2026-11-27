@@ -16,7 +16,7 @@ import (
 
 // styles holds every color decision so light/dark switching is one place.
 type styles struct {
-	user, dim, thinking, toolOK, toolErr, toolRun, errorText, add, del, hunk, status, accent, jump lipgloss.Style
+	user, dim, thinking, toolOK, toolErr, toolRun, errorText, status, accent, jump lipgloss.Style
 }
 
 func newStyles(isDark bool) styles {
@@ -29,9 +29,6 @@ func newStyles(isDark bool) styles {
 		toolErr:   lipgloss.NewStyle().Foreground(ld(lipgloss.Color("160"), lipgloss.Color("203"))),
 		toolRun:   lipgloss.NewStyle().Foreground(ld(lipgloss.Color("130"), lipgloss.Color("221"))),
 		errorText: lipgloss.NewStyle().Foreground(ld(lipgloss.Color("160"), lipgloss.Color("203"))),
-		add:       lipgloss.NewStyle().Foreground(ld(lipgloss.Color("28"), lipgloss.Color("114"))),
-		del:       lipgloss.NewStyle().Foreground(ld(lipgloss.Color("160"), lipgloss.Color("203"))),
-		hunk:      lipgloss.NewStyle().Foreground(ld(lipgloss.Color("31"), lipgloss.Color("80"))),
 		// The status bar is a full-width tinted row, so it reads as its own
 		// surface without needing a blank line above it.
 		status: lipgloss.NewStyle().
@@ -48,6 +45,7 @@ func newStyles(isDark bool) styles {
 type renderer struct {
 	st     styles
 	md     mdStyles
+	ds     diffStyles
 	stream mdStream          // the reply being streamed, rendered so far
 	codes  map[string]string // code blocks drawn, for their copy labels: codeKey → source
 	width  int
@@ -57,7 +55,7 @@ type renderer struct {
 }
 
 func newRenderer(width int, isDark bool, icons, cwd string) *renderer {
-	return &renderer{st: newStyles(isDark), md: newMDStyles(isDark), codes: map[string]string{}, width: width, isDark: isDark, icons: iconSet(icons), cwd: cwd}
+	return &renderer{st: newStyles(isDark), md: newMDStyles(isDark), ds: newDiffStyles(isDark), codes: map[string]string{}, width: width, isDark: isDark, icons: iconSet(icons), cwd: cwd}
 }
 
 // Every transcript item starts on a new line; the transcript adds the blank
@@ -204,7 +202,7 @@ func (r *renderer) toolResult(name string, args map[string]any, res agent.ToolRe
 	switch name {
 	case "edit":
 		if patch, _ := details["patch"].(string); patch != "" {
-			body = r.diff(patch, 30)
+			body = r.diffPreview(patch, r.width-r.gutterWidth(kind)-1, 30)
 		}
 	case "read", "write":
 	case "script":
@@ -239,34 +237,10 @@ func (r *renderer) toolResult(name string, args map[string]any, res agent.ToolRe
 	return item(r.gutter(kind, iconStyle, head))
 }
 
-func (r *renderer) diff(patch string, maxLines int) string {
-	lines := strings.Split(strings.TrimRight(patch, "\n"), "\n")
-	var out []string
-	for _, l := range lines {
-		if strings.HasPrefix(l, "---") || strings.HasPrefix(l, "+++") {
-			continue
-		}
-		out = append(out, l)
-	}
-	more := 0
-	if len(out) > maxLines {
-		more = len(out) - maxLines
-		out = out[:maxLines]
-	}
-	for i, l := range out {
-		l = truncateWidth(l, r.width-4)
-		switch {
-		case strings.HasPrefix(l, "@@"):
-			out[i] = r.st.hunk.Render(l)
-		case strings.HasPrefix(l, "+"):
-			out[i] = r.st.add.Render(l)
-		case strings.HasPrefix(l, "-"):
-			out[i] = r.st.del.Render(l)
-		default:
-			out[i] = r.st.dim.Render(l)
-		}
-	}
-	s := strings.Join(out, "\n")
+// diffPreview draws patch within width, stopping after maxRows rows with a
+// pointer to /last for the rest.
+func (r *renderer) diffPreview(patch string, width, maxRows int) string {
+	s, more := r.diffView(patch, diffOpts{width: width, maxRows: maxRows})
 	if more > 0 {
 		s += "\n" + r.st.dim.Render(fmt.Sprintf("… %d more diff lines (/last to see all)", more))
 	}

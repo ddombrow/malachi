@@ -124,7 +124,8 @@ func TestEditResultShowsDiff(t *testing.T) {
 	res := agent.TextResult("Successfully replaced 1 block(s)")
 	res.Details = map[string]any{"patch": "--- f\n+++ f\n@@ -1,1 +1,1 @@\n-old\n+new\n"}
 	out := m.r.toolResult("edit", map[string]any{"path": "f", "edits": []any{1}}, res, false)
-	if !strings.Contains(out, "-old") || !strings.Contains(out, "+new") || strings.Contains(out, "+++") {
+	plain := ansi.Strip(out)
+	if !strings.Contains(plain, "1 - old") || !strings.Contains(plain, "1 + new") || strings.Contains(plain, "+++") {
 		t.Fatalf("diff: %s", out)
 	}
 }
