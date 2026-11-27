@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/chroma/v2"
@@ -462,7 +463,7 @@ func tokenise(code, lang string) chroma.Iterator {
 	if lang == "" {
 		return nil
 	}
-	lexer := lexers.Get(lang)
+	lexer := lexerFor(lang)
 	if lexer == nil {
 		return nil
 	}
@@ -471,6 +472,22 @@ func tokenise(code, lang string) chroma.Iterator {
 		return nil
 	}
 	return it
+}
+
+// lexerCache holds lexerFor's answers. Finding a lexer by file name
+// matches globs against every lexer chroma has, which costs more than
+// lexing most code: a diff, highlighting each hunk, paid it per hunk.
+var lexerCache sync.Map // lang → chroma.Lexer, nil for none
+
+// lexerFor is chroma's lexer for lang, a language or file name, or nil.
+func lexerFor(lang string) chroma.Lexer {
+	if l, ok := lexerCache.Load(lang); ok {
+		lexer, _ := l.(chroma.Lexer)
+		return lexer
+	}
+	lexer := lexers.Get(lang)
+	lexerCache.Store(lang, lexer)
+	return lexer
 }
 
 // token is the style for a chroma token type: a handful of colors, not a
