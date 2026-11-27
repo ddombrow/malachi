@@ -72,7 +72,20 @@ bin/malachi -p "..." -mode json  # Pi event stream, one JSON object per line
 bin/malachi -list-models         # models the provider serves right now
 bin/malachi -mode rpc            # headless: JSON commands in, events out (see RPC mode)
 bin/malachi -mode acp            # serve an editor over ACP (see Editors)
+bin/malachi -resume 2026-11      # resume a session by file path or name prefix
+bin/malachi -p "..." -no-session # don't save this run's session to disk
+bin/malachi -cwd ~/src/other     # work in another directory
 ```
+
+For a single run, these flags override the settings:
+
+| Flag | Values | Default |
+| --- | --- | --- |
+| `-trust` | `yes` or `no`: load this directory's instruction files or withhold them | the `projectTrust` setting |
+| `-network` | `on` or `off`: commands' network access | `off` |
+| `-loopback` | `on` or `off`: loopback access for sandboxed commands | `on` on Linux; on macOS only when asked for |
+| `-sandbox` | `on` or `off`: `off` lets commands and file tools reach everything you can | `on` |
+| `-code-mode` | `off`, `on` or `explore` | `on` |
 
 The TUI is full-screen: a scrollable transcript above a pinned input and status
 bar. Each item gets an icon (❯ you, 💬 reply, 💭 thinking, 👀 read, 🔍 grep,
@@ -101,6 +114,7 @@ to cancel, and use `/help` for the full command list.
 | `/mcp [server]`, `/mcp restart <server>` | Show MCP servers; restart one now |
 | `/sidebar` | Show or hide the sidebar (`ctrl+s`) |
 | `/diff` | Show or hide uncommitted changes beside the transcript (`ctrl+g`): a summary of the files, then each file's diff with an `[ ask ]` that puts it in the prompt |
+| `/help` | Show the full command list and key bindings |
 | `/copy`, `/quit` | Copy the transcript, exit |
 
 `/compact` and `/trim` are different tools: `/compact` is a lossy,
@@ -834,13 +848,14 @@ messages.
 
 Tasks live in `Taskfile.yml` and run through the pinned tool, so no global
 install is needed: `go tool task` lists them; `go tool task build`, `lint`,
-and `test` are the usual loop. `go tool task install` puts the binary in
-`~/.local/bin` (per-user XDG; override with `PREFIX`, e.g. `PREFIX=/opt/homebrew`
-for a Homebrew prefix), and `uninstall` removes it, leaving the directory alone
-if anything else is in it. Builds are stamped with `git describe`
-(`bin/malachi -version`). Loop and harness tests use the scripted provider in
-`ai/fake`. Golden fixtures in `agent/testdata` and
-`agent/session/testdata` were generated from tau's own models.
+and `test` are the usual loop. `go tool task wasm` rebuilds
+`codemode/quickjs.wasm` from the pinned QuickJS-ng source (it needs zig).
+`go tool task install` puts the binary in `~/.local/bin` (per-user XDG;
+override with `PREFIX`, e.g. `PREFIX=/opt/homebrew` for a Homebrew prefix), and
+`uninstall` removes it, leaving the directory alone if anything else is in it.
+Builds are stamped with `git describe` (`bin/malachi -version`). Loop and
+harness tests use the scripted provider in `ai/fake`. Golden fixtures in
+`agent/testdata` and `agent/session/testdata` were generated from tau's own models.
 
 ## License
 
